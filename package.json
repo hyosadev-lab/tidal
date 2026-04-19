@@ -3,6 +3,13 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "dry-run": "DRY_RUN=true bun run src/index.ts",
+    "build": "bun build src/index.ts --outfile dist/agent.js --target bun",
+    "stats": "bun run src/utils/stats.ts"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
