@@ -341,42 +341,42 @@ setiap MANAGE_INTERVAL_MS (lebih sering dari Screening, misal 10 detik):
   3. learnFromRecentTrades() → setiap 5 trade confirmed, generate insight baru
 ```
 
-**AI Context untuk Managing (HOLD/SELL):**
+**AI Context for Managing (HOLD/SELL):**
 
 System prompt:
 ```
-Kamu adalah expert crypto trader yang spesialis di Solana memecoin "Trenches".
-Tugasmu mengevaluasi posisi yang sedang dipegang dan memutuskan apakah harus HOLD atau SELL.
-Jawab HANYA dalam format JSON: { "action": "HOLD"|"SELL", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
+You are an expert crypto trader specializing in Solana memecoins "Trenches".
+Your task is to evaluate open positions and decide whether to HOLD or SELL.
+Answer ONLY in JSON format: { "action": "HOLD"|"SELL", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 ```
 
 User message:
 ```
-POSISI: {symbol} ({address})
+POSITION: {symbol} ({address})
 Entry Price: ${entryPrice} | Entry Market Cap: ${entryMarketCap}
 Current Price: ${currentPrice} | Current Market Cap: ${currentMarketCap}
 Unrealized PnL: {unrealizedPnlPercent}% (${unrealizedPnlUsd})
 Holding Duration: {holdingDurationHuman}
 Cost: ${costUsd}
 
-Market Data Terkini:
+Market Data Latest:
 Volume 1h: ${volume1h} | Swaps 1h: {swaps1h}
-Smart Degen Count: {smartDegenCount} (saat entry: {smartDegenCountAtEntry})
+Smart Degen Count: {smartDegenCount} (at entry: {smartDegenCountAtEntry})
 Holder Count: {holderCount}
 Rug Ratio: {rugRatio}
 Creator Status: {creatorTokenStatus}
 Is Wash Trading: {isWashTrading}
 
-K-line 1m terakhir (30 candle):
+K-line 1m last (30 candles):
 {kline1mData}
 
-K-line 5m terakhir (12 candle):
+K-line 5m last (12 candles):
 {kline5mData}
 
 Take Profit target: +{TAKE_PROFIT_PERCENT}%
 Stop Loss target: -{STOP_LOSS_PERCENT}%
 
-LEARNINGS dari trade sebelumnya yang relevan:
+RELEVANT LEARNINGS from previous trades:
 {relevantLearnings}
 ```
 

@@ -53,7 +53,7 @@ async function processPosition(position: Position) {
   try {
     // 1. Fetch current price
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
-    const currentPrice = parseFloat(details.klineData.split("\n").pop()?.split("C:")[1]?.split(" ")[0] || "0");
+    const currentPrice = parseFloat(details.kline1mData.split("\n").pop()?.split("C:")[1]?.split(" ")[0] || "0");
 
     // Update position PnL
     position.currentPrice = currentPrice;
@@ -73,10 +73,13 @@ async function processPosition(position: Position) {
     // 3. AI Decision
     const learnings = await getLearnings();
     const tokenData: TokenData = {
-      ...position,
+      address: position.tokenAddress,
+      symbol: position.tokenSymbol,
+      name: position.tokenName,
       price: currentPrice,
       marketCap: position.currentMarketCap || 0,
-      klineData: details.klineData,
+      kline1mData: details.kline1mData,
+      kline5mData: details.kline5mData,
       topTradersSummary: details.topTradersSummary,
       // Fill required fields with defaults or current data
       liquidity: 0, volume1h: 0, volume24h: 0, swaps1h: 0, swaps24h: 0,
