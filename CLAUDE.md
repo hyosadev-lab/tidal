@@ -76,8 +76,8 @@ OPENROUTER_MODEL=anthropic/claude-3.5-haiku            # atau model lain yang ce
 MAX_OPEN_POSITIONS=5               # Maks posisi terbuka sekaligus
 TAKE_PROFIT_PERCENT=50             # Take profit di +50%
 STOP_LOSS_PERCENT=30               # Stop loss di -30%
-SCAN_INTERVAL_MS=30000             # Screening: scan trenches setiap 30 detik
-MANAGE_INTERVAL_MS=10000           # Managing: monitor posisi terbuka setiap 10 detik
+SCAN_INTERVAL_MINUTES=0.5          # Screening: scan trenches setiap 0.5 menit (30 detik)
+MANAGE_INTERVAL_MINUTES=0.1667     # Managing: monitor posisi terbuka setiap 0.1667 menit (10 detik)
 SLIPPAGE=0.15                      # 15% slippage untuk trenches
 
 # Agent

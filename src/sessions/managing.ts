@@ -10,7 +10,8 @@ const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
 const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "50");
 const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "30");
-const MANAGE_INTERVAL_MS = parseInt(process.env.MANAGE_INTERVAL_MS || "10000");
+const MANAGE_INTERVAL_MINUTES = parseFloat(process.env.MANAGE_INTERVAL_MINUTES || "0.1667");
+const MANAGE_INTERVAL_MS = MANAGE_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
 
 export async function startManagingSession() {
