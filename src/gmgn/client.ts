@@ -8,31 +8,34 @@ interface GmgnResponse<T> {
 }
 
 async function executeGmgnCommand<T>(args: string[]): Promise<T> {
-  const timestamp = Math.floor(Date.now() / 1000);
-  const clientId = crypto.randomUUID();
-
-  // Append common flags
-  const fullArgs = [...args, "--timestamp", timestamp.toString(), "--client-id", clientId];
-
-  logger.debug("Executing gmgn-cli command", { args: fullArgs });
+  logger.debug("Executing gmgn-cli command", { args });
 
   try {
-    const result = await $`gmgn-cli ${fullArgs}`.json();
+    // Execute command and try to parse as JSON
+    const result = await $`gmgn-cli ${args}`.json();
 
-    if (result.code !== 0) {
-      throw new Error(result.message || `GMGN API Error: ${result.code}`);
+    // Check if result is an object and has code property
+    if (result && typeof result === 'object' && 'code' in result) {
+      if (result.code !== 0) {
+        throw new Error(result.message || `GMGN API Error: ${result.code}`);
+      }
+
+      // Return data if available, otherwise return the whole result
+      return (result.data || result) as T;
     }
 
-    return result.data as T;
+    // If result doesn't have code property, assume it's successful data
+    return result as T;
   } catch (error) {
-    logger.error("GMGN CLI execution failed", { error: String(error), args: fullArgs });
+    // If JSON parsing fails, it might be a text error message
+    logger.error("GMGN CLI execution failed", { error: String(error), args });
     throw error;
   }
 }
 
 // Trenches endpoint
 export async function fetchTrenches(chain: string, filters: Record<string, any> = {}) {
-  const args = ["trenches", "--chain", chain];
+  const args = ["market", "trenches", "--chain", chain];
 
   // Apply server-side filters
   if (filters.filterPreset) args.push("--filter-preset", filters.filterPreset);
@@ -57,9 +60,11 @@ export async function fetchKline(chain: string, address: string, resolution: str
   return executeGmgnCommand<any>(args);
 }
 
-// Market endpoint - Top traders
+// Token endpoint - Top traders
 export async function fetchTopTraders(chain: string, address: string, tag: string = "smart_degen", limit: number = 10) {
-  const args = ["market", "token_top_traders", "--chain", chain, "--address", address, "--tag", tag, "--limit", limit.toString()];
+  // Use 'token traders' command from gmgn-token skill
+  // Note: gmgn-token's 'token traders' uses --tag to filter by wallet type
+  const args = ["token", "traders", "--chain", chain, "--address", address, "--tag", tag, "--limit", limit.toString()];
   return executeGmgnCommand<any>(args);
 }
 

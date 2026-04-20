@@ -20,7 +20,7 @@ async function main() {
 
   // Start sessions in parallel
   startScreeningSession();
-  startManagingSession();
+  // startManagingSession();
 
   logger.info("Agent is running. Press Ctrl+C to stop.");
 }

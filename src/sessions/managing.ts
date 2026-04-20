@@ -2,7 +2,7 @@ import { getPositions, savePositions, getTrades, saveTrades, getLearnings } from
 import { getTokenDetails } from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
 import { getManageDecision, checkHardRules } from "../agent/manager";
-import { Position, Trade, TokenData } from "../storage/types";
+import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
 
 const CHAIN = process.env.GMGN_CHAIN || "sol";

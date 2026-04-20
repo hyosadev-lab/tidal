@@ -240,7 +240,7 @@ Bertugas mencari token baru dan memutuskan **SKIP** atau **BUY**.
 
 ```
 setiap SCAN_INTERVAL_MS:
-  1. fetchTrenches() → ambil token dari pump/migrated menggunakan gmgn-cli
+  1. fetchTrenches() → ambil token yang sudah 'completed' menggunakan gmgn-cli
      Gunakan server-side filters langsung di CLI:
        --filter-preset safe
        --min-smart-degen-count 1

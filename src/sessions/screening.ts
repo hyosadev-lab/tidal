@@ -2,8 +2,14 @@ import { fetchTrenchesTokens } from "../gmgn/trenches";
 import { getTokenDetails } from "../gmgn/market";
 import { executeBuy } from "../gmgn/trade";
 import { getBuySkipDecision } from "../agent/decision";
-import { getPositions, savePositions, getTrades, saveTrades, getLearnings } from "../storage/db";
-import { Position, Trade, TokenData } from "../storage/types";
+import {
+  getPositions,
+  savePositions,
+  getTrades,
+  saveTrades,
+  getLearnings,
+} from "../storage/db";
+import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
 
 const CHAIN = process.env.GMGN_CHAIN || "sol";
@@ -68,17 +74,27 @@ async function processCandidate(token: TokenData, currentOpenCount: number) {
     const learnings = await getLearnings();
 
     // AI Decision
-    const decision = await getBuySkipDecision(token, currentOpenCount, MAX_OPEN_POSITIONS, learnings);
+    const decision = await getBuySkipDecision(
+      token,
+      currentOpenCount,
+      MAX_OPEN_POSITIONS,
+      learnings,
+    );
 
-    logger.info(`Decision for ${token.symbol}: ${decision.action} (${decision.confidence}%)`, {
-      reasoning: decision.reasoning,
-    });
+    logger.info(
+      `Decision for ${token.symbol}: ${decision.action} (${decision.confidence}%)`,
+      {
+        reasoning: decision.reasoning,
+      },
+    );
 
     if (decision.action === "BUY") {
       await executeBuyOrder(token);
     }
   } catch (error) {
-    logger.error(`Error processing candidate ${token.symbol}`, { error: String(error) });
+    logger.error(`Error processing candidate ${token.symbol}`, {
+      error: String(error),
+    });
   }
 }
 
@@ -147,7 +163,9 @@ async function executeBuyOrder(token: TokenData) {
       slippage: SLIPPAGE,
     });
 
-    logger.info(`Buy order submitted for ${token.symbol}`, { orderId: result.order_id });
+    logger.info(`Buy order submitted for ${token.symbol}`, {
+      orderId: result.order_id,
+    });
 
     // Wait for order confirmation (polling logic would go here)
     // For simplicity, we just log and save pending trade
@@ -171,8 +189,9 @@ async function executeBuyOrder(token: TokenData) {
     const trades = await getTrades();
     trades.push(trade);
     await saveTrades(trades);
-
   } catch (error) {
-    logger.error(`Failed to execute buy for ${token.symbol}`, { error: String(error) });
+    logger.error(`Failed to execute buy for ${token.symbol}`, {
+      error: String(error),
+    });
   }
 }

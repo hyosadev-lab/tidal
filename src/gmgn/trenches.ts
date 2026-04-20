@@ -1,5 +1,5 @@
 import { fetchTrenches } from "./client";
-import { TokenData } from "../storage/types";
+import type { TokenData } from "../storage/types";
 
 // Filters from CLAUDE.md
 const FILTERS = {
@@ -58,7 +58,7 @@ function mapToTokenData(item: any): TokenData {
     creatorTokenStatus: item.creator_token_status || "",
     creatorBalanceRate: parseFloat(item.creator_balance_rate) || 0,
     rugRatio: parseFloat(item.rug_ratio) || 0,
-    bundlerRate: parseFloat(item.bundler_rate) || 0,
+    bundlerRate: parseFloat(item.bundler_trader_amount_rate || item.bundler_rate) || 0,
     insiderRatio: parseFloat(item.rat_trader_amount_rate) || 0,
     isWashTrading: item.is_wash_trading || false,
     launchpadPlatform: item.launchpad_platform || "",
