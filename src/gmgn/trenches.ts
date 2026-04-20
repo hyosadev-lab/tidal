@@ -11,7 +11,7 @@ const FILTERS = {
   maxBundlerRate: 0.3,
   maxInsiderRatio: 0.3,
   sortBy: "smart_degen_count",
-  limit: 50,
+  limit: 20,
 };
 
 export async function fetchTrenchesTokens(chain: string = "sol"): Promise<TokenData[]> {

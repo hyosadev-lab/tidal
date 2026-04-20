@@ -1,4 +1,4 @@
-import { Trade, Position, Learning, Performance } from "./types";
+import type { Trade, Position, Learning, Performance } from "./types";
 
 const DATA_DIR = "data";
 

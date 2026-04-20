@@ -41,9 +41,9 @@ async function scanAndFilter() {
   // 1. Fetch trenches tokens
   const candidates = await fetchTrenchesTokens(CHAIN);
 
-  // 2. Filter client-side
+  // 2. Filter client-side (load positions once)
   const positions = await getPositions();
-  const openPositionsCount = positions.length;
+  let currentOpenCount = positions.length;
   const openPositionAddresses = new Set(positions.map((p) => p.tokenAddress));
 
   const filteredCandidates = candidates.filter((token) => {
@@ -56,27 +56,33 @@ async function scanAndFilter() {
 
   logger.info(`Found ${filteredCandidates.length} candidates after filtering`);
 
-  // 3. Process each candidate
   for (const token of filteredCandidates) {
-    if (openPositionsCount >= MAX_OPEN_POSITIONS) {
+    if (currentOpenCount >= MAX_OPEN_POSITIONS) {
       logger.info("Max open positions reached, stopping screening");
       break;
     }
 
-    await processCandidate(token, openPositionsCount);
+    // Process candidate (bisa diparalelkan jika perlu, tapi sekarang serial dulu)
+    const didBuy = await processCandidateOptimized(token, currentOpenCount);
 
-    await delay(1000);
+    // Update count manual jika berhasil beli
+    if (didBuy) {
+      currentOpenCount++;
+      logger.debug(`Bought ${token.symbol}, open positions now: ${currentOpenCount}`);
+    }
+
+    await delay(500); // Sedikit jeda agar tidak terlalu aggressive
   }
 }
 
-async function processCandidate(token: TokenData, currentOpenCount: number) {
+async function processCandidateOptimized(token: TokenData, currentOpenCount: number): Promise<boolean> {
   try {
     // Fetch detailed data (kline, top traders)
     const details = await getTokenDetails(CHAIN, token.address);
     token.klineData = details.klineData;
     token.topTradersSummary = details.topTradersSummary;
 
-    // Get learnings
+    // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();
 
     // AI Decision
@@ -96,11 +102,14 @@ async function processCandidate(token: TokenData, currentOpenCount: number) {
 
     if (decision.action === "BUY") {
       await executeBuyOrder(token);
+      return true; // Return true jika berhasil beli
     }
+    return false;
   } catch (error) {
     logger.error(`Error processing candidate ${token.symbol}`, {
       error: String(error),
     });
+    return false;
   }
 }
 
@@ -110,7 +119,7 @@ async function executeBuyOrder(token: TokenData) {
     return;
   }
 
-  const amountSol = 0.01; // Fixed amount for demo, should be calculated based on balance/risk
+  const amountSol = 0.01; // Fixed amount for demo
 
   if (DRY_RUN) {
     logger.info(`[DRY RUN] Buy ${token.symbol} - ${amountSol} SOL`);
@@ -123,8 +132,8 @@ async function executeBuyOrder(token: TokenData) {
       tokenName: token.name,
       action: "BUY",
       inputAmount: (amountSol * 1e9).toString(),
-      inputAmountUsd: amountSol * token.price, // Approximate
-      outputAmount: "0", // Unknown amount received
+      inputAmountUsd: amountSol * token.price,
+      outputAmount: "0",
       priceAtTrade: token.price,
       marketCapAtTrade: token.marketCap,
       timestamp: Date.now(),
@@ -141,21 +150,19 @@ async function executeBuyOrder(token: TokenData) {
       entryPrice: token.price,
       entryMarketCap: token.marketCap,
       entryTimestamp: Date.now(),
-      amountToken: "0", // Unknown in dry run
-      costUsd: amountSol * token.price, // Approximate
+      amountToken: "0",
+      costUsd: amountSol * token.price,
       currentPrice: token.price,
       currentMarketCap: token.marketCap,
       lastUpdated: Date.now(),
       buyTradeId: trade.id,
     };
 
-    const trades = await getTrades();
+    // Optimized: Load once, modify, save once
+    const [trades, positions] = await Promise.all([getTrades(), getPositions()]);
     trades.push(trade);
-    await saveTrades(trades);
-
-    const positions = await getPositions();
     positions.push(position);
-    await savePositions(positions);
+    await Promise.all([saveTrades(trades), savePositions(positions)]);
 
     return;
   }
@@ -173,8 +180,7 @@ async function executeBuyOrder(token: TokenData) {
       orderId: result.order_id,
     });
 
-    // Wait for order confirmation (polling logic would go here)
-    // For simplicity, we just log and save pending trade
+    // Save pending trade
     const trade: Trade = {
       id: crypto.randomUUID(),
       tokenAddress: token.address,
