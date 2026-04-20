@@ -1,6 +1,9 @@
 import type { TokenData, Learning } from "../storage/types";
 import { logger } from "../utils/logger";
 
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
+
 const SYSTEM_PROMPT = `
 Kamu adalah expert crypto trader yang spesialis di Solana memecoin "Trenches" — token baru dengan market cap $20K–$2M.
 Tugasmu menganalisis data token dan memutuskan apakah harus BUY atau SKIP.
@@ -48,14 +51,58 @@ export async function getBuySkipDecision(
   // 2. Build user prompt
   const userPrompt = buildUserPrompt(token, learnings);
 
-  // 3. Call OpenRouter (mocked for now, implementing basic logic)
-  // In a real scenario, fetch("https://openrouter.ai/api/v1/chat/completions")
-  // For this exercise, I will implement a rule-based fallback or a simple mock
-  // since I cannot call external APIs without a key.
-  // However, the instructions say to implement the agent logic.
-  // I'll implement a placeholder that uses the token data to make a decision.
+  // 3. Call OpenRouter API
+  try {
+    if (!OPENROUTER_API_KEY) {
+      logger.warn("OPENROUTER_API_KEY not set, using fallback rule-based decision");
+      return getFallbackDecision(token);
+    }
 
-  // Simple rule-based logic for demonstration
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "HTTP-Referer": "https://github.com/trading-agent",
+        "X-Title": "Trenches Trading Agent"
+      },
+      body: JSON.stringify({
+        model: OPENROUTER_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.3,
+        max_tokens: 500
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error("OpenRouter API error", { status: response.status, error: errorText });
+      return getFallbackDecision(token);
+    }
+
+    const data = await response.json() as any;
+    const content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      logger.error("Invalid OpenRouter response format", { data });
+      return getFallbackDecision(token);
+    }
+
+    const decision = JSON.parse(content) as AiDecision;
+    return decision;
+
+  } catch (error) {
+    logger.error("Error calling OpenRouter", { error: String(error) });
+    return getFallbackDecision(token);
+  }
+}
+
+function getFallbackDecision(token: TokenData): AiDecision {
+  // Simple rule-based fallback logic
   let action: "BUY" | "SKIP" = "SKIP";
   let reasoning = "Not enough signals";
 
@@ -71,7 +118,7 @@ export async function getBuySkipDecision(
 
   return {
     action,
-    confidence: 75, // Mock confidence
+    confidence: 75,
     reasoning,
     signals: ["smart_money", "low_risk"],
   };

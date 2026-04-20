@@ -35,7 +35,7 @@ async function executeGmgnCommand<T>(args: string[]): Promise<T> {
 
 // Trenches endpoint
 export async function fetchTrenches(chain: string, filters: Record<string, any> = {}) {
-  const args = ["market", "trenches", "--chain", chain];
+  const args = ["market", "trenches", "--chain", chain, "--type", "completed"];
 
   // Apply server-side filters
   if (filters.filterPreset) args.push("--filter-preset", filters.filterPreset);

@@ -70,7 +70,7 @@ GMGN_CHAIN=sol
 
 # OpenRouter
 OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=anthropic/claude-3.5-haiku            # atau model lain yang cepat & murah
+OPENROUTER_MODEL=openrouter/elephant-alpha            # atau model lain yang cepat & murah
 
 # Trading Config
 MAX_OPEN_POSITIONS=5               # Maks posisi terbuka sekaligus
