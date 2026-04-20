@@ -1,4 +1,5 @@
 import { getPositions, savePositions, getTrades, saveTrades, getLearnings } from "../storage/db";
+import { generateLearnings } from "../agent/learner";
 import { getTokenDetails } from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
 import { getManageDecision, checkHardRules } from "../agent/manager";
@@ -44,8 +45,7 @@ async function monitorPositions() {
   const trades = await getTrades();
   const confirmedTrades = trades.filter(t => t.orderStatus === "confirmed");
   if (confirmedTrades.length % 5 === 0 && confirmedTrades.length > 0) {
-     // In a real app, we'd call generateLearnings() here
-     // await generateLearnings();
+     await generateLearnings();
   }
 }
 
