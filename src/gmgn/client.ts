@@ -74,7 +74,8 @@ export async function executeSwap(params: {
   fromAddress: string;
   inputToken: string;
   outputToken: string;
-  inputAmount: string;
+  inputAmount?: string;
+  percent?: number;
   slippage?: number;
   autoSlippage?: boolean;
 }) {
@@ -84,8 +85,14 @@ export async function executeSwap(params: {
     "--from", params.fromAddress,
     "--input-token", params.inputToken,
     "--output-token", params.outputToken,
-    "--amount", params.inputAmount,
   ];
+
+  // Use --amount or --percent (mutually exclusive)
+  if (params.inputAmount) {
+    args.push("--amount", params.inputAmount);
+  } else if (params.percent !== undefined) {
+    args.push("--percent", params.percent.toString());
+  }
 
   if (params.slippage) args.push("--slippage", params.slippage.toString());
   if (params.autoSlippage) args.push("--auto-slippage");
