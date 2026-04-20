@@ -79,7 +79,8 @@ async function processCandidate(token: TokenData): Promise<boolean> {
   try {
     // Fetch detailed data (kline, top traders)
     const details = await getTokenDetails(CHAIN, token.address);
-    token.klineData = details.klineData;
+    token.kline1mData = details.kline1mData;
+    token.kline5mData = details.kline5mData;
     token.topTradersSummary = details.topTradersSummary;
 
     // Get learnings (cached atau minimal read)

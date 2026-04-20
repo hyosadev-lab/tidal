@@ -5,9 +5,9 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
 
 const SYSTEM_PROMPT = `
-Kamu adalah expert crypto trader yang spesialis di Solana memecoin "Trenches" — token baru dengan market cap $20K–$2M.
-Tugasmu menganalisis data token dan memutuskan apakah harus BUY atau SKIP.
-Jawab HANYA dalam format JSON: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
+You are an expert crypto trader specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
+Your task is to analyze token data and decide whether to BUY or SKIP.
+Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
 
 interface AiDecision {
@@ -74,7 +74,7 @@ export async function getBuySkipDecision(
         ],
         response_format: { type: "json_object" },
         temperature: 0.3,
-        max_tokens: 500
+        max_tokens: 1000
       })
     });
 
@@ -153,13 +153,16 @@ Renounced Mint: ${token.renouncedMint} | Renounced Freeze: ${token.renouncedFree
 Has Social: ${token.hasAtLeastOneSocial}
 CTO Flag: ${token.ctoFlag}
 
-K-line 1m terakhir (5 candle):
-${token.klineData}
+K-line 1m last (30 candles):
+${token.kline1mData}
+
+K-line 5m last (12 candles):
+${token.kline5mData}
 
 Top Smart Degen Traders (holding/activity):
 ${token.topTradersSummary}
 
-LEARNINGS dari trade sebelumnya yang relevan:
+RELEVANT LEARNINGS from previous trades:
 ${relevantLearnings || "None"}
   `;
 }

@@ -3,21 +3,33 @@ import { delay } from "../utils/concurrency";
 
 export async function getTokenDetails(chain: string, address: string) {
   try {
-    // Fetch kline 1m (5 candles)
     const now = Math.floor(Date.now() / 1000);
-    const from = now - 300; // 5 minutes ago
-    const klineResult = await fetchKline(chain, address, "1m", from, now);
-    const klineData = klineResult?.list || [];
 
-    // Format kline data for AI context
-    const klineSummary = klineData.map((candle: any) => {
+    // 1. Fetch kline 1m (30 candles = 30 minutes)
+    const from1m = now - 1800; // 30 minutes ago
+    const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
+    const kline1mData = kline1mResult?.list || [];
+
+    const kline1mSummary = kline1mData.map((candle: any) => {
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
 
     // Delay between API calls to avoid rate limit
     await delay(500); // 500ms delay
 
-    // Fetch top smart degens
+    // 2. Fetch kline 5m (12 candles = 60 minutes)
+    const from5m = now - 3600; // 60 minutes ago
+    const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
+    const kline5mData = kline5mResult?.list || [];
+
+    const kline5mSummary = kline5mData.map((candle: any) => {
+      return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
+    }).join("\n");
+
+    // Delay between API calls to avoid rate limit
+    await delay(500); // 500ms delay
+
+    // 3. Fetch top smart degens
     const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 10);
     const traders = tradersResult?.list || [];
 
@@ -36,13 +48,15 @@ export async function getTokenDetails(chain: string, address: string) {
     }).join("\n");
 
     return {
-      klineData: klineSummary,
+      kline1mData: kline1mSummary,
+      kline5mData: kline5mSummary,
       topTradersSummary: tradersSummary,
     };
   } catch (error) {
     console.error("Error fetching token details:", error);
     return {
-      klineData: "",
+      kline1mData: "",
+      kline5mData: "",
       topTradersSummary: "",
     };
   }

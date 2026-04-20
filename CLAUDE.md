@@ -108,8 +108,10 @@ GET /v1/market/rank?chain=sol&interval=5m&limit=20&order_by=swaps&filters=renoun
 
 **3. K-line data**
 ```
-GET /v1/market/token_kline?chain=sol&address=TOKEN_ADDRESS&resolution=1m
+GET /v1/market/token_kline?chain=sol&address=TOKEN_ADDRESS&resolution=1m&from=TIMESTAMP&to=TIMESTAMP
 ```
+- Resolution `1m`: 30 candles (30 menit terakhir)
+- Resolution `5m`: 12 candles (60 menit terakhir)
 
 **4. Top Traders**
 ```
@@ -255,19 +257,19 @@ setiap SCAN_INTERVAL_MS:
      - Tolak jika sudah punya posisi terbuka di token ini
      - Tolak jika posisi terbuka >= MAX_OPEN_POSITIONS
   3. untuk setiap candidate:
-     a. fetchTokenDetails() → kline 1m (5 candle terakhir), top_traders smart_degen
+     a. fetchTokenDetails() → kline 1m (30 candle), kline 5m (12 candle), top_traders smart_degen
      b. aiDecision() → kirim context ke OpenRouter
      c. jika SKIP → log dan lanjut
      d. jika BUY → executeBuy() → simpan ke positions.json + trades.json
 ```
 
-**AI Context untuk Screening (BUY/SKIP):**
+**AI Context for Screening (BUY/SKIP):**
 
 System prompt:
 ```
-Kamu adalah expert crypto trader yang spesialis di Solana memecoin "Trenches" — token baru dengan market cap $20K–$2M.
-Tugasmu menganalisis data token dan memutuskan apakah harus BUY atau SKIP.
-Jawab HANYA dalam format JSON: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
+You are an expert crypto trader specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
+Your task is to analyze token data and decide whether to BUY or SKIP.
+Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 ```
 
 User message:
@@ -291,13 +293,16 @@ Renounced Mint: {renouncedMint} | Renounced Freeze: {renouncedFreezeAccount}
 Has Social: {hasAtLeastOneSocial}
 CTO Flag: {ctoFlag}
 
-K-line 1m terakhir (5 candle):
-{klineData}
+K-line 1m last (30 candles):
+{kline1mData}
+
+K-line 5m last (12 candles):
+{kline5mData}
 
 Top Smart Degen Traders (holding/activity):
 {topTradersSummary}
 
-LEARNINGS dari trade sebelumnya yang relevan:
+RELEVANT LEARNINGS from previous trades:
 {relevantLearnings}
 ```
 
@@ -362,8 +367,11 @@ Rug Ratio: {rugRatio}
 Creator Status: {creatorTokenStatus}
 Is Wash Trading: {isWashTrading}
 
-K-line 1m terakhir (5 candle):
-{klineData}
+K-line 1m terakhir (30 candle):
+{kline1mData}
+
+K-line 5m terakhir (12 candle):
+{kline5mData}
 
 Take Profit target: +{TAKE_PROFIT_PERCENT}%
 Stop Loss target: -{STOP_LOSS_PERCENT}%

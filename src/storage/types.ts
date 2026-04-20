@@ -110,6 +110,7 @@ export interface TokenData {
   renouncedFreezeAccount: boolean;
   hasAtLeastOneSocial: boolean;
   ctoFlag: boolean;
-  klineData: string;
+  kline1mData: string;
+  kline5mData: string;
   topTradersSummary: string;
 }

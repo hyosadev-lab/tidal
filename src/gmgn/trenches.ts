@@ -66,7 +66,8 @@ function mapToTokenData(item: any): TokenData {
     renouncedFreezeAccount: item.renounced_freeze_account || false,
     hasAtLeastOneSocial: item.has_at_least_one_social || false,
     ctoFlag: item.cto_flag || false,
-    klineData: "", // To be filled later
+    kline1mData: "", // To be filled later
+    kline5mData: "", // To be filled later
     topTradersSummary: "", // To be filled later
   };
 }
