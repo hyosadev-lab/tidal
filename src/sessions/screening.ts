@@ -11,6 +11,7 @@ import {
 } from "../storage/db";
 import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
+import { delay } from "../utils/concurrency";
 
 const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
@@ -21,6 +22,8 @@ const DRY_RUN = process.env.DRY_RUN === "true";
 
 export async function startScreeningSession() {
   logger.info("Starting screening session");
+
+  await scanAndFilter();
 
   setInterval(async () => {
     try {
@@ -60,6 +63,8 @@ async function scanAndFilter() {
     }
 
     await processCandidate(token, openPositionsCount);
+
+    await delay(1000);
   }
 }
 

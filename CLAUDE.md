@@ -46,6 +46,7 @@ trading-agent/
 │   │   ├── db.ts              # JSON file read/write helpers
 │   │   └── types.ts           # Semua TypeScript interfaces/types
 │   └── utils/
+│       ├── concurrency.ts     # Manage async function
 │       ├── logger.ts          # Structured logging
 │       └── helpers.ts         # Auth utils, UUID, dll
 └── data/

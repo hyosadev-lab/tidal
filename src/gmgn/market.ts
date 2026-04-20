@@ -1,4 +1,5 @@
 import { fetchKline, fetchTopTraders } from "./client";
+import { delay } from "../utils/concurrency";
 
 export async function getTokenDetails(chain: string, address: string) {
   try {
@@ -12,6 +13,9 @@ export async function getTokenDetails(chain: string, address: string) {
     const klineSummary = klineData.map((candle: any) => {
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
+
+    // Delay between API calls to avoid rate limit
+    await delay(500); // 500ms delay
 
     // Fetch top smart degens
     const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 10);
