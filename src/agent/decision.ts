@@ -1,4 +1,4 @@
-import { TokenData, Learning } from "../storage/types";
+import type { TokenData, Learning } from "../storage/types";
 import { logger } from "../utils/logger";
 
 const SYSTEM_PROMPT = `
@@ -16,8 +16,6 @@ interface AiDecision {
 
 export async function getBuySkipDecision(
   token: TokenData,
-  openPositionsCount: number,
-  maxOpenPositions: number,
   learnings: Learning[]
 ): Promise<AiDecision> {
   // 1. Hard rules check (Quality Gate)
@@ -46,17 +44,9 @@ export async function getBuySkipDecision(
       signals: ["zero_smart_degen"],
     };
   }
-  if (openPositionsCount >= maxOpenPositions) {
-    return {
-      action: "SKIP",
-      confidence: 100,
-      reasoning: `Max open positions reached: ${openPositionsCount}/${maxOpenPositions}`,
-      signals: ["max_positions"],
-    };
-  }
 
   // 2. Build user prompt
-  const userPrompt = buildUserPrompt(token, openPositionsCount, maxOpenPositions, learnings);
+  const userPrompt = buildUserPrompt(token, learnings);
 
   // 3. Call OpenRouter (mocked for now, implementing basic logic)
   // In a real scenario, fetch("https://openrouter.ai/api/v1/chat/completions")
@@ -89,8 +79,6 @@ export async function getBuySkipDecision(
 
 function buildUserPrompt(
   token: TokenData,
-  openPositionsCount: number,
-  maxOpenPositions: number,
   learnings: Learning[]
 ): string {
   const relevantLearnings = learnings
@@ -126,7 +114,5 @@ ${token.topTradersSummary}
 
 LEARNINGS dari trade sebelumnya yang relevan:
 ${relevantLearnings || "None"}
-
-POSISI TERBUKA saat ini: ${openPositionsCount}/${maxOpenPositions}
   `;
 }

@@ -63,7 +63,7 @@ async function scanAndFilter() {
     }
 
     // Process candidate (bisa diparalelkan jika perlu, tapi sekarang serial dulu)
-    const didBuy = await processCandidateOptimized(token, currentOpenCount);
+    const didBuy = await processCandidate(token);
 
     // Update count manual jika berhasil beli
     if (didBuy) {
@@ -75,7 +75,7 @@ async function scanAndFilter() {
   }
 }
 
-async function processCandidateOptimized(token: TokenData, currentOpenCount: number): Promise<boolean> {
+async function processCandidate(token: TokenData): Promise<boolean> {
   try {
     // Fetch detailed data (kline, top traders)
     const details = await getTokenDetails(CHAIN, token.address);
@@ -88,8 +88,6 @@ async function processCandidateOptimized(token: TokenData, currentOpenCount: num
     // AI Decision
     const decision = await getBuySkipDecision(
       token,
-      currentOpenCount,
-      MAX_OPEN_POSITIONS,
       learnings,
     );
 

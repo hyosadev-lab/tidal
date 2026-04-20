@@ -299,8 +299,6 @@ Top Smart Degen Traders (holding/activity):
 
 LEARNINGS dari trade sebelumnya yang relevan:
 {relevantLearnings}
-
-POSISI TERBUKA saat ini: {openPositionsCount}/{MAX_OPEN_POSITIONS}
 ```
 
 **Token Quality Gate (referensi dari GMGN SKILL.md):**

@@ -1,4 +1,4 @@
-import { Position, Learning, TokenData } from "../storage/types";
+import type { Position, Learning, TokenData } from "../storage/types";
 
 const SYSTEM_PROMPT = `
 Kamu adalah expert crypto trader yang spesialis di Solana memecoin "Trenches".
