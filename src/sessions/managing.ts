@@ -28,9 +28,6 @@ export async function startManagingSession() {
 }
 
 async function monitorPositions() {
-  // Sync positions from confirmed trades that don't have positions yet
-  await syncPositionsFromTrades();
-
   const positions = await getPositions();
 
   if (positions.length === 0) {
@@ -49,48 +46,6 @@ async function monitorPositions() {
   const confirmedTrades = trades.filter(t => t.orderStatus === "confirmed");
   if (confirmedTrades.length % 5 === 0 && confirmedTrades.length > 0) {
      await generateLearnings();
-  }
-}
-
-async function syncPositionsFromTrades() {
-  const trades = await getTrades();
-  const positions = await getPositions();
-
-  // Find confirmed BUY trades that don't have corresponding positions
-  const confirmedBuys = trades.filter(
-    t => t.action === "BUY" && t.orderStatus === "confirmed"
-  );
-
-  const existingPositionTradeIds = new Set(positions.map(p => p.buyTradeId));
-
-  for (const trade of confirmedBuys) {
-    if (!existingPositionTradeIds.has(trade.id)) {
-      // Create position from trade
-      logger.info(`Syncing position from confirmed trade for ${trade.tokenSymbol}`);
-
-      const position: Position = {
-        tokenAddress: trade.tokenAddress,
-        tokenSymbol: trade.tokenSymbol,
-        tokenName: trade.tokenName,
-        entryPrice: trade.priceAtTrade,
-        entryMarketCap: trade.marketCapAtTrade,
-        entryTimestamp: trade.timestamp,
-        amountToken: trade.outputAmount || "0",
-        costUsd: trade.inputAmountUsd,
-        currentPrice: trade.priceAtTrade,
-        currentMarketCap: trade.marketCapAtTrade,
-        lastUpdated: Date.now(),
-        buyTradeId: trade.id,
-        // Note: smartDegenEntryCount is not available in Trade, will be fetched later
-      };
-
-      positions.push(position);
-      existingPositionTradeIds.add(trade.id);
-    }
-  }
-
-  if (positions.length > 0) {
-    await savePositions(positions);
   }
 }
 
@@ -137,8 +92,8 @@ async function processPosition(position: Position) {
       // Data from token info
       liquidity: tokenInfo?.liquidity || 0,
       // Volume data from kline 5m (1 hour)
-      volume24h: details.volume1h,
-      swaps24h: details.swaps1h,
+      volume1h: details.volume1h,
+      swaps1h: details.swaps1h,
       holderCount: tokenInfo?.holderCount || 0,
       smartDegenCount: tokenInfo?.smartDegenCount || 0,
       renownedCount: tokenInfo?.renownedCount || 0,

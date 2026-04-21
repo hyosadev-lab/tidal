@@ -106,11 +106,11 @@ export interface TokenData {
   renownedCount: number;
   rugRatio: number;
   smartDegenCount: number;
-  swaps24h: number;
+  swaps1h: number;
   symbol: string;
   top10HolderRate: number;
   usdMarketCap: number;
-  volume24h: number;
+  volume1h: number;
 
   // Enriched Fields from gmgn-cli market kline and gmgn-cli token traders
   kline1mData: string;

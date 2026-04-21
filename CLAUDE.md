@@ -288,7 +288,7 @@ User message:
 TOKEN: ${token.symbol} (${token.address})
 Market Cap: $${token.usdMarketCap}
 Liquidity: $${token.liquidity}
-Volume 1h: $${token.volume24h} | Swaps 1h: ${token.swaps24h}
+Volume 1h: $${token.volume1h} | Swaps 1h: ${token.swaps1h}
 Price Change 1h: ${token.priceChange1h}%
 Holder Count: {holderCount}
 Smart Degen Count: {smartDegenCount}
@@ -336,9 +336,8 @@ Bertugas memantau posisi yang sudah dibeli dan memutuskan **HOLD** atau **SELL**
 
 ```
 setiap MANAGE_INTERVAL_MS (lebih sering dari Screening, misal 10 detik):
-  1. syncPositionsFromTrades() → sync position dari confirmed trades yang belum ada di positions.json
-  2. loadOpenPositions() → baca positions.json
-  3. untuk setiap posisi:
+  1. loadOpenPositions() → baca positions.json
+  2. untuk setiap posisi:
      a. fetchCurrentPrice() → ambil harga terbaru via kline 1m
      b. updatePositionPnL() → hitung unrealized PnL
      c. checkHardRules():
@@ -348,7 +347,7 @@ setiap MANAGE_INTERVAL_MS (lebih sering dari Screening, misal 10 detik):
         - kirim context posisi + market data ke OpenRouter
         - jika SELL → executeSell("ai_decision")
         - jika HOLD → update lastUpdated, lanjut
-  4. learnFromRecentTrades() → setiap 5 trade confirmed, generate insight baru
+  3. learnFromRecentTrades() → setiap 5 trade confirmed, generate insight baru
 ```
 
 **AI Context for Managing (HOLD/SELL):**
@@ -540,7 +539,6 @@ Selalu buat file JSON kosong `[]` atau `{}` jika belum ada (first run).
 - Jika trade gagal → catat di trades.json dengan status "failed", jangan retry otomatis
 - Jika order pending > 60 detik → mark sebagai "expired" (polling timeout)
 - Jika order confirmed → buat position otomatis via polling function
-- Sync positions dari trades setiap monitoring loop untuk backward compatibility
 
 ### Order Confirmation Flow
 
@@ -557,10 +555,6 @@ Selalu buat file JSON kosong `[]` atau `{}` jika belum ada (first run).
    - Timeout setelah 60 detik
    - Jika "confirmed": update trade status, buat position, save ke positions.json
    - Jika "failed" atau "expired": update trade status, tidak buat position
-
-**Backward Compatibility:**
-- `syncPositionsFromTrades()` mencari confirmed BUY trades tanpa position
-- Buat position dari trade data (untuk trades lama sebelum polling diimplementasikan)
 
 ---
 

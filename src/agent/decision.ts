@@ -112,7 +112,7 @@ function buildUserPrompt(
 TOKEN: ${token.symbol} (${token.address})
 Market Cap: $${token.usdMarketCap}
 Liquidity: $${token.liquidity}
-Volume 1h: $${token.volume24h.toFixed(2)} | Swaps 1h: ${token.swaps24h}
+Volume 1h: $${token.volume1h.toFixed(2)} | Swaps 1h: ${token.swaps1h}
 Price Change 1h: ${token.priceChange1h}%
 Holder Count: ${token.holderCount}
 Smart Degen Count: ${token.smartDegenCount}

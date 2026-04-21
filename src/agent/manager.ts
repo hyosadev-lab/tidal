@@ -168,13 +168,17 @@ Holding Duration: ${holdingDurationHuman}
 Cost: $${position.costUsd}
 
 Market Data Latest:
-Price Change 1h: ${tokenData.priceChange1h}%
-Smart Degen Count: ${tokenData.smartDegenCount} (at entry: ${position.smartDegenEntryCount || "N/A"})
-Holder Count: ${tokenData.holderCount}
-Rug Ratio: ${tokenData.rugRatio}
-Creator Status: ${tokenData.creatorTokenStatus}
-Is Wash Trading: ${tokenData.isWashTrading}
 Liquidity: $${tokenData.liquidity}
+Volume 1h: $${tokenData.volume1h.toFixed(2)} | Swaps 1h: ${tokenData.swaps1h}
+Price Change 1h: ${tokenData.priceChange1h}%
+Holder Count: ${tokenData.holderCount}
+Smart Degen Count: ${tokenData.smartDegenCount} (at entry: ${position.smartDegenEntryCount || "N/A"})
+Renowned Count: ${tokenData.renownedCount}
+Top 10 Holder Rate: ${tokenData.top10HolderRate}
+Creator Status: ${tokenData.creatorTokenStatus}
+Rug Ratio: ${tokenData.rugRatio} | Bundler Rate: ${tokenData.bundlerTraderAmountRate} | Insider Ratio: ${tokenData.ratTraderAmountRate}
+Is Wash Trading: ${tokenData.isWashTrading}
+Renounced Mint: ${tokenData.renouncedMint} | Renounced Freeze: ${tokenData.renouncedFreezeAccount}
 
 K-line 1m last (30 candles):
 ${tokenData.kline1mData}
