@@ -14,6 +14,33 @@ export async function getTokenDetails(chain: string, address: string) {
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
 
+    // Parse price and price change from kline summary
+    let currentPrice = 0;
+    let priceChange1h = 0;
+    const klineLines = kline1mSummary.split("\n").filter((line: string) => line.trim());
+
+    if (klineLines.length > 0) {
+      const lastCandle = klineLines[klineLines.length - 1] ?? "";
+      const closeMatch = lastCandle.match(/C:([0-9.]+)/);
+      if (closeMatch) {
+        currentPrice = parseFloat(closeMatch[1] ?? "") || 0;
+      }
+
+      if (klineLines.length >= 2) {
+        const firstCandle = klineLines[0] ?? "";
+        const firstCloseMatch = firstCandle.match(/C:([0-9.]+)/);
+
+        if (firstCloseMatch && closeMatch) {
+          const firstClose = parseFloat(firstCloseMatch[1] ?? "") || 0;
+          const lastClose = parseFloat(closeMatch[1] ?? "") || 0;
+
+          if (firstClose > 0) {
+            priceChange1h = ((lastClose - firstClose) / firstClose) * 100;
+          }
+        }
+      }
+    }
+
     // Delay between API calls to avoid rate limit
     await delay(500); // 500ms delay
 
@@ -51,6 +78,8 @@ export async function getTokenDetails(chain: string, address: string) {
       kline1mData: kline1mSummary,
       kline5mData: kline5mSummary,
       topTradersSummary: tradersSummary,
+      price: currentPrice,
+      priceChange1h: priceChange1h,
     };
   } catch (error) {
     console.error("Error fetching token details:", error);
@@ -58,6 +87,8 @@ export async function getTokenDetails(chain: string, address: string) {
       kline1mData: "",
       kline5mData: "",
       topTradersSummary: "",
+      price: 0,
+      priceChange1h: 0,
     };
   }
 }

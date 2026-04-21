@@ -77,38 +77,13 @@ async function scanAndFilter() {
 
 async function processCandidate(token: TokenData): Promise<boolean> {
   try {
-    // Fetch detailed data (kline, top traders)
+    // Fetch detailed data (kline, top traders, price)
     const details = await getTokenDetails(CHAIN, token.address);
     token.kline1mData = details.kline1mData;
     token.kline5mData = details.kline5mData;
     token.topTradersSummary = details.topTradersSummary;
-
-    // Extract price and price change from kline data
-    const klineLines = (details.kline1mData as string).split("\n").filter(line => line.trim());
-    if (klineLines.length > 0) {
-      // Get current price from last candle
-      const lastCandle = klineLines[klineLines.length - 1] ?? "";
-      const closeMatch = lastCandle.match(/C:([0-9.]+)/);
-      if (closeMatch) {
-        token.price = parseFloat(closeMatch[1] ?? "") || 0;
-      }
-
-      // Calculate price change 1h (from first candle to last candle)
-      if (klineLines.length >= 2) {
-        const firstCandle = klineLines[0] ?? "";
-        const firstCloseMatch = firstCandle.match(/C:([0-9.]+)/);
-        const lastCloseMatch = lastCandle.match(/C:([0-9.]+)/);
-
-        if (firstCloseMatch && lastCloseMatch) {
-          const firstClose = parseFloat(firstCloseMatch[1] ?? "") || 0;
-          const lastClose = parseFloat(lastCloseMatch[1] ?? "") || 0;
-
-          if (firstClose > 0) {
-            token.priceChange1h = ((lastClose - firstClose) / firstClose) * 100;
-          }
-        }
-      }
-    }
+    token.price = details.price;
+    token.priceChange1h = details.priceChange1h;
 
     // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();
