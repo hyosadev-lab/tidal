@@ -105,21 +105,42 @@ export async function getManageDecision(
 }
 
 function getFallbackDecision(tokenData: TokenData): AiManageDecision {
-  // Simple rule-based fallback logic
+  // Simple rule-based fallback logic based on available data
   let action: "HOLD" | "SELL" = "HOLD";
   let reasoning = "Defaulting to HOLD";
 
-  // Example logic: Sell if low volume or smart money exits (placeholder logic)
-  if (tokenData.volume24h < 1000) {
+  // Rule 1: High rug ratio = SELL
+  if (tokenData.rugRatio > 0.3) {
     action = "SELL";
-    reasoning = "Low trading volume detected";
+    reasoning = `High rug ratio detected: ${tokenData.rugRatio}`;
+    return { action, confidence: 85, reasoning, signals: ["rug_ratio"] };
+  }
+
+  // Rule 2: Wash trading detected = SELL
+  if (tokenData.isWashTrading) {
+    action = "SELL";
+    reasoning = "Wash trading detected";
+    return { action, confidence: 80, reasoning, signals: ["wash_trading"] };
+  }
+
+  // Rule 3: Creator still holding (potential sell pressure) = HOLD but cautious
+  if (tokenData.creatorTokenStatus === "creator_hold") {
+    reasoning = "Creator still holding (watch for sell pressure)";
+    return { action, confidence: 60, reasoning, signals: ["creator_hold"] };
+  }
+
+  // Rule 4: Low liquidity = SELL
+  if (tokenData.liquidity < 10000) {
+    action = "SELL";
+    reasoning = `Low liquidity: $${tokenData.liquidity}`;
+    return { action, confidence: 75, reasoning, signals: ["low_liquidity"] };
   }
 
   return {
     action,
-    confidence: 75,
+    confidence: 50,
     reasoning,
-    signals: ["market_trend"],
+    signals: ["default_hold"],
   };
 }
 
@@ -141,18 +162,19 @@ function buildUserPrompt(
   return `
 POSITION: ${position.tokenSymbol} (${position.tokenAddress})
 Entry Price: $${position.entryPrice} | Entry Market Cap: $${position.entryMarketCap}
-Current Price: $${tokenData.price} | Current Market Cap: $${tokenData.usdMarketCap}
+Current Price: $${position.currentPrice} | Current Market Cap: $${position.currentMarketCap}
 Unrealized PnL: ${position.unrealizedPnlPercent}% ($${position.unrealizedPnlUsd})
 Holding Duration: ${holdingDurationHuman}
 Cost: $${position.costUsd}
 
 Market Data Latest:
-Volume 24h: $${tokenData.volume24h} | Swaps 24h: ${tokenData.swaps24h}
-Smart Degen Count: ${tokenData.smartDegenCount} (at entry: N/A) // Simplified for now
+Price Change 1h: ${tokenData.priceChange1h}%
+Smart Degen Count: ${tokenData.smartDegenCount} (at entry: ${position.smartDegenEntryCount || "N/A"})
 Holder Count: ${tokenData.holderCount}
 Rug Ratio: ${tokenData.rugRatio}
 Creator Status: ${tokenData.creatorTokenStatus}
 Is Wash Trading: ${tokenData.isWashTrading}
+Liquidity: $${tokenData.liquidity}
 
 K-line 1m last (30 candles):
 ${tokenData.kline1mData}

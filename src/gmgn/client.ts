@@ -68,6 +68,18 @@ export async function fetchTopTraders(chain: string, address: string, tag: strin
   return executeGmgnCommand<any>(args);
 }
 
+// Token endpoint - Token info
+export async function fetchTokenInfo(chain: string, address: string) {
+  const args = ["token", "info", "--chain", chain, "--address", address, "--raw"];
+  return executeGmgnCommand<any>(args);
+}
+
+// Token endpoint - Token security
+export async function fetchTokenSecurity(chain: string, address: string) {
+  const args = ["token", "security", "--chain", chain, "--address", address, "--raw"];
+  return executeGmgnCommand<any>(args);
+}
+
 // Trade endpoint - Execute swap
 export async function executeSwap(params: {
   chain: string;

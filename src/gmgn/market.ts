@@ -1,5 +1,69 @@
-import { fetchKline, fetchTopTraders } from "./client";
+import { fetchKline, fetchTopTraders, fetchTokenInfo, fetchTokenSecurity } from "./client";
 import { delay } from "../utils/concurrency";
+
+export interface TokenInfo {
+  price: number;
+  liquidity: number;
+  holderCount: number;
+  smartDegenCount: number;
+  renownedCount: number;
+  usdMarketCap: number;
+  launchpadPlatform: string;
+  creatorTokenStatus: string;
+  rugRatio: number;
+  isWashTrading: boolean;
+  top10HolderRate: number;
+  creatorBalanceRate: number;
+  bundlerTraderAmountRate: number;
+  ratTraderAmountRate: number;
+  renouncedMint: boolean;
+  renouncedFreezeAccount: boolean;
+  hasAtLeastOneSocial: boolean;
+  ctoFlag: boolean;
+}
+
+export async function getTokenInfo(chain: string, address: string): Promise<Partial<TokenInfo>> {
+  try {
+    const info = await fetchTokenInfo(chain, address);
+
+    return {
+      price: parseFloat(info.price) || 0,
+      liquidity: parseFloat(info.liquidity) || 0,
+      holderCount: info.holder_count || 0,
+      smartDegenCount: info.wallet_tags_stat?.smart_wallets || 0,
+      renownedCount: info.wallet_tags_stat?.renowned_wallets || 0,
+      usdMarketCap: parseFloat(info.price) * parseFloat(info.circulating_supply) || 0,
+      launchpadPlatform: info.launchpad_platform || "",
+      top10HolderRate: parseFloat(info.stat?.top_10_holder_rate) || 0,
+      creatorBalanceRate: parseFloat(info.stat?.creator_hold_rate) || 0,
+      creatorTokenStatus: info.dev?.creator_token_status === "sell" ? "creator_close" : "creator_hold",
+    };
+  } catch (error) {
+    console.error("Error fetching token info:", error);
+    return {};
+  }
+}
+
+export async function getTokenSecurity(chain: string, address: string): Promise<Partial<TokenInfo>> {
+  try {
+    const security = await fetchTokenSecurity(chain, address);
+
+    return {
+      rugRatio: parseFloat(security.rug_ratio) || 0,
+      isWashTrading: security.is_wash_trading || false,
+      creatorTokenStatus: security.creator_token_status === "creator_close" ? "creator_close" : "creator_hold",
+      bundlerTraderAmountRate: parseFloat(security.bundler_trader_amount_rate) || 0,
+      ratTraderAmountRate: parseFloat(security.rat_trader_amount_rate) || 0,
+      renouncedMint: security.renounced_mint || false,
+      renouncedFreezeAccount: security.renounced_freeze_account || false,
+      hasAtLeastOneSocial: security.has_at_least_one_social || false,
+      ctoFlag: security.cto_flag || false,
+    };
+  } catch (error) {
+    console.error("Error fetching token security:", error);
+    return {};
+  }
+}
 
 export async function getTokenDetails(chain: string, address: string) {
   try {

@@ -157,6 +157,7 @@ async function executeBuyOrder(token: TokenData) {
       currentMarketCap: token.usdMarketCap,
       lastUpdated: Date.now(),
       buyTradeId: trade.id,
+      smartDegenEntryCount: token.smartDegenCount,
     };
 
     // Optimized: Load once, modify, save once

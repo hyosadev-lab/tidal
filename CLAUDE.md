@@ -360,12 +360,13 @@ Holding Duration: {holdingDurationHuman}
 Cost: ${costUsd}
 
 Market Data Latest:
-Volume 1h: ${volume1h} | Swaps 1h: {swaps1h}
-Smart Degen Count: {smartDegenCount} (at entry: {smartDegenCountAtEntry})
+Price Change 1h: {priceChange1h}%
+Smart Degen Count: {smartDegenCount} (at entry: {smartDegenEntryCount})
 Holder Count: {holderCount}
 Rug Ratio: {rugRatio}
 Creator Status: {creatorTokenStatus}
 Is Wash Trading: {isWashTrading}
+Liquidity: ${liquidity}
 
 K-line 1m last (30 candles):
 {kline1mData}

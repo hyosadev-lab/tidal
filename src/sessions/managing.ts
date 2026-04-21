@@ -1,6 +1,6 @@
 import { getPositions, savePositions, getTrades, saveTrades, getLearnings } from "../storage/db";
 import { generateLearnings } from "../agent/learner";
-import { getTokenDetails } from "../gmgn/market";
+import { getTokenDetails, getTokenInfo, getTokenSecurity } from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
 import { getManageDecision, checkHardRules } from "../agent/manager";
 import type { Position, Trade, TokenData } from "../storage/types";
@@ -71,7 +71,13 @@ async function processPosition(position: Position) {
       return;
     }
 
-    // 3. AI Decision
+    // 3. Fetch token info and security data
+    const [tokenInfo, tokenSecurity] = await Promise.all([
+      getTokenInfo(CHAIN, position.tokenAddress),
+      getTokenSecurity(CHAIN, position.tokenAddress),
+    ]);
+
+    // 4. AI Decision
     const learnings = await getLearnings();
     const tokenData: TokenData = {
       address: position.tokenAddress,
@@ -79,31 +85,34 @@ async function processPosition(position: Position) {
       name: position.tokenName,
       price: currentPrice,
       priceChange1h: priceChange1h,
-      usdMarketCap: position.currentMarketCap || 0,
+      usdMarketCap: tokenInfo?.usdMarketCap || position.currentMarketCap || 0,
       kline1mData: details.kline1mData,
       kline5mData: details.kline5mData,
       topTradersSummary: details.topTradersSummary,
-      // Fill required fields with defaults
-      liquidity: 0,
+      // Data from token info
+      liquidity: tokenInfo?.liquidity || 0,
+      // Note: volume24h, swaps24h, buys24h, sells24h are not available from token info endpoint
+      // These fields are only available from market trenches/trending endpoints
       volume24h: 0,
       swaps24h: 0,
       buys24h: 0,
       sells24h: 0,
-      holderCount: 0,
-      smartDegenCount: 0,
-      renownedCount: 0,
-      top10HolderRate: 0,
-      creatorTokenStatus: "",
-      creatorBalanceRate: 0,
-      rugRatio: 0,
-      bundlerTraderAmountRate: 0,
-      ratTraderAmountRate: 0,
-      isWashTrading: false,
-      launchpadPlatform: "",
-      renouncedMint: false,
-      renouncedFreezeAccount: false,
-      hasAtLeastOneSocial: false,
-      ctoFlag: false,
+      holderCount: tokenInfo?.holderCount || 0,
+      smartDegenCount: tokenInfo?.smartDegenCount || 0,
+      renownedCount: tokenInfo?.renownedCount || 0,
+      top10HolderRate: tokenInfo?.top10HolderRate || 0,
+      creatorTokenStatus: tokenSecurity?.creatorTokenStatus || tokenInfo?.creatorTokenStatus || "",
+      creatorBalanceRate: tokenInfo?.creatorBalanceRate || 0,
+      // Data from token security
+      rugRatio: tokenSecurity?.rugRatio || 0,
+      bundlerTraderAmountRate: tokenSecurity?.bundlerTraderAmountRate || 0,
+      ratTraderAmountRate: tokenSecurity?.ratTraderAmountRate || 0,
+      isWashTrading: tokenSecurity?.isWashTrading || false,
+      launchpadPlatform: tokenInfo?.launchpadPlatform || "",
+      renouncedMint: tokenSecurity?.renouncedMint || false,
+      renouncedFreezeAccount: tokenSecurity?.renouncedFreezeAccount || false,
+      hasAtLeastOneSocial: tokenSecurity?.hasAtLeastOneSocial || false,
+      ctoFlag: tokenSecurity?.ctoFlag || false,
     };
 
     const decision = await getManageDecision(position, tokenData, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT, learnings);

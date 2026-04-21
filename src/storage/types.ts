@@ -45,6 +45,8 @@ export interface Position {
   unrealizedPnlPercent?: number;
   lastUpdated: number;
   buyTradeId: string;
+  // Data saat entry untuk perbandingan
+  smartDegenEntryCount?: number;
 }
 
 export interface Learning {
