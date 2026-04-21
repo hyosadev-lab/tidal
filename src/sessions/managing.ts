@@ -51,9 +51,36 @@ async function monitorPositions() {
 
 async function processPosition(position: Position) {
   try {
-    // 1. Fetch current price
+    // 1. Fetch current price and calculate price change
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
-    const currentPrice = parseFloat(details.kline1mData.split("\n").pop()?.split("C:")[1]?.split(" ")[0] || "0");
+    const klineLines = (details.kline1mData as string).split("\n").filter(line => line.trim());
+
+    let currentPrice = 0;
+    let priceChange1h = 0;
+
+    if (klineLines.length > 0) {
+      // Get current price from last candle
+      const lastCandle = klineLines[klineLines.length - 1] ?? "";
+      const closeMatch = lastCandle.match(/C:([0-9.]+)/);
+      if (closeMatch) {
+        currentPrice = parseFloat(closeMatch[1] ?? "") || 0;
+      }
+
+      // Calculate price change 1h
+      if (klineLines.length >= 2) {
+        const firstCandle = klineLines[0] ?? "";
+        const firstCloseMatch = firstCandle.match(/C:([0-9.]+)/);
+
+        if (firstCloseMatch && closeMatch) {
+          const firstClose = parseFloat(firstCloseMatch[1] ?? "") || 0;
+          const lastClose = parseFloat(closeMatch[1] ?? "") || 0;
+
+          if (firstClose > 0) {
+            priceChange1h = ((lastClose - firstClose) / firstClose) * 100;
+          }
+        }
+      }
+    }
 
     // Update position PnL
     position.currentPrice = currentPrice;
@@ -77,6 +104,7 @@ async function processPosition(position: Position) {
       symbol: position.tokenSymbol,
       name: position.tokenName,
       price: currentPrice,
+      priceChange1h: priceChange1h,
       usdMarketCap: position.currentMarketCap || 0,
       kline1mData: details.kline1mData,
       kline5mData: details.kline5mData,

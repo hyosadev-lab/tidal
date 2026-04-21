@@ -154,5 +154,6 @@ function mapToTokenData(item: any): TokenData {
     kline5mData: "",
     topTradersSummary: "",
     price: 0, // Will be populated from kline data
+    priceChange1h: 0, // Will be populated from kline data
   };
 }

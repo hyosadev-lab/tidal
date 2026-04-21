@@ -83,13 +83,30 @@ async function processCandidate(token: TokenData): Promise<boolean> {
     token.kline5mData = details.kline5mData;
     token.topTradersSummary = details.topTradersSummary;
 
-    // Extract price from kline data (last candle's close price)
-    const klineLines = details.kline1mData.split("\n");
+    // Extract price and price change from kline data
+    const klineLines = (details.kline1mData as string).split("\n").filter(line => line.trim());
     if (klineLines.length > 0) {
-      const lastCandle = klineLines[klineLines.length - 1];
+      // Get current price from last candle
+      const lastCandle = klineLines[klineLines.length - 1] ?? "";
       const closeMatch = lastCandle.match(/C:([0-9.]+)/);
       if (closeMatch) {
-        token.price = parseFloat(closeMatch[1]) || 0;
+        token.price = parseFloat(closeMatch[1] ?? "") || 0;
+      }
+
+      // Calculate price change 1h (from first candle to last candle)
+      if (klineLines.length >= 2) {
+        const firstCandle = klineLines[0] ?? "";
+        const firstCloseMatch = firstCandle.match(/C:([0-9.]+)/);
+        const lastCloseMatch = lastCandle.match(/C:([0-9.]+)/);
+
+        if (firstCloseMatch && lastCloseMatch) {
+          const firstClose = parseFloat(firstCloseMatch[1] ?? "") || 0;
+          const lastClose = parseFloat(lastCloseMatch[1] ?? "") || 0;
+
+          if (firstClose > 0) {
+            token.priceChange1h = ((lastClose - firstClose) / firstClose) * 100;
+          }
+        }
       }
     }
 

@@ -202,4 +202,5 @@ export interface TokenData {
   kline5mData: string;
   topTradersSummary: string;
   price: number;
+  priceChange1h: number;
 }
