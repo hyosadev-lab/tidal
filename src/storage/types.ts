@@ -119,3 +119,9 @@ export interface TokenData {
   price: number;
   priceChange1h: number;
 }
+
+export interface SoldToken {
+  address: string;
+  symbol: string;
+  soldAt: number;
+}

@@ -1,4 +1,4 @@
-import type { Trade, Position, Learning, Performance } from "./types";
+import type { Trade, Position, Learning, Performance, SoldToken } from "./types";
 
 const DATA_DIR = "data";
 
@@ -82,4 +82,23 @@ export async function getWatchlist(): Promise<string[]> {
 
 export async function saveWatchlist(watchlist: string[]): Promise<void> {
   await writeJSON("watchlist.json", watchlist);
+}
+
+// Recently Sold Tokens (cooldown)
+export async function getSoldTokens(): Promise<SoldToken[]> {
+  return readJSON<SoldToken[]>("sold_tokens.json", []);
+}
+
+export async function saveSoldTokens(tokens: SoldToken[]): Promise<void> {
+  await writeJSON("sold_tokens.json", tokens);
+}
+
+export async function addSoldToken(token: { address: string; symbol: string }): Promise<void> {
+  const soldTokens = await getSoldTokens();
+  soldTokens.push({
+    address: token.address,
+    symbol: token.symbol,
+    soldAt: Date.now(),
+  });
+  await saveSoldTokens(soldTokens);
 }

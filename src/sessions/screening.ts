@@ -8,6 +8,8 @@ import {
   getTrades,
   saveTrades,
   getLearnings,
+  getSoldTokens,
+  saveSoldTokens,
 } from "../storage/db";
 import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
@@ -20,6 +22,8 @@ const MAX_OPEN_POSITIONS = parseInt(process.env.MAX_OPEN_POSITIONS || "5");
 const SCAN_INTERVAL_MINUTES = parseFloat(process.env.SCAN_INTERVAL_MINUTES || "0.5");
 const SCAN_INTERVAL_MS = SCAN_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
+const SOLD_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown
+const AMOUNT_SOL = parseFloat(process.env.AMOUNT_SOL || "0.1");
 
 export async function startScreeningSession() {
   logger.info("Starting screening session");
@@ -41,14 +45,29 @@ async function scanAndFilter() {
   // 1. Fetch trenches tokens
   const candidates = await fetchTrenchesTokens(CHAIN);
 
-  // 2. Filter client-side (load positions once)
+  // 2. Filter client-side (load positions and sold tokens)
   const positions = await getPositions();
-  const currentOpenCount = positions.length;
+  const soldTokens = await getSoldTokens();
+  const now = Date.now();
+
+  // Cleanup old sold tokens (older than cooldown)
+  const activeSoldTokens = soldTokens.filter(s => now - s.soldAt < SOLD_COOLDOWN_MS);
+  if (activeSoldTokens.length !== soldTokens.length) {
+    await saveSoldTokens(activeSoldTokens);
+  }
+
   const openPositionAddresses = new Set(positions.map((p) => p.tokenAddress));
+
+  // Filter sold tokens that are still in cooldown period
+  const recentSoldAddresses = new Set(activeSoldTokens.map(s => s.address));
 
   const filteredCandidates = candidates.filter((token) => {
     if (openPositionAddresses.has(token.address)) {
       logger.debug(`Skipping ${token.symbol}: already have position`);
+      return false;
+    }
+    if (recentSoldAddresses.has(token.address)) {
+      logger.debug(`Skipping ${token.symbol}: recently sold, in cooldown`);
       return false;
     }
     return true;
@@ -117,10 +136,8 @@ async function executeBuyOrder(token: TokenData) {
     return;
   }
 
-  const amountSol = 0.01; // Fixed amount for demo
-
   if (DRY_RUN) {
-    logger.info(`[DRY RUN] Buy ${token.symbol} - ${amountSol} SOL`);
+    logger.info(`[DRY RUN] Buy ${token.symbol} - ${AMOUNT_SOL} SOL`);
 
     // Create mock trade and position
     const trade: Trade = {
@@ -129,8 +146,8 @@ async function executeBuyOrder(token: TokenData) {
       tokenSymbol: token.symbol,
       tokenName: token.name,
       action: "BUY",
-      inputAmount: (amountSol * 1e9).toString(),
-      inputAmountUsd: amountSol * token.price,
+      inputAmount: (AMOUNT_SOL * 1e9).toString(),
+      inputAmountUsd: AMOUNT_SOL * token.price,
       outputAmount: "0",
       priceAtTrade: token.price,
       marketCapAtTrade: token.usdMarketCap,
@@ -149,7 +166,7 @@ async function executeBuyOrder(token: TokenData) {
       entryMarketCap: token.usdMarketCap,
       entryTimestamp: Date.now(),
       amountToken: "0",
-      costUsd: amountSol * token.price,
+      costUsd: AMOUNT_SOL * token.price,
       currentPrice: token.price,
       currentMarketCap: token.usdMarketCap,
       lastUpdated: Date.now(),
@@ -171,7 +188,7 @@ async function executeBuyOrder(token: TokenData) {
       chain: CHAIN,
       walletAddress: WALLET_ADDRESS,
       tokenAddress: token.address,
-      amountSol: amountSol,
+      amountSol: AMOUNT_SOL,
       slippage: SLIPPAGE,
     });
 
@@ -186,8 +203,8 @@ async function executeBuyOrder(token: TokenData) {
       tokenSymbol: token.symbol,
       tokenName: token.name,
       action: "BUY",
-      inputAmount: (amountSol * 1e9).toString(),
-      inputAmountUsd: amountSol * token.price,
+      inputAmount: (AMOUNT_SOL * 1e9).toString(),
+      inputAmountUsd: AMOUNT_SOL * token.price,
       outputAmount: "0",
       priceAtTrade: token.price,
       marketCapAtTrade: token.usdMarketCap,

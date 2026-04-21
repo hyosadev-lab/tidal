@@ -1,4 +1,4 @@
-import { getPositions, savePositions, getTrades, saveTrades, getLearnings } from "../storage/db";
+import { getPositions, savePositions, getTrades, saveTrades, getLearnings, addSoldToken } from "../storage/db";
 import { generateLearnings } from "../agent/learner";
 import { getTokenDetails, getTokenInfo, getTokenSecurity } from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
@@ -171,6 +171,9 @@ async function executeSellOrder(position: Position, reason: string) {
     const trades = await getTrades();
     trades.push(trade);
     await saveTrades(trades);
+
+    // Record sold token for cooldown
+    await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
     return;
   }
 
@@ -214,6 +217,9 @@ async function executeSellOrder(position: Position, reason: string) {
     const trades = await getTrades();
     trades.push(trade);
     await saveTrades(trades);
+
+    // Record sold token for cooldown
+    await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
 
   } catch (error) {
     logger.error(`Failed to execute sell for ${position.tokenSymbol}`, { error: String(error) });
