@@ -21,37 +21,10 @@ export async function getBuySkipDecision(
   token: TokenData,
   learnings: Learning[]
 ): Promise<AiDecision> {
-  // 1. Hard rules check (Quality Gate)
-  // Quick disqualification: rug_ratio > 0.3 OR is_wash_trading = true
-  if (token.rugRatio > 0.3) {
-    return {
-      action: "SKIP",
-      confidence: 100,
-      reasoning: `High rug ratio: ${token.rugRatio}`,
-      signals: ["high_rug_ratio"],
-    };
-  }
-  if (token.isWashTrading) {
-    return {
-      action: "SKIP",
-      confidence: 100,
-      reasoning: "Wash trading detected",
-      signals: ["wash_trading"],
-    };
-  }
-  if (token.smartDegenCount === 0) {
-    return {
-      action: "SKIP",
-      confidence: 80,
-      reasoning: "No smart money holders",
-      signals: ["zero_smart_degen"],
-    };
-  }
-
-  // 2. Build user prompt
+  // Build user prompt
   const userPrompt = buildUserPrompt(token, learnings);
 
-  // 3. Call OpenRouter API
+  // Call OpenRouter API
   try {
     if (!OPENROUTER_API_KEY) {
       logger.warn("OPENROUTER_API_KEY not set, using fallback rule-based decision");
@@ -74,7 +47,7 @@ export async function getBuySkipDecision(
         ],
         response_format: { type: "json_object" },
         temperature: 0.3,
-        max_tokens: 1000
+        max_tokens: 5000
       })
     });
 
@@ -110,7 +83,9 @@ function getFallbackDecision(token: TokenData): AiDecision {
     token.smartDegenCount >= 3 &&
     token.rugRatio < 0.2 &&
     token.creatorTokenStatus === "creator_close" &&
-    token.liquidity > 50000
+    token.liquidity > 50000 &&
+    token.top10HolderRate < 0.3 &&
+    !token.isWashTrading
   ) {
     action = "BUY";
     reasoning = "Strong signals: smart money, low rug ratio, dev sold, high liquidity";
