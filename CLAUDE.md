@@ -95,40 +95,44 @@ LOG_LEVEL=info
 
 **1. Trenches — scan token baru**
 ```
-GET /v1/trenches?chain=sol&limit=50
+gmgn-cli market trenches --chain sol --type completed --filter-preset safe --min-smart-degen-count 1 --raw
 ```
 Response: `data.new_creation[]`, `data.pump[]`, `data.completed[]`
 
-Setiap item adalah `RankItem` — sama struktur dengan `/v1/market/rank`.
-
-**2. Market Rank — trending tokens**
+**2. K-line data (candlestick)**
 ```
-GET /v1/market/rank?chain=sol&interval=5m&limit=20&order_by=swaps&filters=renounced&filters=frozen
-```
-
-**3. K-line data**
-```
-GET /v1/market/token_kline?chain=sol&address=TOKEN_ADDRESS&resolution=1m&from=TIMESTAMP&to=TIMESTAMP
+gmgn-cli market kline --chain sol --address <token_address> --resolution 1m --from <timestamp> --to <timestamp> --raw
 ```
 - Resolution `1m`: 30 candles (30 menit terakhir)
 - Resolution `5m`: 12 candles (60 menit terakhir)
 
-**4. Top Traders**
+**3. Token Top Traders (Smart Money)**
 ```
-GET /v1/market/token_top_traders?chain=sol&address=TOKEN_ADDRESS&tag=smart_degen&limit=10
+gmgn-cli token traders --chain sol --address <token_address> --tag smart_degen --limit 10 --raw
 ```
 
-**5. Execute Swap (BUY)**
+**4. Token Info** - Get basic token data
 ```
-POST /v1/trade/swap
-Body: { chain, from_address, input_token, output_token, input_amount, slippage, auto_slippage, is_anti_mev: true }
+gmgn-cli token info --chain sol --address <token_address> --raw
 ```
-- Beli token: `input_token` = SOL address (`So11111111111111111111111111111111111111112`), `output_token` = token address
-- Jual token: `input_token` = token address, `output_token` = SOL address, gunakan `input_amount_bps: "10000"` untuk jual semua
+Response includes: price, liquidity, holder_count, wallet_tags_stat, launchpad_platform, stat, dev
 
-**6. Query Order Status**
+**5. Token Security** - Get security metrics
 ```
-GET /v1/trade/query_order?order_id=ORDER_ID&chain=sol
+gmgn-cli token security --chain sol --address <token_address> --raw
+```
+Response includes: rug_ratio, is_wash_trading, creator_token_status, bundler_trader_amount_rate, renounced_mint, etc.
+
+**6. Execute Swap (BUY/SELL)**
+```
+gmgn-cli swap --chain sol --from <wallet_address> --input-token <input_token> --output-token <output_token> --amount <amount> --slippage <slippage>
+```
+- Buy: input-token = SOL address (`So11111111111111111111111111111111111111112`), output-token = token address
+- Sell: input-token = token address, output-token = SOL address, use --percent 100 untuk jual semua
+
+**7. Query Order Status**
+```
+gmgn-cli order get --chain sol --order-id <order_id> --raw
 ```
 Status: `pending` → `processed` → `confirmed` | `failed` | `expired`
 
@@ -186,6 +190,8 @@ interface Position {
   unrealizedPnlPercent?: number;
   lastUpdated: number;
   buyTradeId: string;
+  // Data saat entry untuk perbandingan
+  smartDegenEntryCount?: number; // jumlah smart degen saat entry
 }
 ```
 
@@ -388,14 +394,36 @@ RELEVANT LEARNINGS from previous trades:
 Setiap kali 5 trade baru selesai (status confirmed), panggil `generateLearnings()`:
 
 1. Ambil 20 trade terakhir dari `trades.json`
-2. Kirim ke OpenRouter dengan prompt:
-   ```
-   Analisis trade history ini dan identifikasi pattern yang berhasil dan gagal.
-   Buat 2-3 insight spesifik yang bisa meningkatkan win rate.
-   Format JSON array: [{ type, description, successRate, avgPnlPercent }]
-   ```
-3. Simpan insights ke `learnings.json`
+2. Kirim ke OpenRouter dengan prompt berisi:
+   - Statistik: total trades, win rate, avg PnL
+   - Detail setiap trade: token, entry/exit price, PnL, holding duration, reasoning
+   - Permintaan analisis pattern entry/exit/risk/filter
+3. Parse response JSON dan simpan ke `learnings.json`
 4. Inject learnings yang relevan ke AI decision context berikutnya
+
+**Fallback:** Jika OpenRouter gagal, generate insight berdasarkan statistik aktual:
+- Win rate tinggi (>60%) → "Current strategy is working, continue current approach"
+- Win rate rendah (<40%) → "Current strategy needs adjustment, review entry/exit criteria"
+- Holding duration terlalu lama (>24h) → "Consider shorter holds for faster capital rotation"
+- Holding duration terlalu pendek (<1h) → "Ensure not selling too early on small moves"
+
+**Format Learning:**
+```typescript
+interface Learning {
+  id: string;
+  createdAt: number;
+  basedOnTradeIds: string[];
+  insight: string;               // AI-generated insight
+  pattern: {
+    type: "entry" | "exit" | "filter" | "risk";
+    description: string;
+    successRate?: number;
+    avgPnlPercent?: number;
+  };
+  appliedCount: number;          // berapa kali pattern ini dipakai
+  successCount: number;          // berapa kali berhasil
+}
+```
 
 ---
 
@@ -467,6 +495,17 @@ const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
 const data = await response.json();
 const decision = JSON.parse(data.choices[0].message.content);
 // decision: { action, confidence, reasoning, signals }
+```
+
+**Fallback Decision (jika OpenRouter gagal atau tidak dikonfigurasi):**
+
+```typescript
+// Rule-based fallback using available data
+1. Rug Ratio > 0.3 → SELL (high risk)
+2. Wash Trading detected → SELL (suspicious activity)
+3. Creator still holding → HOLD (watch for sell pressure)
+4. Liquidity < $10,000 → SELL (low liquidity)
+5. Default → HOLD with low confidence
 ```
 
 ---
