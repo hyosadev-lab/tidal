@@ -109,10 +109,10 @@ function getFallbackDecision(tokenData: TokenData): AiManageDecision {
   let action: "HOLD" | "SELL" = "HOLD";
   let reasoning = "Defaulting to HOLD";
 
-  // Example logic: Sell if price drops significantly in 1h or smart money exits
-  if (tokenData.change1h < -10) {
+  // Example logic: Sell if low volume or smart money exits (placeholder logic)
+  if (tokenData.volume24h < 1000) {
     action = "SELL";
-    reasoning = "Price dropped >10% in 1h";
+    reasoning = "Low trading volume detected";
   }
 
   return {
@@ -141,13 +141,13 @@ function buildUserPrompt(
   return `
 POSITION: ${position.tokenSymbol} (${position.tokenAddress})
 Entry Price: $${position.entryPrice} | Entry Market Cap: $${position.entryMarketCap}
-Current Price: $${tokenData.price} | Current Market Cap: $${tokenData.marketCap}
+Current Price: $${tokenData.price} | Current Market Cap: $${tokenData.usdMarketCap}
 Unrealized PnL: ${position.unrealizedPnlPercent}% ($${position.unrealizedPnlUsd})
 Holding Duration: ${holdingDurationHuman}
 Cost: $${position.costUsd}
 
 Market Data Latest:
-Volume 1h: $${tokenData.volume1h} | Swaps 1h: ${tokenData.swaps1h}
+Volume 24h: $${tokenData.volume24h} | Swaps 24h: ${tokenData.swaps24h}
 Smart Degen Count: ${tokenData.smartDegenCount} (at entry: N/A) // Simplified for now
 Holder Count: ${tokenData.holderCount}
 Rug Ratio: ${tokenData.rugRatio}

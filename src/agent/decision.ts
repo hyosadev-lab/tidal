@@ -135,18 +135,17 @@ function buildUserPrompt(
 
   return `
 TOKEN: ${token.symbol} (${token.address})
-Market Cap: $${token.marketCap}
+Market Cap: $${token.usdMarketCap}
 Liquidity: $${token.liquidity}
-Volume 1h: $${token.volume1h} | Volume 24h: $${token.volume24h}
-Swaps 1h: ${token.swaps1h} | Swaps 24h: ${token.swaps24h}
+Volume 24h: $${token.volume24h}
+Swaps 24h: ${token.swaps24h}
 Buys 24h: ${token.buys24h} | Sells 24h: ${token.sells24h}
-Price Change 1h: ${token.change1h}%
 Holder Count: ${token.holderCount}
 Smart Degen Count: ${token.smartDegenCount}
 Renowned Count: ${token.renownedCount}
 Top 10 Holder Rate: ${token.top10HolderRate}
 Creator Status: ${token.creatorTokenStatus} | Creator Balance Rate: ${token.creatorBalanceRate}
-Rug Ratio: ${token.rugRatio} | Bundler Rate: ${token.bundlerRate} | Insider Ratio: ${token.insiderRatio}
+Rug Ratio: ${token.rugRatio} | Bundler Rate: ${token.bundlerTraderAmountRate} | Insider Ratio: ${token.ratTraderAmountRate}
 Is Wash Trading: ${token.isWashTrading}
 Launchpad: ${token.launchpadPlatform}
 Renounced Mint: ${token.renouncedMint} | Renounced Freeze: ${token.renouncedFreezeAccount}

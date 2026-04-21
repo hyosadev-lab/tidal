@@ -83,6 +83,16 @@ async function processCandidate(token: TokenData): Promise<boolean> {
     token.kline5mData = details.kline5mData;
     token.topTradersSummary = details.topTradersSummary;
 
+    // Extract price from kline data (last candle's close price)
+    const klineLines = details.kline1mData.split("\n");
+    if (klineLines.length > 0) {
+      const lastCandle = klineLines[klineLines.length - 1];
+      const closeMatch = lastCandle.match(/C:([0-9.]+)/);
+      if (closeMatch) {
+        token.price = parseFloat(closeMatch[1]) || 0;
+      }
+    }
+
     // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();
 
@@ -134,7 +144,7 @@ async function executeBuyOrder(token: TokenData) {
       inputAmountUsd: amountSol * token.price,
       outputAmount: "0",
       priceAtTrade: token.price,
-      marketCapAtTrade: token.marketCap,
+      marketCapAtTrade: token.usdMarketCap,
       timestamp: Date.now(),
       orderId: "dry-run-" + crypto.randomUUID(),
       orderStatus: "confirmed",
@@ -147,12 +157,12 @@ async function executeBuyOrder(token: TokenData) {
       tokenSymbol: token.symbol,
       tokenName: token.name,
       entryPrice: token.price,
-      entryMarketCap: token.marketCap,
+      entryMarketCap: token.usdMarketCap,
       entryTimestamp: Date.now(),
       amountToken: "0",
       costUsd: amountSol * token.price,
       currentPrice: token.price,
-      currentMarketCap: token.marketCap,
+      currentMarketCap: token.usdMarketCap,
       lastUpdated: Date.now(),
       buyTradeId: trade.id,
     };
@@ -190,7 +200,7 @@ async function executeBuyOrder(token: TokenData) {
       inputAmountUsd: amountSol * token.price,
       outputAmount: "0",
       priceAtTrade: token.price,
-      marketCapAtTrade: token.marketCap,
+      marketCapAtTrade: token.usdMarketCap,
       timestamp: Date.now(),
       orderId: result.order_id,
       orderStatus: "pending",
