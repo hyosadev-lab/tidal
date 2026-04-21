@@ -266,7 +266,12 @@ setiap SCAN_INTERVAL_MS:
      a. fetchTokenDetails() → kline 1m (30 candle), kline 5m (12 candle), top_traders smart_degen
      b. aiDecision() → kirim context ke OpenRouter
      c. jika SKIP → log dan lanjut
-     d. jika BUY → executeBuy() → simpan ke positions.json + trades.json
+     d. jika BUY → executeBuy() → simpan pending trade → start polling confirmation
+
+**Order Confirmation Flow:**
+- DRY RUN: Langsung confirmed → buat trade & position
+- Real Order: Pending → polling setiap 3 detik (max 60 detik) → confirmed → buat position
+- Jika order gagal/timeout → status diupdate, position tidak dibuat
 ```
 
 **AI Context for Screening (BUY/SKIP):**
@@ -333,8 +338,9 @@ Bertugas memantau posisi yang sudah dibeli dan memutuskan **HOLD** atau **SELL**
 
 ```
 setiap MANAGE_INTERVAL_MS (lebih sering dari Screening, misal 10 detik):
-  1. loadOpenPositions() → baca positions.json
-  2. untuk setiap posisi:
+  1. syncPositionsFromTrades() → sync position dari confirmed trades yang belum ada di positions.json
+  2. loadOpenPositions() → baca positions.json
+  3. untuk setiap posisi:
      a. fetchCurrentPrice() → ambil harga terbaru via kline 1m
      b. updatePositionPnL() → hitung unrealized PnL
      c. checkHardRules():
@@ -344,7 +350,7 @@ setiap MANAGE_INTERVAL_MS (lebih sering dari Screening, misal 10 detik):
         - kirim context posisi + market data ke OpenRouter
         - jika SELL → executeSell("ai_decision")
         - jika HOLD → update lastUpdated, lanjut
-  3. learnFromRecentTrades() → setiap 5 trade confirmed, generate insight baru
+  4. learnFromRecentTrades() → setiap 5 trade confirmed, generate insight baru
 ```
 
 **AI Context for Managing (HOLD/SELL):**
@@ -534,14 +540,29 @@ Selalu buat file JSON kosong `[]` atau `{}` jika belum ada (first run).
 - Jika GMGN API gagal → log error, skip token, lanjut ke berikutnya. Jangan stop loop.
 - Jika OpenRouter gagal → gunakan fallback rule-based decision (SKIP jika tidak yakin)
 - Jika trade gagal → catat di trades.json dengan status "failed", jangan retry otomatis
-- Jika order stuck di "pending" > 60 detik → mark sebagai "expired"
+- Jika order pending > 60 detik → mark sebagai "expired" (polling timeout)
+- Jika order confirmed → buat position otomatis via polling function
+- Sync positions dari trades setiap monitoring loop untuk backward compatibility
 
-### Dry Run Mode
-Jika `DRY_RUN=true`:
+### Order Confirmation Flow
+
+**DRY RUN Mode:**
 - Simulasikan semua trades tanpa eksekusi nyata
+- Order langsung "confirmed" → buat trade & position segera
 - Catat di trades.json dengan `isDryRun: true`
-- Update positions.json seperti biasa
-- Berguna untuk testing strategi sebelum live
+
+**Real Order Mode:**
+1. Execute buy → dapatkan `order_id` dari GMGN
+2. Simpan trade dengan status "pending"
+3. Start polling function (background):
+   - Cek order status setiap 3 detik
+   - Timeout setelah 60 detik
+   - Jika "confirmed": update trade status, buat position, save ke positions.json
+   - Jika "failed" atau "expired": update trade status, tidak buat position
+
+**Backward Compatibility:**
+- `syncPositionsFromTrades()` mencari confirmed BUY trades tanpa position
+- Buat position dari trade data (untuk trades lama sebelum polling diimplementasikan)
 
 ---
 
