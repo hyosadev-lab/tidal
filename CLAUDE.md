@@ -285,13 +285,11 @@ Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reas
 
 User message:
 ```
-TOKEN: {symbol} ({address})
-Market Cap: ${usdMarketCap}
-Liquidity: ${liquidity}
-Volume 1h: ${volume1h} | Volume 24h: ${volume24h}
-Swaps 1h: {swaps1h} | Swaps 24h: {swaps24h}
-Buys 24h: {buys24h} | Sells 24h: {sells24h}
-Price Change 1h: {change1h}%
+TOKEN: ${token.symbol} (${token.address})
+Market Cap: $${token.usdMarketCap}
+Liquidity: $${token.liquidity}
+Volume 1h: $${token.volume24h} | Swaps 1h: ${token.swaps24h}
+Price Change 1h: ${token.priceChange1h}%
 Holder Count: {holderCount}
 Smart Degen Count: {smartDegenCount}
 Renowned Count: {renownedCount}

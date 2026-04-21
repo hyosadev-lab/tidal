@@ -91,7 +91,6 @@ export interface TokenData {
   // Core Fields from gmgn-cli trenches
   address: string;
   bundlerTraderAmountRate: number;
-  buys24h: number;
   creatorBalanceRate: number;
   creatorTokenStatus: string;
   ctoFlag: boolean;
@@ -106,7 +105,6 @@ export interface TokenData {
   renouncedMint: boolean;
   renownedCount: number;
   rugRatio: number;
-  sells24h: number;
   smartDegenCount: number;
   swaps24h: number;
   symbol: string;

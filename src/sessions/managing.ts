@@ -136,12 +136,9 @@ async function processPosition(position: Position) {
       topTradersSummary: details.topTradersSummary,
       // Data from token info
       liquidity: tokenInfo?.liquidity || 0,
-      // Note: volume24h, swaps24h, buys24h, sells24h are not available from token info endpoint
-      // These fields are only available from market trenches/trending endpoints
-      volume24h: 0,
-      swaps24h: 0,
-      buys24h: 0,
-      sells24h: 0,
+      // Volume data from kline 5m (1 hour)
+      volume24h: details.volume1h,
+      swaps24h: details.swaps1h,
       holderCount: tokenInfo?.holderCount || 0,
       smartDegenCount: tokenInfo?.smartDegenCount || 0,
       renownedCount: tokenInfo?.renownedCount || 0,

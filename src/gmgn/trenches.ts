@@ -46,8 +46,6 @@ function mapToTokenData(item: any): TokenData {
     liquidity: parseFloat(item.liquidity) || 0,
     volume24h: parseFloat(item.volume_24h) || 0,
     swaps24h: item.swaps_24h || 0,
-    buys24h: item.buys_24h || 0,
-    sells24h: item.sells_24h || 0,
     holderCount: item.holder_count || 0,
     smartDegenCount: item.smart_degen_count || 0,
     renownedCount: item.renowned_count || 0,

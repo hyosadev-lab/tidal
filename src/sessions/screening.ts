@@ -80,6 +80,8 @@ async function processCandidate(token: TokenData): Promise<void> {
     token.topTradersSummary = details.topTradersSummary;
     token.price = details.price;
     token.priceChange1h = details.priceChange1h;
+    token.volume24h = details.volume1h; // Use 1h volume for screening
+    token.swaps24h = details.swaps1h;
 
     // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();

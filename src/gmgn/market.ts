@@ -65,7 +65,17 @@ export async function getTokenSecurity(chain: string, address: string): Promise<
   }
 }
 
-export async function getTokenDetails(chain: string, address: string) {
+export interface TokenDetails {
+  kline1mData: string;
+  kline5mData: string;
+  topTradersSummary: string;
+  price: number;
+  priceChange1h: number;
+  volume1h: number;
+  swaps1h: number;
+}
+
+export async function getTokenDetails(chain: string, address: string): Promise<TokenDetails> {
   try {
     const now = Math.floor(Date.now() / 1000);
 
@@ -113,7 +123,17 @@ export async function getTokenDetails(chain: string, address: string) {
     const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
     const kline5mData = kline5mResult?.list || [];
 
+    // Calculate volume 1h from 5m candles
+    let volume1h = 0;
+    let swaps1h = 0;
+
     const kline5mSummary = kline5mData.map((candle: any) => {
+      // Sum volume from all candles
+      volume1h += parseFloat(candle.volume) || 0;
+
+      // Count candles as swaps (estimation)
+      swaps1h += 1;
+
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
 
@@ -144,6 +164,8 @@ export async function getTokenDetails(chain: string, address: string) {
       topTradersSummary: tradersSummary,
       price: currentPrice,
       priceChange1h: priceChange1h,
+      volume1h: volume1h,
+      swaps1h: swaps1h,
     };
   } catch (error) {
     console.error("Error fetching token details:", error);
@@ -153,6 +175,8 @@ export async function getTokenDetails(chain: string, address: string) {
       topTradersSummary: "",
       price: 0,
       priceChange1h: 0,
+      volume1h: 0,
+      swaps1h: 0,
     };
   }
 }
