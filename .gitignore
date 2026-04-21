@@ -16,7 +16,7 @@ _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Trading log directory
-data/
+/data/
 
 # dotenv environment variable files
 .env
