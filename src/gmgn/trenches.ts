@@ -1,22 +1,9 @@
 import { fetchTrenches } from "./client";
 import type { TokenData } from "../storage/types";
 
-// Filters from CLAUDE.md
-const FILTERS = {
-  filterPreset: "safe",
-  minSmartDegenCount: 1,
-  minMarketCap: 20000,
-  maxMarketCap: 2000000,
-  maxRugRatio: 0.3,
-  maxBundlerRate: 0.3,
-  maxInsiderRatio: 0.3,
-  sortBy: "smart_degen_count",
-  limit: 30,
-};
-
 export async function fetchTrenchesTokens(chain: string = "sol"): Promise<TokenData[]> {
   try {
-    const result = await fetchTrenches(chain, FILTERS);
+    const result = await fetchTrenches(chain);
 
     // The response structure depends on gmgn-cli version, but usually contains arrays
     // CLAUDE.md mentions: data.new_creation[], data.pump[], data.completed[]
