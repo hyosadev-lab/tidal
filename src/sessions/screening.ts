@@ -25,6 +25,9 @@ const DRY_RUN = process.env.DRY_RUN === "true";
 const SOLD_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown
 const AMOUNT_SOL = parseFloat(process.env.AMOUNT_SOL || "0.1");
 
+// Track tokens currently being processed to prevent race conditions
+const pendingBuys = new Set<string>();
+
 export async function startScreeningSession() {
   logger.info("Starting screening session");
 
@@ -68,6 +71,10 @@ async function scanAndFilter() {
     }
     if (recentSoldAddresses.has(token.address)) {
       logger.debug(`Skipping ${token.symbol}: recently sold, in cooldown`);
+      return false;
+    }
+    if (pendingBuys.has(token.address)) {
+      logger.debug(`Skipping ${token.symbol}: currently being bought`);
       return false;
     }
     return true;
@@ -121,6 +128,8 @@ async function processCandidate(token: TokenData): Promise<void> {
     );
 
     if (decision.action === "BUY") {
+      // Add to pending set to prevent duplicate buys in same scan cycle
+      pendingBuys.add(token.address);
       await executeBuyOrder(token);
     }
   } catch (error) {
@@ -133,6 +142,7 @@ async function processCandidate(token: TokenData): Promise<void> {
 async function executeBuyOrder(token: TokenData) {
   if (!WALLET_ADDRESS) {
     logger.error("WALLET_ADDRESS not set, cannot execute buy");
+    pendingBuys.delete(token.address);
     return;
   }
 
@@ -180,6 +190,8 @@ async function executeBuyOrder(token: TokenData) {
     positions.push(position);
     await Promise.all([saveTrades(trades), savePositions(positions)]);
 
+    // Clean up pending set for dry run
+    pendingBuys.delete(token.address);
     return;
   }
 
@@ -224,6 +236,7 @@ async function executeBuyOrder(token: TokenData) {
     logger.error(`Failed to execute buy for ${token.symbol}`, {
       error: String(error),
     });
+    pendingBuys.delete(token.address);
   }
 }
 
@@ -236,86 +249,91 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
     orderId: trade.orderId,
   });
 
-  while (Date.now() - startTime < maxWaitTime) {
-    try {
-      await delay(pollInterval);
+  try {
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        await delay(pollInterval);
 
-      const orderStatus = await checkOrderStatus(CHAIN, trade.orderId);
+        const orderStatus = await checkOrderStatus(CHAIN, trade.orderId);
 
-      if (orderStatus.status === "confirmed") {
-        // Order confirmed! Create position and update trade
-        logger.info(`Order confirmed for ${token.symbol}`, {
-          orderId: trade.orderId,
-        });
-
-        // Update trade status
-        const trades = await getTrades();
-        const tradeIndex = trades.findIndex((t) => t.id === trade.id);
-        if (tradeIndex !== -1 && trades[tradeIndex]) {
-          trades[tradeIndex]!.orderStatus = "confirmed";
-          trades[tradeIndex]!.aiReasoning = "Order confirmed by GMGN";
-          await saveTrades(trades);
-
-          // Create position
-          const position: Position = {
-            tokenAddress: token.address,
-            tokenSymbol: token.symbol,
-            tokenName: token.name,
-            entryPrice: token.price,
-            entryMarketCap: token.usdMarketCap,
-            entryTimestamp: Date.now(),
-            amountToken: orderStatus.output_amount?.toString() || "0",
-            costUsd: parseFloat(trade.inputAmountUsd.toString()),
-            currentPrice: token.price,
-            currentMarketCap: token.usdMarketCap,
-            lastUpdated: Date.now(),
-            buyTradeId: trade.id,
-            smartDegenEntryCount: token.smartDegenCount,
-          };
-
-          const positions = await getPositions();
-          positions.push(position);
-          await savePositions(positions);
-
-          logger.info(`Position created for ${token.symbol}`, {
-            costUsd: position.costUsd,
+        if (orderStatus.status === "confirmed") {
+          // Order confirmed! Create position and update trade
+          logger.info(`Order confirmed for ${token.symbol}`, {
+            orderId: trade.orderId,
           });
+
+          // Update trade status
+          const trades = await getTrades();
+          const tradeIndex = trades.findIndex((t) => t.id === trade.id);
+          if (tradeIndex !== -1 && trades[tradeIndex]) {
+            trades[tradeIndex]!.orderStatus = "confirmed";
+            trades[tradeIndex]!.aiReasoning = "Order confirmed by GMGN";
+            await saveTrades(trades);
+
+            // Create position
+            const position: Position = {
+              tokenAddress: token.address,
+              tokenSymbol: token.symbol,
+              tokenName: token.name,
+              entryPrice: token.price,
+              entryMarketCap: token.usdMarketCap,
+              entryTimestamp: Date.now(),
+              amountToken: orderStatus.output_amount?.toString() || "0",
+              costUsd: parseFloat(trade.inputAmountUsd.toString()),
+              currentPrice: token.price,
+              currentMarketCap: token.usdMarketCap,
+              lastUpdated: Date.now(),
+              buyTradeId: trade.id,
+              smartDegenEntryCount: token.smartDegenCount,
+            };
+
+            const positions = await getPositions();
+            positions.push(position);
+            await savePositions(positions);
+
+            logger.info(`Position created for ${token.symbol}`, {
+              costUsd: position.costUsd,
+            });
+          }
+          return;
+        } else if (orderStatus.status === "failed" || orderStatus.status === "expired") {
+          // Order failed or expired
+          logger.warn(`Order ${orderStatus.status} for ${token.symbol}`, {
+            orderId: trade.orderId,
+            status: orderStatus.status,
+          });
+
+          const trades = await getTrades();
+          const tradeIndex = trades.findIndex((t) => t.id === trade.id);
+          if (tradeIndex !== -1 && trades[tradeIndex]) {
+            trades[tradeIndex]!.orderStatus = orderStatus.status;
+            await saveTrades(trades);
+          }
+          return;
         }
-        return;
-      } else if (orderStatus.status === "failed" || orderStatus.status === "expired") {
-        // Order failed or expired
-        logger.warn(`Order ${orderStatus.status} for ${token.symbol}`, {
+        // If still pending, continue polling
+      } catch (error) {
+        logger.error(`Error polling order status for ${token.symbol}`, {
           orderId: trade.orderId,
-          status: orderStatus.status,
+          error: String(error),
         });
-
-        const trades = await getTrades();
-        const tradeIndex = trades.findIndex((t) => t.id === trade.id);
-        if (tradeIndex !== -1 && trades[tradeIndex]) {
-          trades[tradeIndex]!.orderStatus = orderStatus.status;
-          await saveTrades(trades);
-        }
-        return;
       }
-      // If still pending, continue polling
-    } catch (error) {
-      logger.error(`Error polling order status for ${token.symbol}`, {
-        orderId: trade.orderId,
-        error: String(error),
-      });
     }
-  }
 
-  // Timeout reached
-  logger.warn(`Order confirmation timeout for ${token.symbol}`, {
-    orderId: trade.orderId,
-    waitTime: maxWaitTime,
-  });
+    // Timeout reached
+    logger.warn(`Order confirmation timeout for ${token.symbol}`, {
+      orderId: trade.orderId,
+      waitTime: maxWaitTime,
+    });
 
-  const trades = await getTrades();
-  const tradeIndex = trades.findIndex((t) => t.id === trade.id);
-  if (tradeIndex !== -1 && trades[tradeIndex]) {
-    trades[tradeIndex]!.orderStatus = "expired";
-    await saveTrades(trades);
+    const trades = await getTrades();
+    const tradeIndex = trades.findIndex((t) => t.id === trade.id);
+    if (tradeIndex !== -1 && trades[tradeIndex]) {
+      trades[tradeIndex]!.orderStatus = "expired";
+      await saveTrades(trades);
+    }
+  } finally {
+    // Always remove from pending set when done
+    pendingBuys.delete(token.address);
   }
 }
