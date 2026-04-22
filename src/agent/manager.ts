@@ -77,7 +77,7 @@ export async function getManageDecision(
         ],
         response_format: { type: "json_object" },
         temperature: 0.3,
-        max_tokens: 1000
+        max_tokens: 5000
       })
     });
 
@@ -180,10 +180,10 @@ Rug Ratio: ${tokenData.rugRatio} | Bundler Rate: ${tokenData.bundlerTraderAmount
 Is Wash Trading: ${tokenData.isWashTrading}
 Renounced Mint: ${tokenData.renouncedMint} | Renounced Freeze: ${tokenData.renouncedFreezeAccount}
 
-K-line 1m last (30 candles):
+K-line 1m last (90 candles):
 ${tokenData.kline1mData}
 
-K-line 5m last (12 candles):
+K-line 5m last (36 candles):
 ${tokenData.kline5mData}
 
 Take Profit target: +${takeProfitPercent}%

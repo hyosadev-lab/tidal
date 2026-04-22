@@ -83,10 +83,15 @@ async function scanAndFilter() {
   logger.info(`Found ${filteredCandidates.length} candidates after filtering`);
 
   for (const token of filteredCandidates) {
-    // Re-check position count from database (to account for pending orders)
+    // Hitung posisi total: posisi terbuka + pending buy orders
     const currentPositions = await getPositions();
-    if (currentPositions.length >= MAX_OPEN_POSITIONS) {
-      logger.info("Max open positions reached, stopping screening");
+    const pendingBuyCount = pendingBuys.size;
+    const totalPositions = currentPositions.length + pendingBuyCount;
+
+    if (totalPositions >= MAX_OPEN_POSITIONS) {
+      logger.info(
+        `Max open positions reached (${totalPositions}/${MAX_OPEN_POSITIONS}, ${pendingBuyCount} pending), stopping screening`
+      );
       break;
     }
 

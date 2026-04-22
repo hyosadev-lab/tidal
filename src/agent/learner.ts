@@ -46,7 +46,7 @@ export async function generateLearnings(): Promise<void> {
           ],
           response_format: { type: "json_object" },
           temperature: 0.3,
-          max_tokens: 1000
+          max_tokens: 5000
         })
       });
 
