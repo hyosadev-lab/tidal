@@ -15,5 +15,8 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "gmgn-cli": "^1.2.8"
   }
 }

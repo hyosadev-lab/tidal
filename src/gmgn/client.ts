@@ -6,7 +6,7 @@ async function executeGmgnCommand<T>(args: string[]): Promise<T> {
 
   try {
     // Execute command and try to parse as JSON
-    const result = await $`gmgn-cli ${args}`.json();
+    const result = await $`bunx gmgn-cli ${args}`.json();
 
     // Check if result is an object and has code property
     if (result && typeof result === 'object' && 'code' in result) {
