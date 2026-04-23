@@ -3,6 +3,8 @@ import { logger } from "../utils/logger";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
+const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
+const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 
 const SYSTEM_PROMPT = `
 You are an expert crypto trader specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
@@ -46,8 +48,8 @@ export async function getBuySkipDecision(
           { role: "user", content: userPrompt }
         ],
         response_format: { type: "json_object" },
-        temperature: 0.3,
-        max_tokens: 5000
+        temperature: TEMPERATURE,
+        max_tokens: MAX_TOKENS
       })
     });
 

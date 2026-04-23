@@ -460,6 +460,35 @@ interface Learning {
 
 ---
 
+## Performance Tracking
+
+Agent melacak performa trading secara otomatis via `data/performance.json`.
+
+**Update otomatis terjadi saat:**
+1. BUY trade dikonfirmasi (screening.ts)
+2. SELL trade dikonfirmasi (managing.ts)
+
+**Fungsi `updatePerformance()` di `src/storage/db.ts`:**
+- Hitung ulang statistik dari semua `trades.json` (filter `orderStatus === "confirmed"`)
+- `totalTrades`: Jumlah semua trade confirmed (BUY + SELL)
+- `winningTrades`/`losingTrades`: Hanya SELL trades dengan `pnlUsd` terdefinisi
+- `winRate`: `winningTrades / (winningTrades + losingTrades)`
+- `totalPnlUsd`: Sum `pnlUsd` dari semua SELL trades
+- `avgHoldingHours`: Rata-rata durasi holding dari SELL trades
+- `dailyStats`: Agregasi per hari (trades, wins, pnl)
+
+**Lihat ringkasan performa:**
+```bash
+bun run stats  # lihat script di package.json
+```
+
+Atau langsung:
+```bash
+bun run src/utils/stats.ts
+```
+
+---
+
 ## Cara Menjalankan gmgn-cli
 
 ```typescript
@@ -637,7 +666,7 @@ Implementasi dalam urutan ini, satu per satu:
 
 1. **Setup project** — `package.json`, `tsconfig.json`, `.env.example`, `.gitignore`
 2. **Types** — `src/storage/types.ts` — semua interfaces
-3. **Storage helpers** — `src/storage/db.ts` — read/write JSON
+3. **Storage helpers** — `src/storage/db.ts` — read/write JSON + update performance metrics
 4. **Logger** — `src/utils/logger.ts`
 5. **GMGN client** — `src/gmgn/client.ts` — wrapper gmgn-cli subprocess
 6. **Trenches fetcher** — `src/gmgn/trenches.ts`
@@ -646,9 +675,10 @@ Implementasi dalam urutan ini, satu per satu:
 9. **AI Decision — Screening** — `src/agent/decision.ts` → logika BUY/SKIP
 10. **AI Decision — Managing** — `src/agent/manager.ts` → logika HOLD/SELL
 11. **Learning system** — `src/agent/learner.ts`
-12. **Screening session** — `src/sessions/screening.ts` → loop scan + filter + buy
-13. **Managing session** — `src/sessions/managing.ts` → loop monitor + TP/SL + sell
-14. **Main loop** — `src/index.ts` → jalankan kedua sesi secara paralel
+12. **Stats utility** — `src/utils/stats.ts` → tampilkan ringkasan performa
+13. **Screening session** — `src/sessions/screening.ts` → loop scan + filter + buy
+14. **Managing session** — `src/sessions/managing.ts` → loop monitor + TP/SL + sell
+15. **Main loop** — `src/index.ts` → jalankan kedua sesi secara paralel
 
 ---
 
