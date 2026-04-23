@@ -10,6 +10,7 @@ import {
   getLearnings,
   getSoldTokens,
   saveSoldTokens,
+  updatePerformance,
 } from "../storage/db";
 import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
@@ -194,6 +195,7 @@ async function executeBuyOrder(token: TokenData) {
     trades.push(trade);
     positions.push(position);
     await Promise.all([saveTrades(trades), savePositions(positions)]);
+    await updatePerformance();
 
     // Clean up pending set for dry run
     pendingBuys.delete(token.address);
@@ -274,6 +276,7 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
             trades[tradeIndex]!.orderStatus = "confirmed";
             trades[tradeIndex]!.aiReasoning = "Order confirmed by GMGN";
             await saveTrades(trades);
+            await updatePerformance();
 
             // Create position
             const position: Position = {

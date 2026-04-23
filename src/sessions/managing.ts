@@ -1,10 +1,11 @@
-import { getPositions, savePositions, getTrades, saveTrades, getLearnings, addSoldToken } from "../storage/db";
+import { getPositions, savePositions, getTrades, saveTrades, getLearnings, addSoldToken, updatePerformance } from "../storage/db";
 import { generateLearnings } from "../agent/learner";
 import { getTokenDetails, getTokenInfo, getTokenSecurity } from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
 import { getManageDecision, checkHardRules } from "../agent/manager";
 import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
+import { delay } from "../utils/concurrency";
 
 const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
@@ -171,6 +172,7 @@ async function executeSellOrder(position: Position, reason: string) {
     const trades = await getTrades();
     trades.push(trade);
     await saveTrades(trades);
+    await updatePerformance();
 
     // Record sold token for cooldown
     await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
@@ -218,10 +220,91 @@ async function executeSellOrder(position: Position, reason: string) {
     trades.push(trade);
     await saveTrades(trades);
 
+    // Start polling in background
+    pollSellOrderConfirmation(position, trade);
+
     // Record sold token for cooldown
     await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
 
   } catch (error) {
     logger.error(`Failed to execute sell for ${position.tokenSymbol}`, { error: String(error) });
+  }
+}
+
+async function pollSellOrderConfirmation(position: Position, trade: Trade) {
+  const maxWaitTime = 60000; // 60 seconds
+  const pollInterval = 3000; // Check every 3 seconds
+  const startTime = Date.now();
+
+  logger.info(`Starting sell order confirmation polling for ${position.tokenSymbol}`, {
+    orderId: trade.orderId,
+  });
+
+  try {
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        await delay(pollInterval);
+
+        const orderStatus = await checkOrderStatus(CHAIN, trade.orderId);
+
+        if (orderStatus.status === "confirmed") {
+          // Order confirmed! Update trade and calculate PnL
+          logger.info(`Sell order confirmed for ${position.tokenSymbol}`, {
+            orderId: trade.orderId,
+          });
+
+          const trades = await getTrades();
+          const tradeIndex = trades.findIndex((t) => t.id === trade.id);
+          if (tradeIndex !== -1 && trades[tradeIndex]) {
+            const confirmedTrade = trades[tradeIndex]!;
+            confirmedTrade.orderStatus = "confirmed";
+            confirmedTrade.aiReasoning = "Order confirmed by GMGN";
+            confirmedTrade.exitPrice = position.currentPrice || 0;
+            confirmedTrade.pnlUsd = position.unrealizedPnlUsd;
+            confirmedTrade.pnlPercent = position.unrealizedPnlPercent;
+            confirmedTrade.holdingDurationMs = Date.now() - position.entryTimestamp;
+            confirmedTrade.txHash = orderStatus.tx_hash;
+
+            await saveTrades(trades);
+            await updatePerformance();
+          }
+          return;
+        } else if (orderStatus.status === "failed" || orderStatus.status === "expired") {
+          // Order failed or expired
+          logger.warn(`Sell order ${orderStatus.status} for ${position.tokenSymbol}`, {
+            orderId: trade.orderId,
+            status: orderStatus.status,
+          });
+
+          const trades = await getTrades();
+          const tradeIndex = trades.findIndex((t) => t.id === trade.id);
+          if (tradeIndex !== -1 && trades[tradeIndex]) {
+            trades[tradeIndex]!.orderStatus = orderStatus.status;
+            await saveTrades(trades);
+          }
+          return;
+        }
+        // If still pending, continue polling
+      } catch (error) {
+        logger.error(`Error polling sell order status for ${position.tokenSymbol}`, {
+          orderId: trade.orderId,
+          error: String(error),
+        });
+      }
+    }
+    // Timeout
+    logger.warn(`Sell order polling timeout for ${position.tokenSymbol}`, {
+      orderId: trade.orderId,
+    });
+    const trades = await getTrades();
+    const tradeIndex = trades.findIndex((t) => t.id === trade.id);
+    if (tradeIndex !== -1 && trades[tradeIndex]) {
+      trades[tradeIndex]!.orderStatus = "expired";
+      await saveTrades(trades);
+    }
+  } catch (error) {
+    logger.error(`Error in sell order polling for ${position.tokenSymbol}`, {
+      error: String(error),
+    });
   }
 }
