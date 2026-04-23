@@ -1,8 +1,6 @@
-import { getTrades, getPerformance } from "../storage/db";
-import { logger } from "./logger";
+import { getPerformance } from "../storage/db";
 
 async function showStats() {
-  const trades = await getTrades();
   const performance = await getPerformance();
 
   console.log("\n=== Trading Agent Stats ===");
