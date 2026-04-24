@@ -7,7 +7,7 @@ async function showStats() {
   ]);
 
   console.log("\n=== Trading Agent Stats ===");
-  console.log(`Total Trades: ${performance.totalTrades}`);
+  console.log(`Realized Trades: ${performance.totalTrades}`);
   console.log(`Winning Trades: ${performance.winningTrades}`);
   console.log(`Losing Trades: ${performance.losingTrades}`);
   console.log(`Win Rate: ${(performance.winRate * 100).toFixed(2)}%`);
