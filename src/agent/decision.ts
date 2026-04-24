@@ -1,6 +1,6 @@
 import type { TokenData, Learning } from "../storage/types";
 import { logger } from "../utils/logger";
-import { getVolumeDeltasFromKline } from "../utils/kline";
+import { getVolumeDeltasFromKline, parseKlineData } from "../utils/kline";
 
 interface OpenRouterResponse {
   choices: {
@@ -126,8 +126,8 @@ function buildUserPrompt(
   const volumeDeltas1m = getVolumeDeltasFromKline(token.kline1mData, 5);
   const volumeDeltas5m = getVolumeDeltasFromKline(token.kline5mData, 4);
 
-  // Parse kline data to extract recent price info for 1m entry timing
-  const kline1mArray = JSON.parse(token.kline1mData || "[]");
+  // Parse kline string data to extract recent price info for 1m entry timing
+  const kline1mArray = parseKlineData(token.kline1mData);
   const recentCandles = kline1mArray.slice(-5); // Last 5 candles for entry timing
 
   let currentPrice = 0;
@@ -138,8 +138,11 @@ function buildUserPrompt(
     const lastCandle = recentCandles[recentCandles.length - 1];
     const firstCandle = recentCandles[0];
 
-    if (lastCandle) currentPrice = lastCandle[4] || 0; // Close price
-    if (firstCandle && lastCandle && firstCandle[4]) {
+    if (lastCandle && lastCandle[4] !== undefined) {
+      currentPrice = lastCandle[4] || 0; // Close price
+    }
+
+    if (firstCandle && lastCandle && firstCandle[4] !== undefined && lastCandle[4] !== undefined) {
       priceChange5m = ((lastCandle[4] - firstCandle[4]) / firstCandle[4]) * 100;
     }
 

@@ -1,14 +1,47 @@
 /**
- * Parse kline JSON string to array
+ * Parse kline string to array
+ * Supports both JSON format and GMGN string format
+ * GMGN format: "O:1.0 H:1.1 L:0.9 C:1.05 V:1000"
  */
 export function parseKlineData(klineString: string): number[][] {
   if (!klineString) return [];
+
+  // Try JSON format first
   try {
     const parsed = JSON.parse(klineString);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
   } catch {
-    return [];
+    // Not JSON, try GMGN string format
   }
+
+  // Parse GMGN string format
+  const lines = klineString.split("\n").filter(line => line.trim());
+  const candles: number[][] = [];
+
+  for (const line of lines) {
+    // Parse format: "O:1.0 H:1.1 L:0.9 C:1.05 V:1000"
+    const openMatch = line.match(/O:([0-9.]+)/);
+    const highMatch = line.match(/H:([0-9.]+)/);
+    const lowMatch = line.match(/L:([0-9.]+)/);
+    const closeMatch = line.match(/C:([0-9.]+)/);
+    const volumeMatch = line.match(/V:([0-9.]+)/);
+
+    if (openMatch && highMatch && lowMatch && closeMatch && volumeMatch) {
+      const candle: number[] = [
+        0, // timestamp (not available in string format)
+        parseFloat(openMatch[1] || "0"),
+        parseFloat(highMatch[1] || "0"),
+        parseFloat(lowMatch[1] || "0"),
+        parseFloat(closeMatch[1] || "0"),
+        parseFloat(volumeMatch[1] || "0")
+      ];
+      candles.push(candle);
+    }
+  }
+
+  return candles;
 }
 
 /**
