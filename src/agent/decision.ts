@@ -121,8 +121,10 @@ function buildUserPrompt(
     .join("\n");
 
   // Calculate volume deltas for both timeframes
+  // 1m: 5 candles (5 minutes) for recent momentum
+  // 5m: 4 candles (20 minutes) for short-term trend
   const volumeDeltas1m = getVolumeDeltasFromKline(token.kline1mData, 5);
-  const volumeDeltas5m = getVolumeDeltasFromKline(token.kline5mData, 5);
+  const volumeDeltas5m = getVolumeDeltasFromKline(token.kline5mData, 4);
 
   return `
 TOKEN: ${token.symbol} (${token.address})
