@@ -1,5 +1,6 @@
 import type { TokenData, Learning } from "../storage/types";
 import { logger } from "../utils/logger";
+import { getVolumeDeltasFromKline } from "../utils/kline";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
@@ -111,6 +112,10 @@ function buildUserPrompt(
     .map((l) => l.insight)
     .join("\n");
 
+  // Calculate volume deltas for both timeframes
+  const volumeDeltas1m = getVolumeDeltasFromKline(token.kline1mData, 5);
+  const volumeDeltas5m = getVolumeDeltasFromKline(token.kline5mData, 5);
+
   return `
 TOKEN: ${token.symbol} (${token.address})
 Market Cap: $${token.usdMarketCap}
@@ -129,11 +134,15 @@ Renounced Mint: ${token.renouncedMint} | Renounced Freeze: ${token.renouncedFree
 Has Social: ${token.hasAtLeastOneSocial}
 CTO Flag: ${token.ctoFlag}
 
-K-line 1m last (90 candles):
+K-line 1m last (30 candles):
 ${token.kline1mData}
 
-K-line 5m last (36 candles):
+${volumeDeltas1m}
+
+K-line 5m last (12 candles):
 ${token.kline5mData}
+
+${volumeDeltas5m}
 
 Top Smart Degen Traders (holding/activity):
 ${token.topTradersSummary}
@@ -145,5 +154,6 @@ ANALYZE MOMENTUM:
 - Is volume 1h significantly higher than average?
 - Is price change 1h positive and accelerating?
 - Are smart degen traders actively buying (holding >0.5 SOL)?
+- Are there recent volume spikes (positive deltas) indicating entry momentum?
   `;
 }
