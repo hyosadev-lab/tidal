@@ -142,12 +142,12 @@ Renounced Mint: ${token.renouncedMint} | Renounced Freeze: ${token.renouncedFree
 Has Social: ${token.hasAtLeastOneSocial}
 CTO Flag: ${token.ctoFlag}
 
-K-line 1m last (30 candles):
+K-line 1m (30 candles):
 ${token.kline1mData}
 
 ${volumeDeltas1m}
 
-K-line 5m last (12 candles):
+K-line 5m (12 candles):
 ${token.kline5mData}
 
 ${volumeDeltas5m}

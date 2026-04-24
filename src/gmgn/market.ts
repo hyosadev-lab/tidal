@@ -79,8 +79,8 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
   try {
     const now = Math.floor(Date.now() / 1000);
 
-    // 1. Fetch kline 1m (90 candles = 90 minutes)
-    const from1m = now - 5400; // 90 minutes ago
+    // 1. Fetch kline 1m (30 candles = 30 minutes)
+    const from1m = now - 1800; // 30 minutes ago
     const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
     const kline1mData = kline1mResult?.list || [];
 
@@ -118,8 +118,8 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     // Delay between API calls to avoid rate limit
     await delay(500); // 500ms delay
 
-    // 2. Fetch kline 5m (36 candles = 180 minutes)
-    const from5m = now - 10800; // 180 minutes ago
+    // 2. Fetch kline 5m (12 candles = 60 minutes)
+    const from5m = now - 3600; // 60 minutes ago
     const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
     const kline5mData = kline5mResult?.list || [];
 
