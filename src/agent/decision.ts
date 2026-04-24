@@ -17,8 +17,8 @@ const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 
 const SYSTEM_PROMPT = `
 You are an expert crypto trader specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
-Your task is to analyze token data and decide whether to BUY or SKIP.
-Focus on momentum, volume spike, and smart money activity.
+Your task is to analyze token data and decide whether to BUY or SKIP based on 1-minute entry timing.
+Focus on immediate momentum, volume spikes, and recent smart money activity.
 Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
 
@@ -126,44 +126,67 @@ function buildUserPrompt(
   const volumeDeltas1m = getVolumeDeltasFromKline(token.kline1mData, 5);
   const volumeDeltas5m = getVolumeDeltasFromKline(token.kline5mData, 4);
 
+  // Parse kline data to extract recent price info for 1m entry timing
+  const kline1mArray = JSON.parse(token.kline1mData || "[]");
+  const recentCandles = kline1mArray.slice(-5); // Last 5 candles for entry timing
+
+  let currentPrice = 0;
+  let priceChange5m = 0;
+  let recentVolume = 0;
+
+  if (recentCandles.length > 0) {
+    const lastCandle = recentCandles[recentCandles.length - 1];
+    const firstCandle = recentCandles[0];
+
+    if (lastCandle) currentPrice = lastCandle[4] || 0; // Close price
+    if (firstCandle && lastCandle && firstCandle[4]) {
+      priceChange5m = ((lastCandle[4] - firstCandle[4]) / firstCandle[4]) * 100;
+    }
+
+    // Sum volume from recent candles
+    recentVolume = recentCandles.reduce((sum: number, candle: number[]) => sum + (candle[5] || 0), 0);
+  }
+
   return `
 TOKEN: ${token.symbol} (${token.address})
 Market Cap: $${token.usdMarketCap}
 Liquidity: $${token.liquidity}
-Volume 1h: $${token.volume1h.toFixed(2)} | Swaps 1h: ${token.swaps1h}
-Price Change 1h: ${token.priceChange1h}%
-Holder Count: ${token.holderCount}
-Smart Degen Count: ${token.smartDegenCount}
-Renowned Count: ${token.renownedCount}
-Top 10 Holder Rate: ${token.top10HolderRate}
-Creator Status: ${token.creatorTokenStatus} | Creator Balance Rate: ${token.creatorBalanceRate}
-Rug Ratio: ${token.rugRatio} | Bundler Rate: ${token.bundlerTraderAmountRate} | Insider Ratio: ${token.ratTraderAmountRate}
-Is Wash Trading: ${token.isWashTrading}
-Launchpad: ${token.launchpadPlatform}
-Renounced Mint: ${token.renouncedMint} | Renounced Freeze: ${token.renouncedFreezeAccount}
-Has Social: ${token.hasAtLeastOneSocial}
-CTO Flag: ${token.ctoFlag}
 
-K-line 1m (30 candles):
+=== ENTRY TIMING DATA (1-MINUTE FOCUS) ===
+Current Price: $${currentPrice.toFixed(6)}
+Price Change (5m): ${priceChange5m.toFixed(2)}%
+Volume (5m): ${recentVolume.toFixed(2)}
+Volume 1h: $${token.volume1h.toFixed(2)} | Swaps 1h: ${token.swaps1h}
+
+K-line 1m (30 candles, focus on last 5 for entry):
 ${token.kline1mData}
 
 ${volumeDeltas1m}
 
-K-line 5m (12 candles):
+K-line 5m (12 candles for context):
 ${token.kline5mData}
 
 ${volumeDeltas5m}
 
+=== SMART MONEY DATA ===
+Smart Degen Count: ${token.smartDegenCount}
 Top Smart Degen Traders (holding/activity):
 ${token.topTradersSummary}
+
+=== RISK METRICS ===
+Rug Ratio: ${token.rugRatio} | Bundler Rate: ${token.bundlerTraderAmountRate} | Insider Ratio: ${token.ratTraderAmountRate}
+Is Wash Trading: ${token.isWashTrading}
+Creator Status: ${token.creatorTokenStatus}
+Top 10 Holder Rate: ${token.top10HolderRate}
 
 RELEVANT LEARNINGS from previous trades:
 ${relevantLearnings || "None"}
 
-ANALYZE MOMENTUM:
-- Is volume 1h significantly higher than average?
-- Is price change 1h positive and accelerating?
-- Are smart degen traders actively buying (holding >0.5 SOL)?
-- Are there recent volume spikes (positive deltas) indicating entry momentum?
+=== ENTRY ANALYSIS QUESTIONS ===
+1. Is there a volume spike in the last 5 candles (1m)?
+2. Is price moving up with increasing volume?
+3. Are smart degen traders actively buying right now?
+4. Is the current price breaking above recent resistance?
+5. Are there any risky signals (high rug ratio, wash trading)?
   `;
 }
