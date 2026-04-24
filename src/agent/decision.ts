@@ -9,6 +9,7 @@ const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 const SYSTEM_PROMPT = `
 You are an expert crypto trader specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
 Your task is to analyze token data and decide whether to BUY or SKIP.
+Focus on momentum, volume spike, and smart money activity.
 Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
 
@@ -139,5 +140,10 @@ ${token.topTradersSummary}
 
 RELEVANT LEARNINGS from previous trades:
 ${relevantLearnings || "None"}
+
+ANALYZE MOMENTUM:
+- Is volume 1h significantly higher than average?
+- Is price change 1h positive and accelerating?
+- Are smart degen traders actively buying (holding >0.5 SOL)?
   `;
 }

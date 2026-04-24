@@ -158,9 +158,22 @@ export async function generateLearnings(): Promise<void> {
 }
 
 function buildLearningPrompt(trades: Trade[]): string {
-  const tradeSummaries = trades.map(t => `
+  const losingTrades = trades.filter((t) => (t.pnlPercent || 0) < 0);
+  const winningTrades = trades.filter((t) => (t.pnlPercent || 0) > 0);
+
+  const losingSummaries = losingTrades.map(t => `
     Token: ${t.tokenSymbol} (${t.tokenAddress})
-    Action: ${t.action}
+    Entry Price: $${t.entryPrice || "N/A"}
+    Exit Price: $${t.exitPrice || "N/A"}
+    PnL: ${t.pnlPercent?.toFixed(2) || "N/A"}%
+    PnL SOL: ${t.pnlSol?.toFixed(4) || "N/A"}
+    Holding Duration: ${t.holdingDurationMs ? (t.holdingDurationMs / (1000 * 60 * 60)).toFixed(1) + "h" : "N/A"}
+    Entry Reason: ${t.aiReasoning || "N/A"}
+    Exit Reason: ${t.exitReason || "N/A"}
+  `).join("\n");
+
+  const winningSummaries = winningTrades.map(t => `
+    Token: ${t.tokenSymbol} (${t.tokenAddress})
     Entry Price: $${t.entryPrice || "N/A"}
     Exit Price: $${t.exitPrice || "N/A"}
     PnL: ${t.pnlPercent?.toFixed(2) || "N/A"}%
@@ -178,20 +191,25 @@ function buildLearningPrompt(trades: Trade[]): string {
 Analyze the following trade history from a Solana memecoin trading bot.
 Identify specific patterns that lead to successful trades (positive PnL) and failed trades (negative PnL).
 Focus on:
-1. Entry criteria that worked well
-2. Exit criteria that worked well
-3. Risk management patterns
-4. Token characteristics (market cap, liquidity, smart degen count) associated with wins/losses
+1. Analyze losing trades: why did they lose? (entry too late, exit too early, holding too long, token characteristics)
+2. Analyze winning trades: what made them win? (entry timing, exit timing, token quality)
+3. Compare winning vs losing trades: what differentiates them? (market cap, liquidity, smart degen count, volume, price action)
+4. Generate specific entry/exit criteria based on analysis
 
 Current Stats:
 - Total Trades: ${trades.length}
 - Win Rate: ${winRate}%
 - Avg PnL: ${avgPnl.toFixed(2)}%
+- Losing Trades: ${losingTrades.length}
+- Winning Trades: ${winningTrades.length}
 
-Trades:
-${tradeSummaries}
+Losing Trades:
+${losingSummaries || "None"}
 
-Generate 2-3 specific, actionable insights.
+Winning Trades:
+${winningSummaries || "None"}
+
+Generate 2-3 specific, actionable insights based on losing trade patterns.
 Format as JSON array: [{ type: "entry"|"exit"|"filter"|"risk", description: string, successRate: number, avgPnlPercent: number }]
   `;
 }
