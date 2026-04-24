@@ -37,7 +37,7 @@ export function calculateVolumeDeltas(klines: number[][], limit: number): string
     deltas.push(`${sign}${deltaPercent.toFixed(1)}%`);
   }
 
-  return `Volume Deltas (${limit} candles): ${deltas.join(", ")}`;
+  return `Volume Deltas (${deltas.length} changes): ${deltas.join(", ")}`;
 }
 
 /**
