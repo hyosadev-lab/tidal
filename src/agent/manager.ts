@@ -23,7 +23,7 @@ export function checkHardRules(
   position: Position,
   takeProfitPercent: number,
   stopLossPercent: number
-): "take_profit" | "stop_loss" | null {
+): "take_profit" | "stop_loss" | "max_holding_time" | null {
   if (position.unrealizedPnlPercent !== undefined) {
     if (position.unrealizedPnlPercent >= takeProfitPercent) {
       return "take_profit";
@@ -32,6 +32,14 @@ export function checkHardRules(
       return "stop_loss";
     }
   }
+
+  // Time-based stop loss: prevent bagholding
+  const MAX_HOLDING_HOURS = parseFloat(process.env.MAX_HOLDING_HOURS || "4");
+  const holdingHours = (Date.now() - position.entryTimestamp) / (1000 * 60 * 60);
+  if (holdingHours > MAX_HOLDING_HOURS) {
+    return "max_holding_time";
+  }
+
   return null;
 }
 
@@ -163,11 +171,11 @@ function buildUserPrompt(
 
   return `
 POSITION: ${position.tokenSymbol} (${position.tokenAddress})
-Entry Price: $${position.entryPrice} | Entry Market Cap: $${position.entryMarketCap}
-Current Price: $${position.currentPrice} | Current Market Cap: $${position.currentMarketCap}
-Unrealized PnL: ${position.unrealizedPnlPercent}% ($${position.unrealizedPnlUsd})
+Entry Price: $${position.entryPrice.toFixed(6)} | Entry Market Cap: $${position.entryMarketCap}
+Current Price: $${position.currentPrice?.toFixed(6) || 0} | Current Market Cap: $${position.currentMarketCap}
+Unrealized PnL: ${position.unrealizedPnlPercent?.toFixed(2) || 0}% (${(position.unrealizedPnlSol || 0).toFixed(4)} SOL)
 Holding Duration: ${holdingDurationHuman}
-Cost: $${position.costUsd}
+Cost: ${(position.costSol || 0).toFixed(4)} SOL
 
 Market Data Latest:
 Liquidity: $${tokenData.liquidity}

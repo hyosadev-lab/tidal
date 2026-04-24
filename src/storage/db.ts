@@ -60,11 +60,11 @@ export async function getPerformance(): Promise<Performance> {
     winningTrades: 0,
     losingTrades: 0,
     winRate: 0,
-    totalPnlUsd: 0,
+    totalPnlSol: 0,
     avgWinPercent: 0,
     avgLossPercent: 0,
-    largestWinUsd: 0,
-    largestLossUsd: 0,
+    largestWinSol: 0,
+    largestLossSol: 0,
     avgHoldingHours: 0,
     lastUpdated: Date.now(),
     dailyStats: {}
@@ -84,11 +84,11 @@ export async function updatePerformance(): Promise<void> {
   const totalTrades = confirmedTrades.length;
 
   // Only SELL trades have realized PnL
-  const completedSells = confirmedTrades.filter(t => t.action === "SELL" && t.pnlUsd !== undefined);
+  const completedSells = confirmedTrades.filter(t => t.action === "SELL" && t.pnlSol !== undefined);
 
   // Winning/Losing trades based on SELL actions
-  const winningTrades = completedSells.filter(t => (t.pnlUsd || 0) > 0).length;
-  const losingTrades = completedSells.filter(t => (t.pnlUsd || 0) < 0).length;
+  const winningTrades = completedSells.filter(t => (t.pnlSol || 0) > 0).length;
+  const losingTrades = completedSells.filter(t => (t.pnlSol || 0) < 0).length;
 
   // Win rate based on completed sells
   const winRate = (winningTrades + losingTrades) > 0
@@ -96,13 +96,13 @@ export async function updatePerformance(): Promise<void> {
     : 0;
 
   // Total PnL from all completed sells
-  const totalPnlUsd = completedSells.reduce((sum, t) => sum + (t.pnlUsd || 0), 0);
+  const totalPnlSol = completedSells.reduce((sum, t) => sum + (t.pnlSol || 0), 0);
 
   const winningPnLs = completedSells
-    .filter(t => (t.pnlUsd || 0) > 0)
+    .filter(t => (t.pnlSol || 0) > 0)
     .map(t => t.pnlPercent || 0);
   const losingPnLs = completedSells
-    .filter(t => (t.pnlUsd || 0) < 0)
+    .filter(t => (t.pnlSol || 0) < 0)
     .map(t => t.pnlPercent || 0);
 
   const avgWinPercent = winningPnLs.length > 0
@@ -112,9 +112,9 @@ export async function updatePerformance(): Promise<void> {
     ? losingPnLs.reduce((a, b) => a + b, 0) / losingPnLs.length
     : 0;
 
-  const pnlValues = completedSells.map(t => t.pnlUsd || 0);
-  const largestWinUsd = pnlValues.length > 0 ? Math.max(...pnlValues) : 0;
-  const largestLossUsd = pnlValues.length > 0 ? Math.min(...pnlValues) : 0;
+  const pnlValues = completedSells.map(t => t.pnlSol || 0);
+  const largestWinSol = pnlValues.length > 0 ? Math.max(...pnlValues) : 0;
+  const largestLossSol = pnlValues.length > 0 ? Math.min(...pnlValues) : 0;
 
   // Avg holding hours based on completed sells (since they have holdingDurationMs)
   const totalHoldingMs = completedSells.reduce((sum, t) => sum + (t.holdingDurationMs || 0), 0);
@@ -129,9 +129,9 @@ export async function updatePerformance(): Promise<void> {
     }
     dailyStats[date].trades += 1;
     // Only add PnL if it's a sell with realized PnL
-    if (t.action === "SELL" && t.pnlUsd !== undefined) {
-        dailyStats[date].pnl += t.pnlUsd;
-        if (t.pnlUsd > 0) dailyStats[date].wins += 1;
+    if (t.action === "SELL" && t.pnlSol !== undefined) {
+        dailyStats[date].pnl += t.pnlSol;
+        if (t.pnlSol > 0) dailyStats[date].wins += 1;
     }
   });
 
@@ -140,11 +140,11 @@ export async function updatePerformance(): Promise<void> {
     winningTrades,
     losingTrades,
     winRate,
-    totalPnlUsd,
+    totalPnlSol,
     avgWinPercent,
     avgLossPercent,
-    largestWinUsd,
-    largestLossUsd,
+    largestWinSol,
+    largestLossSol,
     avgHoldingHours,
     lastUpdated: Date.now(),
     dailyStats,

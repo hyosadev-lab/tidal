@@ -60,7 +60,15 @@ async function processPosition(position: Position) {
     // Update position PnL
     position.currentPrice = currentPrice;
     position.currentMarketCap = position.entryMarketCap * (currentPrice / position.entryPrice); // Approximate
-    position.unrealizedPnlUsd = (currentPrice - position.entryPrice) * parseFloat(position.amountToken); // Simplified
+
+    // Fix PnL SOL calculation: use costSol and price ratio
+    // entryPrice and currentPrice are in USD (from GMGN API)
+    // costSol is the SOL amount spent at entry
+    // Calculate current SOL value using price ratio: costSol * (currentPrice / entryPrice)
+    const priceRatio = currentPrice / position.entryPrice;
+    const currentValueSol = position.costSol * priceRatio;
+    position.unrealizedPnlSol = currentValueSol - position.costSol;
+
     position.unrealizedPnlPercent = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
     position.lastUpdated = Date.now();
 
@@ -153,7 +161,7 @@ async function executeSellOrder(position: Position, reason: string) {
       tokenName: position.tokenName,
       action: "SELL",
       inputAmount: position.amountToken,
-      inputAmountUsd: position.costUsd,
+      inputAmountSol: position.costSol,
       outputAmount: "0",
       priceAtTrade: position.currentPrice || 0,
       marketCapAtTrade: position.currentMarketCap || 0,
@@ -163,7 +171,7 @@ async function executeSellOrder(position: Position, reason: string) {
       isDryRun: true,
       entryPrice: position.entryPrice,
       exitPrice: position.currentPrice,
-      pnlUsd: position.unrealizedPnlUsd,
+      pnlSol: position.unrealizedPnlSol,
       pnlPercent: position.unrealizedPnlPercent,
       holdingDurationMs: Date.now() - position.entryTimestamp,
       exitReason: reason as any,
@@ -204,7 +212,7 @@ async function executeSellOrder(position: Position, reason: string) {
       tokenName: position.tokenName,
       action: "SELL",
       inputAmount: position.amountToken,
-      inputAmountUsd: position.costUsd,
+      inputAmountSol: position.costSol,
       outputAmount: "0",
       priceAtTrade: position.currentPrice || 0,
       marketCapAtTrade: position.currentMarketCap || 0,
@@ -260,7 +268,7 @@ async function pollSellOrderConfirmation(position: Position, trade: Trade) {
             confirmedTrade.orderStatus = "confirmed";
             confirmedTrade.aiReasoning = "Order confirmed by GMGN";
             confirmedTrade.exitPrice = position.currentPrice || 0;
-            confirmedTrade.pnlUsd = position.unrealizedPnlUsd;
+            confirmedTrade.pnlSol = position.unrealizedPnlSol;
             confirmedTrade.pnlPercent = position.unrealizedPnlPercent;
             confirmedTrade.holdingDurationMs = Date.now() - position.entryTimestamp;
             confirmedTrade.txHash = orderStatus.tx_hash;

@@ -7,7 +7,7 @@ export interface Trade {
   tokenName: string;
   action: "BUY" | "SELL";
   inputAmount: string; // amount dalam minimum unit
-  inputAmountUsd: number;
+  inputAmountSol: number;
   outputAmount: string;
   priceAtTrade: number;
   marketCapAtTrade: number;
@@ -20,10 +20,10 @@ export interface Trade {
   // Diisi saat SELL
   entryPrice?: number;
   exitPrice?: number;
-  pnlUsd?: number;
+  pnlSol?: number;
   pnlPercent?: number;
   holdingDurationMs?: number;
-  exitReason?: "take_profit" | "stop_loss" | "ai_decision" | "manual";
+  exitReason?: "take_profit" | "stop_loss" | "ai_decision" | "manual" | "max_holding_time";
 
   // AI context saat decision
   aiReasoning?: string;
@@ -38,10 +38,10 @@ export interface Position {
   entryMarketCap: number;
   entryTimestamp: number;
   amountToken: string; // jumlah token yang dipegang
-  costUsd: number; // total biaya dalam USD
+  costSol: number; // total biaya dalam SOL
   currentPrice?: number; // update periodik
   currentMarketCap?: number;
-  unrealizedPnlUsd?: number;
+  unrealizedPnlSol?: number;
   unrealizedPnlPercent?: number;
   lastUpdated: number;
   buyTradeId: string;
@@ -69,11 +69,11 @@ export interface Performance {
   winningTrades: number;
   losingTrades: number;
   winRate: number;
-  totalPnlUsd: number;
+  totalPnlSol: number;
   avgWinPercent: number;
   avgLossPercent: number;
-  largestWinUsd: number;
-  largestLossUsd: number;
+  largestWinSol: number;
+  largestLossSol: number;
   avgHoldingHours: number;
   lastUpdated: number;
   dailyStats: Record<

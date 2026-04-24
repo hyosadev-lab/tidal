@@ -155,6 +155,10 @@ async function executeBuyOrder(token: TokenData) {
   if (DRY_RUN) {
     logger.info(`[DRY RUN] Buy ${token.symbol} - ${AMOUNT_SOL} SOL`);
 
+    // Calculate token amount
+    // token.price from kline data is in SOL
+    const amountToken = (AMOUNT_SOL / token.price).toString();
+
     // Create mock trade and position
     const trade: Trade = {
       id: crypto.randomUUID(),
@@ -163,7 +167,7 @@ async function executeBuyOrder(token: TokenData) {
       tokenName: token.name,
       action: "BUY",
       inputAmount: (AMOUNT_SOL * 1e9).toString(),
-      inputAmountUsd: AMOUNT_SOL * token.price,
+      inputAmountSol: AMOUNT_SOL,
       outputAmount: "0",
       priceAtTrade: token.price,
       marketCapAtTrade: token.usdMarketCap,
@@ -181,8 +185,8 @@ async function executeBuyOrder(token: TokenData) {
       entryPrice: token.price,
       entryMarketCap: token.usdMarketCap,
       entryTimestamp: Date.now(),
-      amountToken: "0",
-      costUsd: AMOUNT_SOL * token.price,
+      amountToken: amountToken,
+      costSol: AMOUNT_SOL,
       currentPrice: token.price,
       currentMarketCap: token.usdMarketCap,
       lastUpdated: Date.now(),
@@ -223,7 +227,7 @@ async function executeBuyOrder(token: TokenData) {
       tokenName: token.name,
       action: "BUY",
       inputAmount: (AMOUNT_SOL * 1e9).toString(),
-      inputAmountUsd: AMOUNT_SOL * token.price,
+      inputAmountSol: AMOUNT_SOL,
       outputAmount: "0",
       priceAtTrade: token.price,
       marketCapAtTrade: token.usdMarketCap,
@@ -287,7 +291,7 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
               entryMarketCap: token.usdMarketCap,
               entryTimestamp: Date.now(),
               amountToken: orderStatus.output_amount?.toString() || "0",
-              costUsd: parseFloat(trade.inputAmountUsd.toString()),
+              costSol: parseFloat(trade.inputAmountSol.toString()),
               currentPrice: token.price,
               currentMarketCap: token.usdMarketCap,
               lastUpdated: Date.now(),
@@ -300,7 +304,7 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
             await savePositions(positions);
 
             logger.info(`Position created for ${token.symbol}`, {
-              costUsd: position.costUsd,
+              costSol: position.costSol,
             });
           }
           return;

@@ -164,7 +164,7 @@ function buildLearningPrompt(trades: Trade[]): string {
     Entry Price: $${t.entryPrice || "N/A"}
     Exit Price: $${t.exitPrice || "N/A"}
     PnL: ${t.pnlPercent?.toFixed(2) || "N/A"}%
-    PnL USD: $${t.pnlUsd?.toFixed(2) || "N/A"}
+    PnL SOL: ${t.pnlSol?.toFixed(4) || "N/A"}
     Holding Duration: ${t.holdingDurationMs ? (t.holdingDurationMs / (1000 * 60 * 60)).toFixed(1) + "h" : "N/A"}
     Entry Reason: ${t.aiReasoning || "N/A"}
     Exit Reason: ${t.exitReason || "N/A"}
