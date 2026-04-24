@@ -24,8 +24,19 @@ export function calculateVolumeDeltas(klines: number[][], limit: number): string
   const startIdx = Math.max(0, klines.length - limit);
 
   for (let i = startIdx + 1; i < klines.length; i++) {
-    const prevVolume = klines[i - 1][5]; // volume is at index 5
-    const currVolume = klines[i][5];
+    const prevKline = klines[i - 1];
+    const currKline = klines[i];
+
+    if (!prevKline || !currKline) continue; // Safety check
+
+    const prevVolume = prevKline[5]; // volume is at index 5
+    const currVolume = currKline[5];
+
+    // Check if volume data exists
+    if (prevVolume === undefined || currVolume === undefined) {
+      deltas.push("N/A");
+      continue;
+    }
 
     if (prevVolume === 0) {
       deltas.push("N/A");
