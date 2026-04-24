@@ -28,6 +28,8 @@ const AMOUNT_SOL = parseFloat(process.env.AMOUNT_SOL || "0.1");
 
 // Track tokens currently being processed to prevent race conditions
 const pendingBuys = new Set<string>();
+// Prevent overlapping interval processing
+let isScanning = false;
 
 export async function startScreeningSession() {
   logger.info("Starting screening session");
@@ -35,10 +37,18 @@ export async function startScreeningSession() {
   await scanAndFilter();
 
   setInterval(async () => {
+    if (isScanning) {
+      logger.debug("Skipping scan: previous cycle still running");
+      return;
+    }
+
+    isScanning = true;
     try {
       await scanAndFilter();
     } catch (error) {
       logger.error("Error in screening loop", { error: String(error) });
+    } finally {
+      isScanning = false;
     }
   }, SCAN_INTERVAL_MS);
 }

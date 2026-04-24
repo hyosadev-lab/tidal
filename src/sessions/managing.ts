@@ -16,14 +16,25 @@ const MANAGE_INTERVAL_MINUTES = parseFloat(process.env.MANAGE_INTERVAL_MINUTES |
 const MANAGE_INTERVAL_MS = MANAGE_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
 
+// Prevent overlapping interval processing
+let isMonitoring = false;
+
 export async function startManagingSession() {
   logger.info("Starting managing session");
 
   setInterval(async () => {
+    if (isMonitoring) {
+      logger.debug("Skipping monitor: previous cycle still running");
+      return;
+    }
+
+    isMonitoring = true;
     try {
       await monitorPositions();
     } catch (error) {
       logger.error("Error in managing loop", { error: String(error) });
+    } finally {
+      isMonitoring = false;
     }
   }, MANAGE_INTERVAL_MS);
 }
