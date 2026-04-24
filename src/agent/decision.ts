@@ -2,6 +2,14 @@ import type { TokenData, Learning } from "../storage/types";
 import { logger } from "../utils/logger";
 import { getVolumeDeltasFromKline } from "../utils/kline";
 
+interface OpenRouterResponse {
+  choices: {
+    message: {
+      content: string;
+    };
+  }[];
+}
+
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
 const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
@@ -61,7 +69,7 @@ export async function getBuySkipDecision(
       return getFallbackDecision(token);
     }
 
-    const data = await response.json() as any;
+    const data = await response.json() as OpenRouterResponse;
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
