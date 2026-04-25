@@ -160,8 +160,8 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     }).join("\n");
 
     // Calculate volume deltas
-    const volumeDeltas1m = getVolumeDeltasFromKline(kline1mSummary, 5);
-    const volumeDeltas5m = getVolumeDeltasFromKline(kline5mSummary, 4);
+    const volumeDeltas1m = getVolumeDeltasFromKline(kline1mSummary, 15);
+    const volumeDeltas5m = getVolumeDeltasFromKline(kline5mSummary, 6);
 
     return {
       kline1mData: kline1mSummary,

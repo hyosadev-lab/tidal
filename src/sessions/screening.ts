@@ -23,7 +23,7 @@ const MAX_OPEN_POSITIONS = parseInt(process.env.MAX_OPEN_POSITIONS || "5");
 const SCAN_INTERVAL_MINUTES = parseFloat(process.env.SCAN_INTERVAL_MINUTES || "0.5");
 const SCAN_INTERVAL_MS = SCAN_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
-const SOLD_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown
+const SOLD_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes cooldown
 const AMOUNT_SOL = parseFloat(process.env.AMOUNT_SOL || "0.1");
 
 // Track tokens currently being processed to prevent race conditions
