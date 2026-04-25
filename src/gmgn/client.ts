@@ -6,7 +6,7 @@ async function executeGmgnCommand<T>(args: string[]): Promise<T> {
 
   try {
     // Execute command and try to parse as JSON
-    const result = await $`bunx gmgn-cli ${args}`.json();
+    const result = await $`gmgn-cli ${args}`.json();
 
     // Check if result is an object and has code property
     if (result && typeof result === 'object' && 'code' in result) {
@@ -176,6 +176,7 @@ export async function fetchKline(chain: string, address: string, resolution: str
   const args = ["market", "kline", "--chain", chain, "--address", address, "--resolution", resolution];
   if (from) args.push("--from", from.toString());
   if (to) args.push("--to", to.toString());
+  args.push("--raw");
 
   return executeGmgnCommand<any>(args);
 }
@@ -184,7 +185,7 @@ export async function fetchKline(chain: string, address: string, resolution: str
 export async function fetchTopTraders(chain: string, address: string, tag: string = "smart_degen", limit: number = 10) {
   // Use 'token traders' command from gmgn-token skill
   // Note: gmgn-token's 'token traders' uses --tag to filter by wallet type
-  const args = ["token", "traders", "--chain", chain, "--address", address, "--tag", tag, "--limit", limit.toString()];
+  const args = ["token", "traders", "--chain", chain, "--address", address, "--tag", tag, "--limit", limit.toString(), "--raw"];
   return executeGmgnCommand<any>(args);
 }
 

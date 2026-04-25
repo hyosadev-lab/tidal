@@ -1,53 +1,7 @@
 /**
- * Parse kline string to array
- * Supports both JSON format and GMGN string format
- * JSON format: [[timestamp, open, high, low, close, volume], ...]
- * GMGN format: "O:1.0 H:1.1 L:0.9 C:1.05 V:1000"
- */
-export function parseKlineData(klineString: string): number[][] {
-  if (!klineString) return [];
-
-  // Try JSON format first
-  try {
-    const parsed = JSON.parse(klineString);
-    if (Array.isArray(parsed)) {
-      return parsed;
-    }
-  } catch {
-    // Not JSON, continue to GMGN string format
-  }
-
-  // Parse GMGN string format
-  const lines = klineString.split("\n").filter((line) => line.trim());
-  const candles: number[][] = [];
-
-  for (const line of lines) {
-    // Parse format: "O:1.0 H:1.1 L:0.9 C:1.05 V:1000"
-    const openMatch = line.match(/O:([0-9.]+)/);
-    const highMatch = line.match(/H:([0-9.]+)/);
-    const lowMatch = line.match(/L:([0-9.]+)/);
-    const closeMatch = line.match(/C:([0-9.]+)/);
-    const volumeMatch = line.match(/V:([0-9.]+)/);
-
-    if (openMatch && highMatch && lowMatch && closeMatch && volumeMatch) {
-      const candle: number[] = [
-        0, // timestamp (not available in string format)
-        parseFloat(openMatch[1] || "0"),
-        parseFloat(highMatch[1] || "0"),
-        parseFloat(lowMatch[1] || "0"),
-        parseFloat(closeMatch[1] || "0"),
-        parseFloat(volumeMatch[1] || "0"),
-      ];
-      candles.push(candle);
-    }
-  }
-
-  return candles;
-}
-
-/**
  * Calculate volume deltas for last N candles
  * Returns formatted string: "Volume Deltas: +100%, -25%, +50%"
+ * Klines format: [open, high, low, close, volume]
  */
 export function calculateVolumeDeltas(
   klines: number[][],
@@ -66,8 +20,8 @@ export function calculateVolumeDeltas(
 
     if (!prevKline || !currKline) continue; // Safety check
 
-    const prevVolume = prevKline[5]; // volume is at index 5
-    const currVolume = currKline[5];
+    const prevVolume = prevKline[4]; // volume is at index 4 (no timestamp)
+    const currVolume = currKline[4];
 
     // Check if volume data exists
     if (prevVolume === undefined || currVolume === undefined) {
@@ -89,12 +43,12 @@ export function calculateVolumeDeltas(
 }
 
 /**
- * Get volume deltas from kline JSON string
+ * Get volume deltas from kline array
+ * Accepts raw kline array from GMGN API directly
  */
 export function getVolumeDeltasFromKline(
-  klineString: string,
+  klines: number[][],
   limit: number = 5,
 ): string {
-  const klines = parseKlineData(klineString);
   return calculateVolumeDeltas(klines, limit);
 }

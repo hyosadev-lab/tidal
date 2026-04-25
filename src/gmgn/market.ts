@@ -81,7 +81,37 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
   try {
     const now = Math.floor(Date.now() / 1000);
 
-    // 1. Fetch kline 1m (30 candles = 30 minutes)
+    // 1. Fetch top smart degens (first to avoid rate limit blocking other calls)
+    const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 10);
+    const traders = tradersResult?.list || [];
+
+    // Format traders summary
+    const tradersSummary = traders.map((t: any) => {
+      const walletName = t.name || t.address.slice(0, 6);
+      const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
+      const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
+      const netflow = t.netflow_usd ? `$${Math.abs(t.netflow_usd).toFixed(2)}` : "";
+      const tags = t.tags && t.tags.length > 0 ? `[${t.tags.join(",")}]` : "";
+
+      return `${walletName}: ${side} ${netflow} (Val: $${value}) ${tags}`;
+    }).join("\n");
+
+    // Delay between API calls to avoid rate limit
+    await delay(500); // 500ms delay
+
+    // 2. Fetch kline 5m (12 candles = 60 minutes)
+    const from5m = now - 3600; // 60 minutes ago
+    const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
+    const kline5mData = kline5mResult?.list || [];
+
+    const kline5mSummary = kline5mData.map((candle: any) => {
+      return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
+    }).join("\n");
+
+    // Delay between API calls to avoid rate limit
+    await delay(500); // 500ms delay
+
+    // 3. Fetch kline 1m (30 candles = 30 minutes)
     const from1m = now - 1800; // 30 minutes ago
     const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
     const kline1mData = kline1mResult?.list || [];
@@ -101,14 +131,6 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
         currentPrice = parseFloat(closeMatch[1] ?? "") || 0;
       }
     }
-
-    // Delay between API calls to avoid rate limit
-    await delay(500); // 500ms delay
-
-    // 2. Fetch kline 5m (12 candles = 60 minutes)
-    const from5m = now - 3600; // 60 minutes ago
-    const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
-    const kline5mData = kline5mResult?.list || [];
 
     // Calculate volume 5m and price change 5m from last 5 candles of 1m data
     let volume5m = 0;
@@ -134,34 +156,27 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       }
     }
 
-    const kline5mSummary = kline5mData.map((candle: any) => {
-      return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
-    }).join("\n");
+    // Convert kline objects to number arrays for volume delta calculation
+    // format: [open, high, low, close, volume]
+    const kline1mArray = kline1mData.map((candle: any) => [
+      parseFloat(candle.open) || 0,
+      parseFloat(candle.high) || 0,
+      parseFloat(candle.low) || 0,
+      parseFloat(candle.close) || 0,
+      parseFloat(candle.volume) || 0,
+    ]);
 
-    // Delay between API calls to avoid rate limit
-    await delay(500); // 500ms delay
+    const kline5mArray = kline5mData.map((candle: any) => [
+      parseFloat(candle.open) || 0,
+      parseFloat(candle.high) || 0,
+      parseFloat(candle.low) || 0,
+      parseFloat(candle.close) || 0,
+      parseFloat(candle.volume) || 0,
+    ]);
 
-    // 3. Fetch top smart degens
-    const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 10);
-    const traders = tradersResult?.list || [];
-
-    // Format traders summary
-    // Note: 'token traders' response structure is different from market token_top_traders
-    // It has 'address', 'name', 'usd_value', 'netflow_usd', 'tags'
-    const tradersSummary = traders.map((t: any) => {
-      const walletName = t.name || t.address.slice(0, 6);
-      const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
-      // Determine side based on netflow if available, or just show value
-      const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
-      const netflow = t.netflow_usd ? `$${Math.abs(t.netflow_usd).toFixed(2)}` : "";
-      const tags = t.tags && t.tags.length > 0 ? `[${t.tags.join(",")}]` : "";
-
-      return `${walletName}: ${side} ${netflow} (Val: $${value}) ${tags}`;
-    }).join("\n");
-
-    // Calculate volume deltas
-    const volumeDeltas1m = getVolumeDeltasFromKline(kline1mSummary, 15);
-    const volumeDeltas5m = getVolumeDeltasFromKline(kline5mSummary, 6);
+    // Calculate volume deltas using converted arrays
+    const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
+    const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 4);
 
     return {
       kline1mData: kline1mSummary,
