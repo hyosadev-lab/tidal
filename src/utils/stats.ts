@@ -16,7 +16,7 @@ async function showStats() {
   console.log(`Avg Loss: ${performance.avgLossPercent.toFixed(2)}%`);
   console.log(`Largest Win: ${performance.largestWinSol.toFixed(4)} SOL`);
   console.log(`Largest Loss: ${performance.largestLossSol.toFixed(4)} SOL`);
-  console.log(`Avg Holding Hours: ${performance.avgHoldingHours.toFixed(2)}`);
+  console.log(`Avg Holding Minutes: ${(performance.avgHoldingHours * 60).toFixed(2)}`);
   console.log("===========================\n");
 
   let totalUnrealizedPnl = 0;
