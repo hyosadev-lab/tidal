@@ -9,6 +9,12 @@ const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 const SYSTEM_PROMPT = `
 You are an expert crypto trader specializing in Solana memecoins "Trenches".
 Your task is to evaluate open positions and decide whether to HOLD or SELL.
+CRITICAL INSTRUCTIONS:
+1. DO NOT panic sell on minor price fluctuations. Volatility is normal in memecoins.
+2. Hard rules (Take Profit and Stop Loss) are enforced separately. Your decision focuses on market analysis.
+3. Do not sell immediately after entry (first 1-5 minutes) unless there is clear evidence of a rug pull, massive dump, or broken structure.
+4. Ignore short-term noise (1m candles) unless it shows a clear breakdown trend.
+5. Focus on broader market structure and smart money activity.
 Answer ONLY in JSON format: { "action": "HOLD"|"SELL", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
 
@@ -46,23 +52,13 @@ export function checkHardRules(
 export async function getManageDecision(
   position: Position,
   tokenData: TokenData, // Current market data
-  takeProfitPercent: number,
-  stopLossPercent: number,
   learnings: Learning[]
 ): Promise<AiManageDecision> {
-  // 1. Check hard rules
-  const hardRule = checkHardRules(position, takeProfitPercent, stopLossPercent);
-  if (hardRule) {
-    return {
-      action: "SELL",
-      confidence: 100,
-      reasoning: `Hard rule triggered: ${hardRule}`,
-      signals: [hardRule],
-    };
-  }
+  // NOTE: Hard rules (TP/SL) are checked in managing.ts BEFORE calling this function
+  // This function focuses on AI-driven decisions based on market analysis
 
-  // 2. Build user prompt
-  const userPrompt = buildUserPrompt(position, tokenData, takeProfitPercent, stopLossPercent, learnings);
+  // 1. Build user prompt
+  const userPrompt = buildUserPrompt(position, tokenData, learnings);
 
   // 3. Call OpenRouter API
   try {
@@ -157,8 +153,6 @@ function getFallbackDecision(tokenData: TokenData): AiManageDecision {
 function buildUserPrompt(
   position: Position,
   tokenData: TokenData,
-  takeProfitPercent: number,
-  stopLossPercent: number,
   learnings: Learning[]
 ): string {
   const relevantLearnings = learnings
@@ -169,6 +163,13 @@ function buildUserPrompt(
   const holdingDurationMs = Date.now() - position.entryTimestamp;
   const holdingDurationHuman = `${Math.floor(holdingDurationMs / (1000 * 60 * 60))}h ${Math.floor((holdingDurationMs % (1000 * 60 * 60)) / (1000 * 60))}m`;
 
+  // Summarize 1m candles to reduce noise
+  // const candles1m = tokenData.kline1mData.split("\n").filter(l => l.trim());
+  // const last5Candles = candles1m.slice(-5);
+  // const summary1m = last5Candles.length > 0
+  //   ? last5Candles.join("\n")
+  //   : "No recent data";
+
   return `
 POSITION: ${position.tokenSymbol} (${position.tokenAddress})
 Entry Price: $${position.entryPrice.toFixed(6)} | Entry Market Cap: $${position.entryMarketCap}
@@ -177,27 +178,32 @@ Unrealized PnL: ${position.unrealizedPnlPercent?.toFixed(2) || 0}% (${(position.
 Holding Duration: ${holdingDurationHuman}
 Cost: ${(position.costSol || 0).toFixed(4)} SOL
 
-Market Data Latest:
+=== CURRENT MARKET CONDITIONS ===
 Liquidity: $${tokenData.liquidity}
-Volume (5m): $${tokenData.volume5m.toFixed(2)}
 Price Change (5m): ${tokenData.priceChange5m}%
-Holder Count: ${tokenData.holderCount}
-Smart Degen Count: ${tokenData.smartDegenCount} (at entry: ${position.smartDegenEntryCount || "N/A"})
-Renowned Count: ${tokenData.renownedCount}
-Top 10 Holder Rate: ${tokenData.top10HolderRate}
-Creator Status: ${tokenData.creatorTokenStatus}
-Rug Ratio: ${tokenData.rugRatio} | Bundler Rate: ${tokenData.bundlerTraderAmountRate} | Insider Ratio: ${tokenData.ratTraderAmountRate}
-Is Wash Trading: ${tokenData.isWashTrading}
-Renounced Mint: ${tokenData.renouncedMint} | Renounced Freeze: ${tokenData.renouncedFreezeAccount}
+Volume (5m): $${tokenData.volume5m.toFixed(2)}
 
+=== MOMENTUM ANALYSIS ===
 K-line 1m (30 candles):
 ${tokenData.kline1mData}
+
+${tokenData.volumeDeltas1m || "No volume delta data"}
 
 K-line 5m (12 candles):
 ${tokenData.kline5mData}
 
-Take Profit target: +${takeProfitPercent}%
-Stop Loss target: -${stopLossPercent}%
+${tokenData.volumeDeltas5m || "No volume delta data"}
+
+=== SMART MONEY ACTIVITY ===
+Smart Degen Count: ${tokenData.smartDegenCount} (at entry: ${position.smartDegenEntryCount || "N/A"})
+Top Smart Degen Traders (current holding/activity):
+${tokenData.topTradersSummary || "No trader data"}
+
+=== RISK METRICS ===
+Rug Ratio: ${tokenData.rugRatio} | Bundler Rate: ${tokenData.bundlerTraderAmountRate} | Insider Ratio: ${tokenData.ratTraderAmountRate}
+Is Wash Trading: ${tokenData.isWashTrading}
+Creator Status: ${tokenData.creatorTokenStatus}
+Top 10 Holder Rate: ${tokenData.top10HolderRate}
 
 RELEVANT LEARNINGS from previous trades:
 ${relevantLearnings || "None"}

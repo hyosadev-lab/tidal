@@ -133,7 +133,7 @@ async function processPosition(position: Position) {
       ctoFlag: tokenSecurity?.ctoFlag || false,
     };
 
-    const decision = await getManageDecision(position, tokenData, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT, learnings);
+    const decision = await getManageDecision(position, tokenData, learnings);
 
     if (decision.action === "SELL") {
       logger.info(`AI decision to SELL ${position.tokenSymbol}: ${decision.reasoning}`);
