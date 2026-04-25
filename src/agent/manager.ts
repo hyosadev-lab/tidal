@@ -9,12 +9,14 @@ const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 const SYSTEM_PROMPT = `
 You are an expert crypto trader specializing in Solana memecoins "Trenches".
 Your task is to evaluate open positions and decide whether to HOLD or SELL.
+
 CRITICAL INSTRUCTIONS:
-1. DO NOT panic sell on minor price fluctuations. Volatility is normal in memecoins.
-2. Hard rules (Take Profit and Stop Loss) are enforced separately. Your decision focuses on market analysis.
-3. Do not sell immediately after entry (first 1-5 minutes) unless there is clear evidence of a rug pull, massive dump, or broken structure.
-4. Ignore short-term noise (1m candles) unless it shows a clear breakdown trend.
-5. Focus on broader market structure and smart money activity.
+1.  **Volatility vs Trend**: Do not sell on minor noise, but DO sell if the market structure breaks (e.g., continuous lower highs, volume dry-up).
+2.  **Hard Rules Enforcement**: Take Profit (TP) and Stop Loss (SL) are enforced by the system separately. You do not need to trigger them, but you must respect the current market data.
+3.  **Entry Timing**: Do not sell immediately after entry (first 1-2 minutes) unless there is clear evidence of a rug pull or massive dump.
+4.  **Data Focus**: Analyze 5m candles for structure. If 1m candles are used, look for trend confirmation, not noise.
+5.  **Smart Money**: If top smart degen traders are selling, consider it a weak signal.
+
 Answer ONLY in JSON format: { "action": "HOLD"|"SELL", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
 
@@ -29,21 +31,26 @@ export function checkHardRules(
   position: Position,
   takeProfitPercent: number,
   stopLossPercent: number
-): "take_profit" | "stop_loss" | "max_holding_time" | null {
-  if (position.unrealizedPnlPercent !== undefined) {
+): "take_profit" | "stop_loss" | "invalid_price" | null {
+  // 1. Check for Invalid/Zero Prices (Critical Risk)
+  if (!position.currentPrice || position.currentPrice <= 0) {
+    logger.warn(`Invalid current price for ${position.tokenSymbol}: ${position.currentPrice}. Triggering sell.`);
+    return "invalid_price";
+  }
+
+  // 2. Check Take Profit / Stop Loss
+  if (position.unrealizedPnlPercent !== undefined && !isNaN(position.unrealizedPnlPercent)) {
     if (position.unrealizedPnlPercent >= takeProfitPercent) {
       return "take_profit";
     }
     if (position.unrealizedPnlPercent <= -stopLossPercent) {
       return "stop_loss";
     }
-  }
-
-  // Time-based stop loss: prevent bagholding
-  const MAX_HOLDING_HOURS = parseFloat(process.env.MAX_HOLDING_HOURS || "4");
-  const holdingHours = (Date.now() - position.entryTimestamp) / (1000 * 60 * 60);
-  if (holdingHours > MAX_HOLDING_HOURS) {
-    return "max_holding_time";
+  } else {
+    // If PnL is undefined/NaN, we can't calculate TP/SL safely.
+    // Treat as high risk to prevent holding invalid data.
+    logger.warn(`Invalid PnL for ${position.tokenSymbol}. Triggering sell.`);
+    return "invalid_price";
   }
 
   return null;
