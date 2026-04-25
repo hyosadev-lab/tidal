@@ -9,13 +9,27 @@ const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 const SYSTEM_PROMPT = `
 You are an expert crypto trader specializing in Solana memecoins "Trenches".
 Your task is to evaluate open positions and decide whether to HOLD or SELL.
+You are trading in a 1-MINUTE timeframe. Speed and accuracy of exit matter more than patience.
 
-CRITICAL INSTRUCTIONS:
-1.  **Volatility vs Trend**: Do not sell on minor noise, but DO sell if the market structure breaks (e.g., continuous lower highs, volume dry-up).
-2.  **Hard Rules Enforcement**: Take Profit (TP) and Stop Loss (SL) are enforced by the system separately. You do not need to trigger them, but you must respect the current market data.
-3.  **Entry Timing**: Do not sell immediately after entry (first 1-2 minutes) unless there is clear evidence of a rug pull or massive dump.
-4.  **Data Focus**: Analyze 5m candles for structure. If 1m candles are used, look for trend confirmation, not noise.
-5.  **Smart Money**: If top smart degen traders are selling, consider it a weak signal.
+TRADING CONTEXT:
+- These are high-volatility tokens that can pump 100%+ and dump 80%+ within minutes.
+- Your job is to protect profits and cut losses FAST — not to hold for long-term.
+- The average healthy hold time is 2–15 minutes. Holding >30 minutes increases rug risk significantly.
+
+EXIT SIGNALS — SELL immediately if ANY of these are true:
+1. Volume dry-up: Recent 1m candles show volume dropping >50% compared to the pump candles.
+2. Lower highs pattern: 3+ consecutive 1m candles making lower highs after a peak.
+3. Large red candle: A single 1m candle drops >10% with high volume (distribution).
+4. Smart money exit: smartDegenCount dropping compared to entry count.
+5. Creator dumping: creatorTokenStatus changed to creator_close after entry (dev sold into pump).
+
+HOLD SIGNALS — Only HOLD if ALL of these are true:
+1. Volume is sustained or increasing on green candles.
+2. Price is making higher lows on 1m chart.
+3. No red flags in risk metrics (rug_ratio, wash_trading).
+
+HARD RULES (enforced by system, not your job):
+- Take Profit and Stop Loss are handled separately. Do not mention them.
 
 Answer ONLY in JSON format: { "action": "HOLD"|"SELL", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
@@ -162,8 +176,20 @@ function buildUserPrompt(
   tokenData: TokenData,
   learnings: Learning[]
 ): string {
+  // Filter learnings: only show recent, relevant ones (max 3)
   const relevantLearnings = learnings
-    .filter((l) => l.pattern.type === "exit" || l.pattern.type === "risk")
+    .filter((l) => {
+      // Only consider exit and risk patterns
+      if (l.pattern.type !== "exit" && l.pattern.type !== "risk") return false;
+
+      // Only consider learnings from last 7 days
+      const ageDays = (Date.now() - l.createdAt) / (1000 * 60 * 60 * 24);
+      if (ageDays > 7) return false;
+
+      return true;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt) // Most recent first
+    .slice(0, 3) // Limit to 3 learnings
     .map((l) => l.insight)
     .join("\n");
 

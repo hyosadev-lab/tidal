@@ -114,8 +114,20 @@ function buildUserPrompt(
   token: TokenData,
   learnings: Learning[]
 ): string {
+  // Filter learnings: only show recent, relevant ones (max 3)
   const relevantLearnings = learnings
-    .filter((l) => l.pattern.type === "entry" || l.pattern.type === "filter")
+    .filter((l) => {
+      // Only consider entry and filter patterns
+      if (l.pattern.type !== "entry" && l.pattern.type !== "filter") return false;
+
+      // Only consider learnings from last 7 days
+      const ageDays = (Date.now() - l.createdAt) / (1000 * 60 * 60 * 24);
+      if (ageDays > 7) return false;
+
+      return true;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt) // Most recent first
+    .slice(0, 3) // Limit to 3 learnings
     .map((l) => l.insight)
     .join("\n");
 

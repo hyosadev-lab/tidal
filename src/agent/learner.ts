@@ -2,6 +2,12 @@ import type { Trade, Learning } from "../storage/types";
 import { getTrades, getLearnings, saveLearnings } from "../storage/db";
 import { logger } from "../utils/logger";
 
+async function getLastLearningTimestamp(): Promise<number> {
+  const learnings = await getLearnings();
+  if (learnings.length === 0) return 0;
+  return Math.max(...learnings.map(l => l.createdAt));
+}
+
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
 const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
@@ -19,7 +25,15 @@ export async function generateLearnings(): Promise<void> {
     return;
   }
 
-  const recentTrades = confirmedTrades.slice(-20); // Last 20 trades
+  // Get learnings from last 20 trades, but only generate new ones every 10 trades
+  const recentTrades = confirmedTrades.slice(-20);
+  const lastLearning = await getLastLearningTimestamp();
+  const tradesSinceLastLearning = confirmedTrades.filter(t => t.timestamp > lastLearning);
+
+  if (tradesSinceLastLearning.length < 10) {
+    logger.info(`Only ${tradesSinceLastLearning.length} trades since last learning, waiting for more...`);
+    return;
+  }
 
   logger.info("Generating learnings from recent trades");
 
@@ -148,13 +162,28 @@ export async function generateLearnings(): Promise<void> {
     }));
   }
 
-  // Load existing learnings and save new ones
+  // Load existing learnings and save new ones (deduplicate)
   const existingLearnings = await getLearnings();
-  const updatedLearnings = [...existingLearnings, ...newLearnings];
-  await saveLearnings(updatedLearnings);
 
-  logger.info(`Generated ${newLearnings.length} new learning(s)`);
-  newLearnings.forEach((l) => logger.info(`Learning: ${l.insight}`));
+  // Deduplicate: keep only unique insights (based on description + type)
+  const uniqueNewLearnings = newLearnings.filter((newLearning) => {
+    const isDuplicate = existingLearnings.some(
+      (existing) =>
+        existing.pattern.type === newLearning.pattern.type &&
+        existing.insight.toLowerCase() === newLearning.insight.toLowerCase()
+    );
+    return !isDuplicate;
+  });
+
+  // Keep only last 50 learnings to prevent bloat
+  const maxLearnings = 50;
+  const allLearnings = [...existingLearnings, ...uniqueNewLearnings];
+  const trimmedLearnings = allLearnings.slice(-maxLearnings);
+
+  await saveLearnings(trimmedLearnings);
+
+  logger.info(`Generated ${uniqueNewLearnings.length} new unique learning(s), total: ${trimmedLearnings.length}`);
+  uniqueNewLearnings.forEach((l) => logger.info(`Learning: ${l.insight}`));
 }
 
 function buildLearningPrompt(trades: Trade[]): string {
