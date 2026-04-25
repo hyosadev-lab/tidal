@@ -1,5 +1,6 @@
 import { fetchKline, fetchTopTraders, fetchTokenInfo, fetchTokenSecurity } from "./client";
 import { delay } from "../utils/concurrency";
+import { getVolumeDeltasFromKline } from "../utils/kline";
 
 export interface TokenInfo {
   price: number;
@@ -70,9 +71,10 @@ export interface TokenDetails {
   kline5mData: string;
   topTradersSummary: string;
   price: number;
-  priceChange1h: number;
-  volume1h: number;
-  swaps1h: number;
+  priceChange5m: number;
+  volume5m: number;
+  volumeDeltas1m: string;
+  volumeDeltas5m: string;
 }
 
 export async function getTokenDetails(chain: string, address: string): Promise<TokenDetails> {
@@ -88,9 +90,8 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
 
-    // Parse price and price change from kline summary
+    // Parse current price from last 1m candle
     let currentPrice = 0;
-    let priceChange1h = 0;
     const klineLines = kline1mSummary.split("\n").filter((line: string) => line.trim());
 
     if (klineLines.length > 0) {
@@ -98,20 +99,6 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       const closeMatch = lastCandle.match(/C:([0-9.]+)/);
       if (closeMatch) {
         currentPrice = parseFloat(closeMatch[1] ?? "") || 0;
-      }
-
-      if (klineLines.length >= 2) {
-        const firstCandle = klineLines[0] ?? "";
-        const firstCloseMatch = firstCandle.match(/C:([0-9.]+)/);
-
-        if (firstCloseMatch && closeMatch) {
-          const firstClose = parseFloat(firstCloseMatch[1] ?? "") || 0;
-          const lastClose = parseFloat(closeMatch[1] ?? "") || 0;
-
-          if (firstClose > 0) {
-            priceChange1h = ((lastClose - firstClose) / firstClose) * 100;
-          }
-        }
       }
     }
 
@@ -123,17 +110,31 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
     const kline5mData = kline5mResult?.list || [];
 
-    // Calculate volume 1h from 5m candles
-    let volume1h = 0;
-    let swaps1h = 0;
+    // Calculate volume 5m and price change 5m from last 5 candles of 1m data
+    let volume5m = 0;
+    let priceChange5m = 0;
+
+    // Use last 5 candles from 1m data for 5m metrics
+    const last5Candles = kline1mData.slice(-5);
+    if (last5Candles.length >= 2) {
+      const firstCandle = last5Candles[0];
+      const lastCandle = last5Candles[last5Candles.length - 1];
+
+      if (firstCandle && lastCandle) {
+        // Calculate volume 5m
+        volume5m = last5Candles.reduce((sum: number, candle: any) =>
+          sum + (parseFloat(candle.volume) || 0), 0);
+
+        // Calculate price change 5m
+        const firstClose = parseFloat(firstCandle.close) || 0;
+        const lastClose = parseFloat(lastCandle.close) || 0;
+        if (firstClose > 0) {
+          priceChange5m = ((lastClose - firstClose) / firstClose) * 100;
+        }
+      }
+    }
 
     const kline5mSummary = kline5mData.map((candle: any) => {
-      // Sum volume from all candles
-      volume1h += parseFloat(candle.volume) || 0;
-
-      // Count candles as swaps (estimation)
-      swaps1h += 1;
-
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
 
@@ -158,14 +159,19 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       return `${walletName}: ${side} ${netflow} (Val: $${value}) ${tags}`;
     }).join("\n");
 
+    // Calculate volume deltas
+    const volumeDeltas1m = getVolumeDeltasFromKline(kline1mSummary, 5);
+    const volumeDeltas5m = getVolumeDeltasFromKline(kline5mSummary, 4);
+
     return {
       kline1mData: kline1mSummary,
       kline5mData: kline5mSummary,
       topTradersSummary: tradersSummary,
       price: currentPrice,
-      priceChange1h: priceChange1h,
-      volume1h: volume1h,
-      swaps1h: swaps1h,
+      priceChange5m: priceChange5m,
+      volume5m: volume5m,
+      volumeDeltas1m: volumeDeltas1m,
+      volumeDeltas5m: volumeDeltas5m,
     };
   } catch (error) {
     console.error("Error fetching token details:", error);
@@ -174,9 +180,10 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       kline5mData: "",
       topTradersSummary: "",
       price: 0,
-      priceChange1h: 0,
-      volume1h: 0,
-      swaps1h: 0,
+      priceChange5m: 0,
+      volume5m: 0,
+      volumeDeltas1m: "",
+      volumeDeltas5m: "",
     };
   }
 }

@@ -1,6 +1,5 @@
 import type { TokenData, Learning } from "../storage/types";
 import { logger } from "../utils/logger";
-import { getVolumeDeltasFromKline, parseKlineData } from "../utils/kline";
 
 interface OpenRouterResponse {
   choices: {
@@ -120,55 +119,25 @@ function buildUserPrompt(
     .map((l) => l.insight)
     .join("\n");
 
-  // Calculate volume deltas for both timeframes
-  // 1m: 5 candles (5 minutes) for recent momentum
-  // 5m: 4 candles (20 minutes) for short-term trend
-  const volumeDeltas1m = getVolumeDeltasFromKline(token.kline1mData, 5);
-  const volumeDeltas5m = getVolumeDeltasFromKline(token.kline5mData, 4);
-
-  // Parse kline string data to extract recent price info for 1m entry timing
-  const kline1mArray = parseKlineData(token.kline1mData);
-  const recentCandles = kline1mArray.slice(-5); // Last 5 candles for entry timing
-
-  let currentPrice = 0;
-  let priceChange5m = 0;
-  let recentVolume = 0;
-
-  if (recentCandles.length > 0) {
-    const lastCandle = recentCandles[recentCandles.length - 1];
-    const firstCandle = recentCandles[0];
-
-    if (lastCandle && lastCandle[4] !== undefined) {
-      currentPrice = lastCandle[4] || 0; // Close price
-    }
-
-    if (firstCandle && lastCandle && firstCandle[4] !== undefined && lastCandle[4] !== undefined) {
-      priceChange5m = ((lastCandle[4] - firstCandle[4]) / firstCandle[4]) * 100;
-    }
-
-    // Sum volume from recent candles
-    recentVolume = recentCandles.reduce((sum: number, candle: number[]) => sum + (candle[5] || 0), 0);
-  }
-
   return `
 TOKEN: ${token.symbol} (${token.address})
 Market Cap: $${token.usdMarketCap}
 Liquidity: $${token.liquidity}
 
 === ENTRY TIMING DATA (1-MINUTE FOCUS) ===
-Current Price: $${currentPrice.toFixed(6)}
-Price Change (5m): ${priceChange5m.toFixed(2)}%
-Volume (5m): ${recentVolume.toFixed(2)}
+Current Price: $${token.price.toFixed(6)}
+Price Change (5m): ${token.priceChange5m.toFixed(2)}%
+Volume (5m): ${token.volume5m.toFixed(2)}
 
-K-line 1m (30 candles, focus on last 5 for entry):
+K-line 1m (30 candles):
 ${token.kline1mData}
 
-${volumeDeltas1m}
+${token.volumeDeltas1m}
 
-K-line 5m (12 candles for context):
+K-line 5m (12 candles):
 ${token.kline5mData}
 
-${volumeDeltas5m}
+${token.volumeDeltas5m}
 
 === SMART MONEY DATA ===
 Smart Degen Count: ${token.smartDegenCount}

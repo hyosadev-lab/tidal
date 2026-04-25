@@ -1,6 +1,7 @@
 /**
  * Parse kline string to array
  * Supports both JSON format and GMGN string format
+ * JSON format: [[timestamp, open, high, low, close, volume], ...]
  * GMGN format: "O:1.0 H:1.1 L:0.9 C:1.05 V:1000"
  */
 export function parseKlineData(klineString: string): number[][] {
@@ -13,11 +14,11 @@ export function parseKlineData(klineString: string): number[][] {
       return parsed;
     }
   } catch {
-    // Not JSON, try GMGN string format
+    // Not JSON, continue to GMGN string format
   }
 
   // Parse GMGN string format
-  const lines = klineString.split("\n").filter(line => line.trim());
+  const lines = klineString.split("\n").filter((line) => line.trim());
   const candles: number[][] = [];
 
   for (const line of lines) {
@@ -35,7 +36,7 @@ export function parseKlineData(klineString: string): number[][] {
         parseFloat(highMatch[1] || "0"),
         parseFloat(lowMatch[1] || "0"),
         parseFloat(closeMatch[1] || "0"),
-        parseFloat(volumeMatch[1] || "0")
+        parseFloat(volumeMatch[1] || "0"),
       ];
       candles.push(candle);
     }
@@ -48,7 +49,10 @@ export function parseKlineData(klineString: string): number[][] {
  * Calculate volume deltas for last N candles
  * Returns formatted string: "Volume Deltas: +100%, -25%, +50%"
  */
-export function calculateVolumeDeltas(klines: number[][], limit: number): string {
+export function calculateVolumeDeltas(
+  klines: number[][],
+  limit: number,
+): string {
   if (klines.length < 2) {
     return "Volume Deltas: N/A (insufficient data)";
   }
@@ -87,7 +91,10 @@ export function calculateVolumeDeltas(klines: number[][], limit: number): string
 /**
  * Get volume deltas from kline JSON string
  */
-export function getVolumeDeltasFromKline(klineString: string, limit: number = 5): string {
+export function getVolumeDeltasFromKline(
+  klineString: string,
+  limit: number = 5,
+): string {
   const klines = parseKlineData(klineString);
   return calculateVolumeDeltas(klines, limit);
 }

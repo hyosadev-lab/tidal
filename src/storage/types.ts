@@ -23,7 +23,12 @@ export interface Trade {
   pnlSol?: number;
   pnlPercent?: number;
   holdingDurationMs?: number;
-  exitReason?: "take_profit" | "stop_loss" | "ai_decision" | "manual" | "max_holding_time";
+  exitReason?:
+    | "take_profit"
+    | "stop_loss"
+    | "ai_decision"
+    | "manual"
+    | "max_holding_time";
 
   // AI context saat decision
   aiReasoning?: string;
@@ -106,18 +111,19 @@ export interface TokenData {
   renownedCount: number;
   rugRatio: number;
   smartDegenCount: number;
-  swaps1h: number;
   symbol: string;
   top10HolderRate: number;
   usdMarketCap: number;
-  volume1h: number;
 
   // Enriched Fields from gmgn-cli market kline and gmgn-cli token traders
   kline1mData: string;
   kline5mData: string;
-  topTradersSummary: string;
   price: number;
-  priceChange1h: number;
+  priceChange5m: number;
+  topTradersSummary: string;
+  volume5m: number;
+  volumeDeltas1m: string;
+  volumeDeltas5m: string;
 }
 
 export interface SoldToken {
