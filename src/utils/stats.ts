@@ -29,8 +29,8 @@ async function showStats() {
       totalUnrealizedPnl += pos.unrealizedPnlSol || 0;
       console.log(
         `${pos.tokenSymbol} (${pos.tokenAddress.slice(0, 6)}...): ` +
-          `Entry: ${pos.entryPrice.toFixed(6)} SOL, ` +
-          `Current: ${(pos.currentPrice || 0).toFixed(6)} SOL, ` +
+          `Entry MC: $${pos.entryMarketCap.toFixed(0)}, ` +
+          `Current MC: $${(pos.currentMarketCap || 0).toFixed(0)}, ` +
           `PnL: ${(pos.unrealizedPnlSol || 0).toFixed(4)} SOL (${(pos.unrealizedPnlPercent || 0).toFixed(2)}%)`,
       );
     });
