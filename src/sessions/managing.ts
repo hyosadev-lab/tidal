@@ -39,6 +39,8 @@ export async function startManagingSession() {
   }, MANAGE_INTERVAL_MS);
 }
 
+let lastLearningsCount = 0;
+
 async function monitorPositions() {
   const positions = await getPositions();
 
@@ -56,8 +58,16 @@ async function monitorPositions() {
   // Learn from recent trades periodically
   const trades = await getTrades();
   const confirmedTrades = trades.filter(t => t.orderStatus === "confirmed");
-  if (confirmedTrades.length % 5 === 0 && confirmedTrades.length > 0) {
-     await generateLearnings();
+
+  // Generate learnings only when count increases by multiples of 5
+  // e.g., if last count was 0 and now 5, generate. If 5 and still 5, don't generate.
+  const currentCount = confirmedTrades.length;
+  const shouldGenerate = currentCount > 0 && currentCount % 5 === 0 && currentCount > lastLearningsCount;
+
+  if (shouldGenerate) {
+    logger.info(`Generating learnings for ${currentCount} confirmed trades`);
+    await generateLearnings();
+    lastLearningsCount = currentCount;
   }
 }
 
