@@ -159,7 +159,6 @@ Liquidity: $${token.liquidity}
 Current Price: $${currentPrice.toFixed(6)}
 Price Change (5m): ${priceChange5m.toFixed(2)}%
 Volume (5m): ${recentVolume.toFixed(2)}
-Volume 1h: $${token.volume1h.toFixed(2)} | Swaps 1h: ${token.swaps1h}
 
 K-line 1m (30 candles, focus on last 5 for entry):
 ${token.kline1mData}
