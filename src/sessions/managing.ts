@@ -66,7 +66,7 @@ async function processPosition(position: Position) {
     // 1. Fetch current price and calculate price change
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
     const currentPrice = details.price;
-    const priceChange1h = details.priceChange1h;
+    const priceChange5m = details.priceChange5m;
 
     // Update position PnL
     position.currentPrice = currentPrice;
@@ -104,16 +104,17 @@ async function processPosition(position: Position) {
       symbol: position.tokenSymbol,
       name: position.tokenName,
       price: currentPrice,
-      priceChange1h: priceChange1h,
+      priceChange5m: priceChange5m,
       usdMarketCap: tokenInfo?.usdMarketCap || position.currentMarketCap || 0,
       kline1mData: details.kline1mData,
       kline5mData: details.kline5mData,
       topTradersSummary: details.topTradersSummary,
       // Data from token info
       liquidity: tokenInfo?.liquidity || 0,
-      // Volume data from kline 5m (1 hour)
-      volume1h: details.volume1h,
-      swaps1h: details.swaps1h,
+      // Volume data from kline 5m
+      volume5m: details.volume5m,
+      volumeDeltas1m: details.volumeDeltas1m,
+      volumeDeltas5m: details.volumeDeltas5m,
       holderCount: tokenInfo?.holderCount || 0,
       smartDegenCount: tokenInfo?.smartDegenCount || 0,
       renownedCount: tokenInfo?.renownedCount || 0,

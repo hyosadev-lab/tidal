@@ -179,8 +179,8 @@ Cost: ${(position.costSol || 0).toFixed(4)} SOL
 
 Market Data Latest:
 Liquidity: $${tokenData.liquidity}
-Volume 1h: $${tokenData.volume1h.toFixed(2)} | Swaps 1h: ${tokenData.swaps1h}
-Price Change 1h: ${tokenData.priceChange1h}%
+Volume (5m): $${tokenData.volume5m.toFixed(2)}
+Price Change (5m): ${tokenData.priceChange5m}%
 Holder Count: ${tokenData.holderCount}
 Smart Degen Count: ${tokenData.smartDegenCount} (at entry: ${position.smartDegenEntryCount || "N/A"})
 Renowned Count: ${tokenData.renownedCount}
@@ -190,10 +190,10 @@ Rug Ratio: ${tokenData.rugRatio} | Bundler Rate: ${tokenData.bundlerTraderAmount
 Is Wash Trading: ${tokenData.isWashTrading}
 Renounced Mint: ${tokenData.renouncedMint} | Renounced Freeze: ${tokenData.renouncedFreezeAccount}
 
-K-line 1m last (90 candles):
+K-line 1m (30 candles):
 ${tokenData.kline1mData}
 
-K-line 5m last (36 candles):
+K-line 5m (12 candles):
 ${tokenData.kline5mData}
 
 Take Profit target: +${takeProfitPercent}%

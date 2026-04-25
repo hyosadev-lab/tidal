@@ -121,11 +121,10 @@ async function processCandidate(token: TokenData): Promise<void> {
     token.kline5mData = details.kline5mData;
     token.topTradersSummary = details.topTradersSummary;
     token.price = details.price;
-    token.priceChange1h = details.priceChange1h;
-    // Note: volume1h and swaps1h from trenches API are already set
-    // If needed, can be overwritten with kline data:
-    token.volume1h = details.volume1h;
-    token.swaps1h = details.swaps1h;
+    token.priceChange5m = details.priceChange5m;
+    token.volume5m = details.volume5m;
+    token.volumeDeltas1m = details.volumeDeltas1m;
+    token.volumeDeltas5m = details.volumeDeltas5m;
 
     // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();
