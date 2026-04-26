@@ -32,19 +32,26 @@ BUY DECISION CRITERIA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BUY if ALL of these are true:
 - Order Flow Intensity is BULLISH or NEUTRAL-BULLISH
-- Net Flow (USD) > $1000 OR Smart Money Net Flow > $500
+- Net Flow (USD) > $500 (buying pressure from ALL traders)
 - Buy/Sell Ratio > 1.0 (more buyers than sellers)
 - Price is NOT dropping (priceChange5m >= -5%)
-- Smart Money Buys > Smart Money Sells OR Smart Degen Count >= 2
+
+Smart Money Check (ONE of these must be true):
+- Smart Money Net Flow > $0 (smart money actively buying) OR
+- Smart Money Buys > Smart Money Sells (more smart money buying than selling) OR
+- Smart Degen Count >= 2 AND Smart Money Sells = 0 (smart degens present, none selling)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SKIP CRITERIA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SKIP if ANY of these are true:
 - Order Flow Intensity is BEARISH (smart money distributing)
-- Net Flow (USD) < -$1000 (strong selling pressure)
-- Smart Money Sells > Smart Money Buys (whales exiting)
+- Net Flow (USD) < -$500 (strong selling pressure from all traders)
+- Smart Money Net Flow < -$500 (smart money actively selling/distributing)
+- Smart Money Sells > Smart Money Buys AND Smart Money Net Flow < $0
 - High risk metrics (rug_ratio > 0.3, wash_trading true)
+
+NOTE: Do NOT skip just because smart money is neutral or absent. Retail buying pressure (Net Flow > $500, Buy/Sell Ratio > 1.0) can be valid if no smart money selling pressure.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 VOLUME SPIKE CONFIRMATION
