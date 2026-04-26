@@ -15,9 +15,44 @@ const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
 const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 
 const SYSTEM_PROMPT = `
-You are an expert crypto trader specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
+You are an expert ORDER FLOW TRADER specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
 Your task is to analyze token data and decide whether to BUY or SKIP based on 1-minute entry timing.
-Focus on immediate momentum, volume spikes, and recent smart money activity.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ORDER FLOW ANALYSIS FRAMEWORK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Your primary focus is ORDER FLOW data (buy/sell pressure from traders):
+1. **Net Flow**: Positive = buying pressure, Negative = selling pressure
+2. **Buy/Sell Ratio**: > 1.0 = more buyers than sellers
+3. **Smart Money Flow**: Net flow from smart degen traders (most reliable signal)
+4. **Intensity**: Bullish = accumulation, Bearish = distribution, Neutral = undecided
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BUY DECISION CRITERIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BUY if ALL of these are true:
+- Order Flow Intensity is BULLISH or NEUTRAL-BULLISH
+- Net Flow (USD) > $1000 OR Smart Money Net Flow > $500
+- Buy/Sell Ratio > 1.0 (more buyers than sellers)
+- Price is NOT dropping (priceChange5m >= -5%)
+- Smart Money Buys > Smart Money Sells OR Smart Degen Count >= 2
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SKIP CRITERIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SKIP if ANY of these are true:
+- Order Flow Intensity is BEARISH (smart money distributing)
+- Net Flow (USD) < -$1000 (strong selling pressure)
+- Smart Money Sells > Smart Money Buys (whales exiting)
+- High risk metrics (rug_ratio > 0.3, wash_trading true)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VOLUME SPIKE CONFIRMATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Look for volume spikes in 1m candles aligned with order flow buying
+- If volume spike BUT order flow is bearish → SKIP (trap/bull trap)
+- If volume spike AND order flow bullish → BUY (real momentum)
+
 Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
 
@@ -151,6 +186,17 @@ ${token.kline5mData}
 
 ${token.volumeDeltas5m}
 
+=== ORDER FLOW DATA ===
+Current Intensity: ${token.orderFlowSummary.intensity.toUpperCase()}
+Net Flow (USD): $${token.orderFlowSummary.netFlowUsd.toFixed(2)}
+Buy/Sell Ratio: ${token.orderFlowSummary.buySellRatio.toFixed(2)}
+Total Buy Volume: $${token.orderFlowSummary.buyVolume.toFixed(2)}
+Total Sell Volume: $${token.orderFlowSummary.sellVolume.toFixed(2)}
+
+Smart Money Flow: $${token.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
+Smart Money Buys: ${token.orderFlowSummary.smartMoneyBuyCount}
+Smart Money Sells: ${token.orderFlowSummary.smartMoneySellCount}
+
 === SMART MONEY DATA ===
 Smart Degen Count: ${token.smartDegenCount}
 Top Smart Degen Traders (holding/activity):
@@ -171,5 +217,16 @@ ${relevantLearnings || "None"}
 3. Are smart degen traders actively buying right now?
 4. Is the current price breaking above recent resistance?
 5. Are there any risky signals (high rug ratio, wash trading)?
+
+=== ORDER FLOW ENTRY ANALYSIS ===
+1. Is Order Flow Intensity BULLISH? (Net Flow > 0, Buy/Sell Ratio > 1.0)
+2. Is Smart Money Net Flow POSITIVE? (Smart degen accumulation)
+3. Are Smart Money Buys > Smart Money Sells? (Whales buying)
+4. Does volume spike align with positive order flow? (Real momentum vs trap)
+5. Is there any bearish order flow warning? (Selling pressure building)
+
+Key Decision Logic:
+- BUY if: Bullish order flow + volume spike + smart money buying
+- SKIP if: Bearish order flow OR smart money selling OR high risk metrics
   `;
 }

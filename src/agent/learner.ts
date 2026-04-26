@@ -56,7 +56,16 @@ export async function generateLearnings(): Promise<void> {
           messages: [
             {
               role: "system",
-              content: "You are an expert crypto trader analyzing trade history to identify patterns that improve win rate. Analyze the trades below and generate 2-3 specific insights. Answer ONLY with valid JSON array: [{ type, description, successRate, avgPnlPercent }]"
+              content: `You are an expert ORDER FLOW TRADER analyzing trade history to identify patterns that improve win rate.
+Your task is to analyze trades and identify order flow patterns that predict success or failure.
+
+Key Analysis Areas:
+1. ORDER FLOW ENTRY: When does bullish order flow lead to profitable buys?
+2. ORDER FLOW EXIT: When does bearish order flow signal correct exits?
+3. SMART MONEY PATTERNS: How do smart degen traders behave in winning vs losing trades?
+4. VOLUME + ORDER FLOW: When do they align for real momentum vs traps?
+
+Answer ONLY with valid JSON array: [{ type, description, successRate, avgPnlPercent }]`
             },
             { role: "user", content: prompt }
           ],
@@ -199,6 +208,7 @@ function buildLearningPrompt(trades: Trade[]): string {
     Holding Duration: ${t.holdingDurationMs ? (t.holdingDurationMs / (1000 * 60 * 60)).toFixed(1) + "h" : "N/A"}
     Entry Reason: ${t.aiReasoning || "N/A"}
     Exit Reason: ${t.exitReason || "N/A"}
+    Signals Used: ${t.signalsUsed ? t.signalsUsed.join(", ") : "N/A"}
   `).join("\n");
 
   const winningSummaries = winningTrades.map(t => `
@@ -210,6 +220,7 @@ function buildLearningPrompt(trades: Trade[]): string {
     Holding Duration: ${t.holdingDurationMs ? (t.holdingDurationMs / (1000 * 60 * 60)).toFixed(1) + "h" : "N/A"}
     Entry Reason: ${t.aiReasoning || "N/A"}
     Exit Reason: ${t.exitReason || "N/A"}
+    Signals Used: ${t.signalsUsed ? t.signalsUsed.join(", ") : "N/A"}
   `).join("\n");
 
   const avgPnl = trades.reduce((sum, t) => sum + (t.pnlPercent || 0), 0) / trades.length;
@@ -217,13 +228,33 @@ function buildLearningPrompt(trades: Trade[]): string {
   const winRate = (wins / trades.length * 100).toFixed(1);
 
   return `
-Analyze the following trade history from a Solana memecoin trading bot.
+Analyze the following trade history from a Solana memecoin trading bot using ORDER FLOW analysis.
 Identify specific patterns that lead to successful trades (positive PnL) and failed trades (negative PnL).
-Focus on:
-1. Analyze losing trades: why did they lose? (entry too late, exit too early, holding too long, token characteristics)
-2. Analyze winning trades: what made them win? (entry timing, exit timing, token quality)
-3. Compare winning vs losing trades: what differentiates them? (market cap, liquidity, smart degen count, volume, price action)
-4. Generate specific entry/exit criteria based on analysis
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FOCUS AREAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. ORDER FLOW ENTRY PATTERNS:
+   - When is order flow bullish → BUY signal works?
+   - When is order flow bearish → BUY signal fails?
+   - Smart money accumulation patterns before pumps
+   - Volume spike + order flow alignment vs trap
+
+2. ORDER FLOW EXIT PATTERNS:
+   - When is smart money selling → SELL signal works?
+   - When is order flow turning bearish → exit timing?
+   - Distribution patterns before dumps
+   - Net flow negative signals
+
+3. ORDER FLOW vs PRICE ACTION:
+   - Does price follow order flow or lead it?
+   - Bull trap patterns (volume up, order flow down)
+   - Real momentum vs fake pumps
+
+4. WINNING VS LOSING COMPARISON:
+   - Order flow metrics in winning trades vs losing trades
+   - Smart money behavior differences
+   - Entry timing based on order flow intensity
 
 Current Stats:
 - Total Trades: ${trades.length}
@@ -238,7 +269,7 @@ ${losingSummaries || "None"}
 Winning Trades:
 ${winningSummaries || "None"}
 
-Generate 2-3 specific, actionable insights based on losing trade patterns.
+Generate 2-3 specific, actionable insights based on order flow patterns.
 Format as JSON array: [{ type: "entry"|"exit"|"filter"|"risk", description: string, successRate: number, avgPnlPercent: number }]
   `;
 }

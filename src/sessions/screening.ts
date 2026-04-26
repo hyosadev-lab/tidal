@@ -115,11 +115,12 @@ async function scanAndFilter() {
 
 async function processCandidate(token: TokenData): Promise<void> {
   try {
-    // Fetch detailed data (kline, top traders, price)
+    // Fetch detailed data (kline, top traders, price, order flow)
     const details = await getTokenDetails(CHAIN, token.address);
     token.kline1mData = details.kline1mData;
     token.kline5mData = details.kline5mData;
     token.topTradersSummary = details.topTradersSummary;
+    token.orderFlowSummary = details.orderFlowSummary;
     token.price = details.price;
     token.priceChange5m = details.priceChange5m;
     token.volume5m = details.volume5m;

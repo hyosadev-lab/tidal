@@ -95,6 +95,17 @@ export interface Performance {
   >;
 }
 
+export interface OrderFlowSummary {
+  buyVolume: number;
+  sellVolume: number;
+  netFlowUsd: number;
+  buySellRatio: number;
+  intensity: "bullish" | "bearish" | "neutral";
+  smartMoneyNetFlow: number;
+  smartMoneyBuyCount: number;
+  smartMoneySellCount: number;
+}
+
 export interface TokenData {
   // Core Fields from gmgn-cli trenches
   address: string;
@@ -127,6 +138,7 @@ export interface TokenData {
   volume5m: number;
   volumeDeltas1m: string;
   volumeDeltas5m: string;
+  orderFlowSummary: OrderFlowSummary;
 }
 
 export interface SoldToken {

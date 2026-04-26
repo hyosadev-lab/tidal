@@ -189,6 +189,13 @@ export async function fetchTopTraders(chain: string, address: string, tag: strin
   return executeGmgnCommand<any>(args);
 }
 
+// Token endpoint - Token traders (all traders, no tag filter) for order flow analysis
+export async function fetchTokenTraders(chain: string, address: string, limit: number = 50) {
+  // Fetch all token traders without tag filter for order flow calculation
+  const args = ["token", "traders", "--chain", chain, "--address", address, "--limit", limit.toString(), "--raw"];
+  return executeGmgnCommand<any>(args);
+}
+
 // Token endpoint - Token info
 export async function fetchTokenInfo(chain: string, address: string) {
   const args = ["token", "info", "--chain", chain, "--address", address, "--raw"];

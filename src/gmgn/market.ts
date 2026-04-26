@@ -1,4 +1,4 @@
-import { fetchKline, fetchTopTraders, fetchTokenInfo, fetchTokenSecurity } from "./client";
+import { fetchKline, fetchTopTraders, fetchTokenTraders, fetchTokenInfo, fetchTokenSecurity } from "./client";
 import { delay } from "../utils/concurrency";
 import { getVolumeDeltasFromKline } from "../utils/kline";
 
@@ -66,15 +66,98 @@ export async function getTokenSecurity(chain: string, address: string): Promise<
   }
 }
 
+export interface OrderFlowSummary {
+  buyVolume: number;
+  sellVolume: number;
+  netFlowUsd: number;
+  buySellRatio: number;
+  intensity: "bullish" | "bearish" | "neutral";
+  smartMoneyNetFlow: number;
+  smartMoneyBuyCount: number;
+  smartMoneySellCount: number;
+}
+
 export interface TokenDetails {
   kline1mData: string;
   kline5mData: string;
   topTradersSummary: string;
+  orderFlowSummary: OrderFlowSummary;
   price: number;
   priceChange5m: number;
   volume5m: number;
   volumeDeltas1m: string;
   volumeDeltas5m: string;
+}
+
+export async function getOrderFlowSummary(chain: string, address: string): Promise<OrderFlowSummary> {
+  try {
+    // Fetch all token traders for order flow analysis
+    const tradersResult = await fetchTokenTraders(chain, address, 50);
+    const traders = tradersResult?.list || [];
+
+    let totalBuyVolume = 0;
+    let totalSellVolume = 0;
+    let smartMoneyNetFlow = 0;
+    let smartMoneyBuyCount = 0;
+    let smartMoneySellCount = 0;
+
+    traders.forEach((t: any) => {
+      const isSmartDegen = t.tags?.includes("smart_degen") || false;
+      const netflow = parseFloat(t.netflow_usd) || 0;
+
+      // Track total volumes
+      if (netflow > 0) {
+        totalBuyVolume += netflow;
+        if (isSmartDegen) {
+          smartMoneyBuyCount++;
+          smartMoneyNetFlow += netflow;
+        }
+      } else if (netflow < 0) {
+        totalSellVolume += Math.abs(netflow);
+        if (isSmartDegen) {
+          smartMoneySellCount++;
+          smartMoneyNetFlow += netflow; // netflow is negative for sells
+        }
+      }
+    });
+
+    const totalVolume = totalBuyVolume + totalSellVolume;
+    const netFlow = totalBuyVolume - totalSellVolume;
+    const buySellRatio = totalSellVolume > 0 ? totalBuyVolume / totalSellVolume : (totalBuyVolume > 0 ? 999 : 1);
+
+    // Determine intensity based on net flow and volume
+    let intensity: "bullish" | "bearish" | "neutral";
+    if (netFlow > totalVolume * 0.1) {
+      intensity = "bullish";
+    } else if (netFlow < -totalVolume * 0.1) {
+      intensity = "bearish";
+    } else {
+      intensity = "neutral";
+    }
+
+    return {
+      buyVolume: totalBuyVolume,
+      sellVolume: totalSellVolume,
+      netFlowUsd: netFlow,
+      buySellRatio,
+      intensity,
+      smartMoneyNetFlow,
+      smartMoneyBuyCount,
+      smartMoneySellCount,
+    };
+  } catch (error) {
+    console.error("Error fetching order flow data:", error);
+    return {
+      buyVolume: 0,
+      sellVolume: 0,
+      netFlowUsd: 0,
+      buySellRatio: 1,
+      intensity: "neutral",
+      smartMoneyNetFlow: 0,
+      smartMoneyBuyCount: 0,
+      smartMoneySellCount: 0,
+    };
+  }
 }
 
 export async function getTokenDetails(chain: string, address: string): Promise<TokenDetails> {
@@ -178,10 +261,14 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
     const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 4);
 
+    // Calculate order flow summary
+    const orderFlowSummary = await getOrderFlowSummary(chain, address);
+
     return {
       kline1mData: kline1mSummary,
       kline5mData: kline5mSummary,
       topTradersSummary: tradersSummary,
+      orderFlowSummary,
       price: currentPrice,
       priceChange5m: priceChange5m,
       volume5m: volume5m,
@@ -194,6 +281,16 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       kline1mData: "",
       kline5mData: "",
       topTradersSummary: "",
+      orderFlowSummary: {
+        buyVolume: 0,
+        sellVolume: 0,
+        netFlowUsd: 0,
+        buySellRatio: 1,
+        intensity: "neutral",
+        smartMoneyNetFlow: 0,
+        smartMoneyBuyCount: 0,
+        smartMoneySellCount: 0,
+      },
       price: 0,
       priceChange5m: 0,
       volume5m: 0,

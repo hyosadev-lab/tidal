@@ -157,6 +157,7 @@ async function processPosition(position: Position): Promise<Position | null> {
       kline1mData: details.kline1mData,
       kline5mData: details.kline5mData,
       topTradersSummary: details.topTradersSummary,
+      orderFlowSummary: details.orderFlowSummary,
       // Data from token info
       liquidity: tokenInfo?.liquidity || 0,
       // Volume data from kline 5m
