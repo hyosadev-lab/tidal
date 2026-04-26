@@ -52,6 +52,9 @@ export interface Position {
   buyTradeId: string;
   // Data saat entry untuk perbandingan
   smartDegenEntryCount?: number;
+  // Trailing stop data
+  peakPrice?: number;
+  peakPriceTimestamp?: number;
 }
 
 export interface Learning {

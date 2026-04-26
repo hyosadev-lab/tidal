@@ -10,8 +10,9 @@ import { delay } from "../utils/concurrency";
 const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
-const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "50");
-const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "30");
+const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "30");
+const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "15");
+const TRAILING_STOP_PERCENT = parseInt(process.env.TRAILING_STOP_PERCENT || "10");
 const MANAGE_INTERVAL_MINUTES = parseFloat(process.env.MANAGE_INTERVAL_MINUTES || "0.1667");
 const MANAGE_INTERVAL_MS = MANAGE_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
@@ -51,8 +52,19 @@ async function monitorPositions() {
 
   logger.info(`Monitoring ${positions.length} positions`);
 
+  const updatedPositions: Position[] = [];
+
   for (const position of positions) {
-    await processPosition(position);
+    const processedPosition = await processPosition(position);
+    if (processedPosition) {
+      updatedPositions.push(processedPosition);
+    }
+    // If processedPosition is null, it means the position was sold (and executeSellOrder handled saving)
+  }
+
+  // Save updated positions (those that were not sold)
+  if (updatedPositions.length > 0) {
+    await savePositions(updatedPositions);
   }
 
   // Learn from recent trades periodically
@@ -71,7 +83,7 @@ async function monitorPositions() {
   }
 }
 
-async function processPosition(position: Position) {
+async function processPosition(position: Position): Promise<Position | null> {
   try {
     // 1. Fetch current price and calculate price change
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
@@ -81,6 +93,12 @@ async function processPosition(position: Position) {
     // Update position PnL
     position.currentPrice = currentPrice;
     position.currentMarketCap = position.entryMarketCap * (currentPrice / position.entryPrice); // Approximate
+
+    // Update Peak Price for Trailing Stop
+    if (!position.peakPrice || currentPrice > position.peakPrice) {
+      position.peakPrice = currentPrice;
+      position.peakPriceTimestamp = Date.now();
+    }
 
     // Fix PnL SOL calculation: use costSol and price ratio
     // entryPrice and currentPrice are in USD (from GMGN API)
@@ -93,12 +111,32 @@ async function processPosition(position: Position) {
     position.unrealizedPnlPercent = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
     position.lastUpdated = Date.now();
 
-    // 2. Check hard rules
+    // 2. Check Trailing Stop
+    if (position.peakPrice && TRAILING_STOP_PERCENT > 0) {
+      const trailingStopPrice = position.peakPrice * (1 - TRAILING_STOP_PERCENT / 100);
+      if (currentPrice < trailingStopPrice) {
+        logger.info(`Trailing stop triggered for ${position.tokenSymbol}: Current ${currentPrice.toFixed(6)} < Peak ${position.peakPrice.toFixed(6)} * (1 - ${TRAILING_STOP_PERCENT}%)`);
+        const result = await executeSellOrder(position, "trailing_stop");
+        // Check if position was actually removed (sold)
+        const isSold = !result.find(p => p.tokenAddress === position.tokenAddress);
+        if (isSold) {
+          await savePositions(result);
+          return null; // Position sold
+        }
+        // If not sold (error returned original list), continue
+      }
+    }
+
+    // 3. Check hard rules
     const hardRule = checkHardRules(position, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT);
     if (hardRule) {
       logger.info(`Hard rule triggered for ${position.tokenSymbol}: ${hardRule}`);
-      await executeSellOrder(position, hardRule);
-      return;
+      const result = await executeSellOrder(position, hardRule);
+      const isSold = !result.find(p => p.tokenAddress === position.tokenAddress);
+      if (isSold) {
+        await savePositions(result);
+        return null; // Position sold
+      }
     }
 
     // 3. Fetch token info and security data
@@ -147,33 +185,38 @@ async function processPosition(position: Position) {
 
     if (decision.action === "SELL") {
       logger.info(`AI decision to SELL ${position.tokenSymbol}: ${decision.reasoning}`);
-      await executeSellOrder(position, "ai_decision");
+      const result = await executeSellOrder(position, "ai_decision");
+      const isSold = !result.find(p => p.tokenAddress === position.tokenAddress);
+      if (isSold) {
+        await savePositions(result);
+        return null; // Position sold
+      }
+      // If not sold (error), return position
+      return position;
     } else {
-      // Just update position in DB
-      const positions = await getPositions();
-      const idx = positions.findIndex(p => p.tokenAddress === position.tokenAddress);
-      if (idx !== -1) positions[idx] = position;
-      await savePositions(positions);
+      // Position held, return updated position
+      return position;
     }
 
   } catch (error) {
     logger.error(`Error processing position ${position.tokenSymbol}`, { error: String(error) });
+    return position; // Return unchanged position on error
   }
 }
 
-async function executeSellOrder(position: Position, reason: string) {
+async function executeSellOrder(position: Position, reason: string): Promise<Position[]> {
   if (!WALLET_ADDRESS) {
     logger.error("WALLET_ADDRESS not set, cannot execute sell");
-    return;
+    return [];
   }
 
   if (DRY_RUN) {
     logger.info(`[DRY RUN] Sell ${position.tokenSymbol} - Reason: ${reason}`);
 
-    // Update position as sold
+    // Update position as sold (remove from list)
     const positions = await getPositions();
     const filtered = positions.filter(p => p.tokenAddress !== position.tokenAddress);
-    await savePositions(filtered);
+    // Don't save here, return filtered list
 
     // Add to trades history
     const trade: Trade = {
@@ -206,7 +249,9 @@ async function executeSellOrder(position: Position, reason: string) {
 
     // Record sold token for cooldown
     await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
-    return;
+
+    // Return filtered list for caller to save
+    return filtered;
   }
 
   try {
@@ -221,11 +266,9 @@ async function executeSellOrder(position: Position, reason: string) {
     logger.info(`Sell order submitted for ${position.tokenSymbol}`, { orderId: result.order_id });
 
     // Wait for confirmation (polling logic)
-    // For now, just mark position as pending sell or remove it?
-    // We'll remove it from positions and add pending trade
+    // Remove position from list immediately
     const positions = await getPositions();
     const filtered = positions.filter(p => p.tokenAddress !== position.tokenAddress);
-    await savePositions(filtered);
 
     const trade: Trade = {
       id: crypto.randomUUID(),
@@ -256,8 +299,14 @@ async function executeSellOrder(position: Position, reason: string) {
     // Record sold token for cooldown
     await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
 
+    // Return filtered list for caller to save
+    return filtered;
+
   } catch (error) {
     logger.error(`Failed to execute sell for ${position.tokenSymbol}`, { error: String(error) });
+    // Return original positions list (no change) to indicate failure
+    const positions = await getPositions();
+    return positions;
   }
 }
 

@@ -201,6 +201,8 @@ async function executeBuyOrder(token: TokenData) {
       lastUpdated: Date.now(),
       buyTradeId: trade.id,
       smartDegenEntryCount: token.smartDegenCount,
+      peakPrice: token.price,
+      peakPriceTimestamp: Date.now(),
     };
 
     // Optimized: Load once, modify, save once
@@ -306,6 +308,8 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
               lastUpdated: Date.now(),
               buyTradeId: trade.id,
               smartDegenEntryCount: token.smartDegenCount,
+              peakPrice: token.price,
+              peakPriceTimestamp: Date.now(),
             };
 
             const positions = await getPositions();

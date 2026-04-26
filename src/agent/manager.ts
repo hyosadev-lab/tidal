@@ -239,13 +239,6 @@ function buildUserPrompt(
   const holdingDurationMs = Date.now() - position.entryTimestamp;
   const holdingDurationHuman = `${Math.floor(holdingDurationMs / (1000 * 60 * 60))}h ${Math.floor((holdingDurationMs % (1000 * 60 * 60)) / (1000 * 60))}m`;
 
-  // Summarize 1m candles to reduce noise
-  // const candles1m = tokenData.kline1mData.split("\n").filter(l => l.trim());
-  // const last5Candles = candles1m.slice(-5);
-  // const summary1m = last5Candles.length > 0
-  //   ? last5Candles.join("\n")
-  //   : "No recent data";
-
   return `
 POSITION: ${position.tokenSymbol} (${position.tokenAddress})
 Entry Price: $${position.entryPrice.toFixed(6)} | Entry Market Cap: $${position.entryMarketCap}
