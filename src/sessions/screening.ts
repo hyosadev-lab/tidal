@@ -20,15 +20,15 @@ const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
 const MAX_OPEN_POSITIONS = parseInt(process.env.MAX_OPEN_POSITIONS || "5");
-const SCAN_INTERVAL_MINUTES = parseFloat(
-  process.env.SCAN_INTERVAL_MINUTES || "0.5",
-);
-const SCAN_INTERVAL_MS = SCAN_INTERVAL_MINUTES * 60 * 1000;
+const SCAN_INTERVAL_MINUTES = parseFloat(process.env.SCAN_INTERVAL_MINUTES || "0.5");
+const SOLD_COOLDOWN_MINUTES = parseFloat(process.env.SOLD_COOLDOWN_MINUTES || "3");
 const DRY_RUN = process.env.DRY_RUN === "true";
-const SOLD_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes cooldown
 const AMOUNT_SOL = parseFloat(process.env.AMOUNT_SOL || "0.1");
 const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "50");
 const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "30");
+
+const SCAN_INTERVAL_MS = SCAN_INTERVAL_MINUTES * 60 * 1000;
+const SOLD_COOLDOWN_MS = SOLD_COOLDOWN_MINUTES * 60 * 1000;
 
 // Track tokens currently being processed to prevent race conditions
 const pendingBuys = new Set<string>();
@@ -42,7 +42,7 @@ export async function startScreeningSession() {
 
   setInterval(async () => {
     if (isScanning) {
-      logger.debug("Skipping scan: previous cycle still running");
+      logger.info("Skipping scan: previous cycle still running");
       return;
     }
 
@@ -208,7 +208,7 @@ async function executeBuyOrder({
       entryPrice: token.price,
       entryMarketCap: token.usdMarketCap,
       entryTimestamp: Date.now(),
-      amountToken: amountToken,
+      amountToken,
       costSol: AMOUNT_SOL,
       currentPrice: token.price,
       currentMarketCap: token.usdMarketCap,

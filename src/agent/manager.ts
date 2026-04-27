@@ -197,7 +197,8 @@ function buildUserPrompt(
        Math.max(tokenData.orderFlowSummary.smartMoneySellCount, 1)).toFixed(1)
     : "0";
 
-  const last5_1m = tokenData.kline1mData.trim().split("\n").slice(-5).join("\n");
+  // Last 7 candles 1m (lebih sedikit = lebih fokus)
+  const lastCandles1m = tokenData.kline1mData.trim().split("\n").slice(-7).join("\n");
 
   return `
 POSITION: ${position.tokenSymbol} | Phase: ${phase} | Holding: ${holdingMin}m
@@ -216,8 +217,8 @@ Buys: ${tokenData.orderFlowSummary.smartMoneyBuyCount} | Sells: ${tokenData.orde
 Degens: ${tokenData.smartDegenCount} (entry: ${position.smartDegenEntryCount ?? "N/A"})
 ${tokenData.topTradersSummary}
 
-━━━ CANDLES 1M (last 5) ━━━
-${last5_1m}
+━━━ CANDLES 1M (last 7) ━━━
+${lastCandles1m}
 
 ${tokenData.volumeDeltas1m}
 

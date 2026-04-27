@@ -37,7 +37,7 @@ export async function startManagingSession() {
 
   setInterval(async () => {
     if (isMonitoring) {
-      logger.debug("Skipping monitor: previous cycle still running");
+      logger.info("Skipping monitor: previous cycle still running");
       return;
     }
 

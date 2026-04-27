@@ -6,11 +6,6 @@ export async function fetchTrenchesTokens(
 ): Promise<TokenData[]> {
   try {
     const result = await fetchTrenches(chain);
-
-    // The response structure depends on gmgn-cli version, but usually contains arrays
-    // CLAUDE.md mentions: data.new_creation[], data.pump[], data.completed[]
-    // We need to combine these categories
-
     const tokens: any[] = [];
 
     if (result.new_creation) tokens.push(...result.new_creation);

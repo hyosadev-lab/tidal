@@ -148,8 +148,8 @@ function buildUserPrompt(
   const isOverextended = token.priceChange5m > 20;
   const isDip = token.priceChange5m < -5;
 
-  // Last 8 candles 1m (lebih sedikit = lebih fokus)
-  const lastCandles1m = token.kline1mData.trim().split("\n").slice(-8).join("\n");
+  // Last 7 candles 1m (lebih sedikit = lebih fokus)
+  const lastCandles1m = token.kline1mData.trim().split("\n").slice(-7).join("\n");
 
   return `
 TOKEN: ${token.symbol} (${token.address})
@@ -171,7 +171,7 @@ Buys: ${token.orderFlowSummary.smartMoneyBuyCount} | Sells: ${token.orderFlowSum
 Degens: ${token.smartDegenCount}
 ${token.topTradersSummary}
 
-━━━ CANDLES 1M (last 8) ━━━
+━━━ CANDLES 1M (last 7) ━━━
 ${lastCandles1m}
 
 ${token.volumeDeltas1m}
