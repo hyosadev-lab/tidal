@@ -1,5 +1,4 @@
 import { fetchKline, fetchTopTraders, fetchTokenTraders, fetchTokenInfo, fetchTokenSecurity } from "./client";
-import { delay } from "../utils/concurrency";
 import { getVolumeDeltasFromKline } from "../utils/kline";
 
 export interface TokenInfo {
@@ -89,11 +88,20 @@ export interface TokenDetails {
   volumeDeltas5m: string;
 }
 
-export async function getOrderFlowSummary(chain: string, address: string): Promise<OrderFlowSummary> {
+export async function getOrderFlowSummary(
+  chain: string,
+  address: string,
+  existingTraders?: any[]
+): Promise<OrderFlowSummary> {
   try {
-    // Fetch all token traders for order flow analysis
-    const tradersResult = await fetchTokenTraders(chain, address, 50);
-    const traders = tradersResult?.list || [];
+    // Use existing traders data if provided, otherwise fetch
+    let traders: any[];
+    if (existingTraders && existingTraders.length > 0) {
+      traders = existingTraders;
+    } else {
+      const tradersResult = await fetchTokenTraders(chain, address, 50);
+      traders = tradersResult?.list || [];
+    }
 
     let totalBuyVolume = 0;
     let totalSellVolume = 0;
@@ -163,13 +171,22 @@ export async function getOrderFlowSummary(chain: string, address: string): Promi
 export async function getTokenDetails(chain: string, address: string): Promise<TokenDetails> {
   try {
     const now = Math.floor(Date.now() / 1000);
+    const from1m = now - 1800; // 30 minutes ago
+    const from5m = now - 3600; // 60 minutes ago
 
-    // 1. Fetch top smart degens (first to avoid rate limit blocking other calls)
-    const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 10);
+    // Parallel fetch: traders, 1m kline, 5m kline
+    const [tradersResult, kline1mResult, kline5mResult] = await Promise.all([
+      fetchTopTraders(chain, address, "smart_degen", 50), // Fetch more traders for order flow
+      fetchKline(chain, address, "1m", from1m, now),
+      fetchKline(chain, address, "5m", from5m, now),
+    ]);
+
     const traders = tradersResult?.list || [];
+    const kline1mData = kline1mResult?.list || [];
+    const kline5mData = kline5mResult?.list || [];
 
-    // Format traders summary
-    const tradersSummary = traders.map((t: any) => {
+    // Format traders summary (top 10 for display)
+    const tradersSummary = traders.slice(0, 10).map((t: any) => {
       const walletName = t.name || t.address.slice(0, 6);
       const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
       const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
@@ -179,47 +196,76 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       return `${walletName}: ${side} ${netflow} (Val: $${value}) ${tags}`;
     }).join("\n");
 
-    // Delay between API calls to avoid rate limit
-    await delay(500); // 500ms delay
+    // Calculate order flow summary from fetched traders (reuse data, no extra API call)
+    let totalBuyVolume = 0;
+    let totalSellVolume = 0;
+    let smartMoneyNetFlow = 0;
+    let smartMoneyBuyCount = 0;
+    let smartMoneySellCount = 0;
 
-    // 2. Fetch kline 5m (12 candles = 60 minutes)
-    const from5m = now - 3600; // 60 minutes ago
-    const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
-    const kline5mData = kline5mResult?.list || [];
+    traders.forEach((t: any) => {
+      const isSmartDegen = t.tags?.includes("smart_degen") || false;
+      const netflow = parseFloat(t.netflow_usd) || 0;
+
+      if (netflow > 0) {
+        totalBuyVolume += netflow;
+        if (isSmartDegen) {
+          smartMoneyBuyCount++;
+          smartMoneyNetFlow += netflow;
+        }
+      } else if (netflow < 0) {
+        totalSellVolume += Math.abs(netflow);
+        if (isSmartDegen) {
+          smartMoneySellCount++;
+          smartMoneyNetFlow += netflow;
+        }
+      }
+    });
+
+    const totalVolume = totalBuyVolume + totalSellVolume;
+    const netFlow = totalBuyVolume - totalSellVolume;
+    const buySellRatio = totalSellVolume > 0 ? totalBuyVolume / totalSellVolume : (totalBuyVolume > 0 ? 999 : 1);
+
+    let intensity: "bullish" | "bearish" | "neutral";
+    if (netFlow > totalVolume * 0.1) {
+      intensity = "bullish";
+    } else if (netFlow < -totalVolume * 0.1) {
+      intensity = "bearish";
+    } else {
+      intensity = "neutral";
+    }
+
+    const orderFlowSummary = {
+      buyVolume: totalBuyVolume,
+      sellVolume: totalSellVolume,
+      netFlowUsd: netFlow,
+      buySellRatio,
+      intensity,
+      smartMoneyNetFlow,
+      smartMoneyBuyCount,
+      smartMoneySellCount,
+    };
+
+    // Format kline summaries
+    const kline1mSummary = kline1mData.map((candle: any) => {
+      return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
+    }).join("\n");
 
     const kline5mSummary = kline5mData.map((candle: any) => {
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
 
-    // Delay between API calls to avoid rate limit
-    await delay(500); // 500ms delay
-
-    // 3. Fetch kline 1m (30 candles = 30 minutes)
-    const from1m = now - 1800; // 30 minutes ago
-    const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
-    const kline1mData = kline1mResult?.list || [];
-
-    const kline1mSummary = kline1mData.map((candle: any) => {
-      return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
-    }).join("\n");
-
     // Parse current price from last 1m candle
     let currentPrice = 0;
-    const klineLines = kline1mSummary.split("\n").filter((line: string) => line.trim());
-
-    if (klineLines.length > 0) {
-      const lastCandle = klineLines[klineLines.length - 1] ?? "";
-      const closeMatch = lastCandle.match(/C:([0-9.]+)/);
-      if (closeMatch) {
-        currentPrice = parseFloat(closeMatch[1] ?? "") || 0;
-      }
+    if (kline1mData.length > 0) {
+      const lastCandle = kline1mData[kline1mData.length - 1];
+      currentPrice = parseFloat(lastCandle.close) || 0;
     }
 
     // Calculate volume 5m and price change 5m from last 5 candles of 1m data
     let volume5m = 0;
     let priceChange5m = 0;
 
-    // Use last 5 candles from 1m data for 5m metrics
     const last5Candles = kline1mData.slice(-5);
     if (last5Candles.length >= 2) {
       const firstCandle = last5Candles[0];
@@ -240,7 +286,6 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     }
 
     // Convert kline objects to number arrays for volume delta calculation
-    // format: [open, high, low, close, volume]
     const kline1mArray = kline1mData.map((candle: any) => [
       parseFloat(candle.open) || 0,
       parseFloat(candle.high) || 0,
@@ -257,12 +302,9 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       parseFloat(candle.volume) || 0,
     ]);
 
-    // Calculate volume deltas using converted arrays
+    // Calculate volume deltas
     const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
     const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 4);
-
-    // Calculate order flow summary
-    const orderFlowSummary = await getOrderFlowSummary(chain, address);
 
     return {
       kline1mData: kline1mSummary,

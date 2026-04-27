@@ -15,71 +15,26 @@ const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
 const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 
 const SYSTEM_PROMPT = `
-You are an expert ORDER FLOW TRADER specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
-Your task is to analyze token data and decide whether to BUY or SKIP based on 1-minute entry timing.
+You are an elite Solana memecoin trader specializing in the "Trenches"
+(tokens $20K–$2M market cap).
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ORDER FLOW & MOMENTUM ANALYSIS FRAMEWORK
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Your primary focus is ORDER FLOW data (buy/sell pressure from traders):
-1. **Net Flow**: Positive = buying pressure, Negative = selling pressure
-2. **Buy/Sell Ratio**: > 1.0 = more buyers than sellers
-3. **Smart Money Flow**: Net flow from smart degen traders (most reliable signal)
-4. **Intensity**: Bullish = accumulation, Bearish = distribution, Neutral = undecided
+Your primary lens is Order Flow — buy/sell pressure, smart money activity,
+and volume delta. Price action is secondary.
 
-**Momentum Analysis (Predictive Intuition):**
-- Look for "Pump Intention": Volume spikes + Price uptick in 1m candles = Strong momentum
-- **Volume Delta**: Increasing volume on green candles = Real buying interest
-- **Trend Confirmation**: Look for higher lows or breakout above recent resistance
-- **Avoid Local Tops**: Don't buy if price already pumped >20% in 5m (overextended)
+Your goal is to analyze token data and decide: BUY or SKIP.
+Protect capital first. A missed trade is always better than a bad entry.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BUY DECISION CRITERIA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BUY if ALL of these are true:
-- Order Flow Intensity is BULLISH or NEUTRAL-BULLISH
-- Net Flow (USD) > $500 (buying pressure from ALL traders)
-- Buy/Sell Ratio > 1.0 (more buyers than sellers)
-- **Price Change 5m < 20%** (avoid buying local tops)
+You learn from every decision you make — past learnings are provided in each
+request and should influence your judgment.
 
-Smart Money Check (ONE of these must be true):
-- Smart Money Net Flow > $0 (smart money actively buying) OR
-- Smart Money Buys > Smart Money Sells (more smart money buying than selling) OR
-- Smart Degen Count >= 2 AND Smart Money Sells = 0 (smart degens present, none selling)
-
-**Momentum Check (ONE of these must be true):**
-- Volume spike in last 3 candles aligned with price increase OR
-- Price breaking above recent resistance (1m candles) OR
-- Increasing volume on green candles (accumulation pattern)
-
-**Buy The Dip Strategy (Falling Knife Capture):**
-- If priceChange5m < -5% BUT order flow is BULLISH and volume is spiking → BUY (high risk, high reward)
-- Require: Strong Smart Money Net Flow > $1000 OR Smart Money Buys > 2x Smart Money Sells
-- **Only if**: Price dip is accompanied by increasing buy volume (accumulation during dip)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SKIP CRITERIA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SKIP if ANY of these are true:
-- Order Flow Intensity is BEARISH (smart money distributing)
-- Net Flow (USD) < -$500 (strong selling pressure from all traders)
-- Smart Money Net Flow < -$500 (smart money actively selling/distributing)
-- Smart Money Sells > Smart Money Buys AND Smart Money Net Flow < $0
-- High risk metrics (rug_ratio > 0.3, wash_trading true)
-- **Price Change 5m > 20%** (overextended, likely local top)
-- **Price dropping + Weak volume** (no buying interest on dip = true bearish)
-
-NOTE: Do NOT skip just because smart money is neutral or absent. Retail buying pressure (Net Flow > $500, Buy/Sell Ratio > 1.0) can be valid if no smart money selling pressure.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-VOLUME SPIKE CONFIRMATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Look for volume spikes in 1m candles aligned with order flow buying
-- If volume spike BUT order flow is bearish → SKIP (trap/bull trap)
-- If volume spike AND order flow bullish → BUY (real momentum)
-- **Volume Delta Analysis**: Increasing volume on green candles = accumulation, Decreasing volume on green candles = weakness
-
-Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
+Respond ONLY in JSON:
+{
+  "action": "BUY" | "SKIP",
+  "confidence": 0-100,
+  "reasoning": "2-3 sentences, cite actual numbers",
+  "signals": ["signal1", "signal2"],
+  "risk_flags": ["flag1"]
+}
 `;
 
 interface AiDecision {
@@ -141,7 +96,6 @@ export async function getBuySkipDecision(
 
     const decision = JSON.parse(content) as AiDecision;
     return decision;
-
   } catch (error) {
     logger.error("Error calling OpenRouter", { error: String(error) });
     return getFallbackDecision(token);
@@ -179,107 +133,57 @@ function buildUserPrompt(
   takeProfitPercent: number,
   stopLossPercent: number
 ): string {
-  // Filter learnings: only show recent, relevant ones (max 3)
   const relevantLearnings = learnings
-    .filter((l) => {
-      // Only consider entry and filter patterns
+    .filter(l => {
       if (l.pattern.type !== "entry" && l.pattern.type !== "filter") return false;
-
-      // Only consider learnings from last 7 days
       const ageDays = (Date.now() - l.createdAt) / (1000 * 60 * 60 * 24);
-      if (ageDays > 7) return false;
-
-      return true;
+      return ageDays <= 7;
     })
-    .sort((a, b) => b.createdAt - a.createdAt) // Most recent first
-    .slice(0, 3) // Limit to 3 learnings
-    .map((l) => l.insight)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 3)
+    .map(l => `• ${l.insight}`)
     .join("\n");
+
+  // Pre-compute flags
+  const isOverextended = token.priceChange5m > 20;
+  const isDip = token.priceChange5m < -5;
+
+  // Last 5-10 candles 1m (lebih sedikit = lebih fokus)
+  const lastCandles1m = token.kline1mData.trim().split("\n").slice(-8).join("\n");
+  const lastCandles5m = token.kline5mData.trim().split("\n").slice(-4).join("\n");
 
   return `
 TOKEN: ${token.symbol} (${token.address})
-Market Cap: $${token.usdMarketCap}
-Liquidity: $${token.liquidity}
 
-=== ENTRY TIMING DATA (1-MINUTE FOCUS) ===
-Current Price: $${token.price.toFixed(6)}
-Price Change (5m): ${token.priceChange5m.toFixed(2)}%
-Volume (5m): ${token.volume5m.toFixed(2)}
+━━━ PRICE & VOLUME (1m focus) ━━━
+Price: $${token.price.toFixed(8)}
+5m Change: ${token.priceChange5m.toFixed(2)}%${isOverextended ? " ⚠ OVEREXTENDED" : isDip ? " ▼ DIP" : ""}
+5m Volume: $${token.volume5m.toFixed(0)}
 
-K-line 1m (30 candles):
-${token.kline1mData}
+━━━ ORDER FLOW (CORE SIGNAL) ━━━
+Intensity: ${token.orderFlowSummary.intensity.toUpperCase()}
+Net Flow: $${token.orderFlowSummary.netFlowUsd.toFixed(2)}
+Buy/Sell Ratio: ${token.orderFlowSummary.buySellRatio.toFixed(2)}x
+Buy Vol: $${token.orderFlowSummary.buyVolume.toFixed(0)} | Sell Vol: $${token.orderFlowSummary.sellVolume.toFixed(0)}
+
+━━━ SMART MONEY (LEADING INDICATOR) ━━━
+Net Flow: $${token.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
+Buys: ${token.orderFlowSummary.smartMoneyBuyCount} | Sells: ${token.orderFlowSummary.smartMoneySellCount}
+Degens: ${token.smartDegenCount}
+${token.topTradersSummary}
+
+━━━ CANDLES 1M (last 8) ━━━
+${lastCandles1m}
 
 ${token.volumeDeltas1m}
 
-K-line 5m (12 candles):
-${token.kline5mData}
+━━━ RISK (FAST FILTER) ━━━
+Rug: ${token.rugRatio.toFixed(3)} | Wash: ${token.isWashTrading} | Creator: ${token.creatorTokenStatus}
 
-${token.volumeDeltas5m}
-
-=== ORDER FLOW DATA ===
-Current Intensity: ${token.orderFlowSummary.intensity.toUpperCase()}
-Net Flow (USD): $${token.orderFlowSummary.netFlowUsd.toFixed(2)}
-Buy/Sell Ratio: ${token.orderFlowSummary.buySellRatio.toFixed(2)}
-Total Buy Volume: $${token.orderFlowSummary.buyVolume.toFixed(2)}
-Total Sell Volume: $${token.orderFlowSummary.sellVolume.toFixed(2)}
-
-Smart Money Flow: $${token.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
-Smart Money Buys: ${token.orderFlowSummary.smartMoneyBuyCount}
-Smart Money Sells: ${token.orderFlowSummary.smartMoneySellCount}
-
-=== SMART MONEY DATA ===
-Smart Degen Count: ${token.smartDegenCount}
-Top Smart Degen Traders (holding/activity):
-${token.topTradersSummary}
-
-=== RISK METRICS ===
-Rug Ratio: ${token.rugRatio} | Bundler Rate: ${token.bundlerTraderAmountRate} | Insider Ratio: ${token.ratTraderAmountRate}
-Is Wash Trading: ${token.isWashTrading}
-Creator Status: ${token.creatorTokenStatus}
-Top 10 Holder Rate: ${token.top10HolderRate}
-
-RELEVANT LEARNINGS from previous trades:
+━━━ LEARNINGS ━━━
 ${relevantLearnings || "None"}
 
-=== ENTRY ANALYSIS QUESTIONS ===
-1. Is there a volume spike in the last 5 candles (1m)?
-2. Is price moving up with increasing volume?
-3. Are smart degen traders actively buying right now?
-4. Is the current price breaking above recent resistance?
-5. Are there any risky signals (high rug ratio, wash trading)?
-6. Is price overextended (>20% in 5m) or just starting momentum?
-7. **Is this a dip buying opportunity (price down but order flow bullish)?**
-
-=== MOMENTUM ANALYSIS (PREDICTIVE) ===
-1. **Volume Delta**: Is volume increasing on green candles? (Accumulation)
-2. **Trend Pattern**: Are we seeing higher lows? (Uptrend forming)
-3. **Breakout**: Is price breaking above recent resistance levels?
-4. **Dip Analysis**: If price dropped >5%, is volume increasing with buy pressure?
-5. **Prediction**: Based on current order flow and volume, is the next 5m likely UP or DOWN?
-
-=== ORDER FLOW ENTRY ANALYSIS ===
-1. Is Order Flow Intensity BULLISH? (Net Flow > 0, Buy/Sell Ratio > 1.0)
-2. Is Smart Money Net Flow POSITIVE? (Smart degen accumulation)
-3. Are Smart Money Buys > Smart Money Sells? (Whales buying)
-4. Does volume spike align with positive order flow? (Real momentum vs trap)
-5. Is there any bearish order flow warning? (Selling pressure building)
-
-**Falling Knife Strategy (High Risk Entry):**
-- Price dropping >5% BUT smart money net flow > $1000 → Potential dip buy
-- Check: Is sell volume decreasing while buy volume increasing?
-- Risk: Only if strong smart money support, skip if weak or retail-only
-
-Key Decision Logic:
-- BUY if: Bullish order flow + volume spike + smart money buying + momentum confirmation + predicted UP
-- BUY (Dip) if: Price down 5-20% + strong smart money buying + increasing buy volume on dip
-- SKIP if: Bearish order flow OR smart money selling OR high risk metrics OR overextended price (>20%) OR predicted DOWN + weak volume
-
-=== TRADING TARGETS ===
-Take Profit Target: +${takeProfitPercent}%
-Stop Loss Target: -${stopLossPercent}%
-
-=== ENTRY THRESHOLDS ===
-Price Change 5m Max: +20% (avoid buying local tops)
-Net Flow Min: $500 (buying pressure threshold)
-  `;
+━━━ TARGETS ━━━
+TP: +${takeProfitPercent}% | SL: -${stopLossPercent}%
+`;
 }
