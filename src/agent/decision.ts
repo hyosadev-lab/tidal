@@ -40,7 +40,6 @@ BUY if ALL of these are true:
 - Order Flow Intensity is BULLISH or NEUTRAL-BULLISH
 - Net Flow (USD) > $500 (buying pressure from ALL traders)
 - Buy/Sell Ratio > 1.0 (more buyers than sellers)
-- Price is NOT dropping (priceChange5m >= -5%)
 - **Price Change 5m < 20%** (avoid buying local tops)
 
 Smart Money Check (ONE of these must be true):
@@ -53,6 +52,11 @@ Smart Money Check (ONE of these must be true):
 - Price breaking above recent resistance (1m candles) OR
 - Increasing volume on green candles (accumulation pattern)
 
+**Buy The Dip Strategy (Falling Knife Capture):**
+- If priceChange5m < -5% BUT order flow is BULLISH and volume is spiking → BUY (high risk, high reward)
+- Require: Strong Smart Money Net Flow > $1000 OR Smart Money Buys > 2x Smart Money Sells
+- **Only if**: Price dip is accompanied by increasing buy volume (accumulation during dip)
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SKIP CRITERIA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -63,6 +67,7 @@ SKIP if ANY of these are true:
 - Smart Money Sells > Smart Money Buys AND Smart Money Net Flow < $0
 - High risk metrics (rug_ratio > 0.3, wash_trading true)
 - **Price Change 5m > 20%** (overextended, likely local top)
+- **Price dropping + Weak volume** (no buying interest on dip = true bearish)
 
 NOTE: Do NOT skip just because smart money is neutral or absent. Retail buying pressure (Net Flow > $500, Buy/Sell Ratio > 1.0) can be valid if no smart money selling pressure.
 
@@ -242,13 +247,14 @@ ${relevantLearnings || "None"}
 3. Are smart degen traders actively buying right now?
 4. Is the current price breaking above recent resistance?
 5. Are there any risky signals (high rug ratio, wash trading)?
-6. **Is price overextended (>20% in 5m) or just starting momentum?**
+6. Is price overextended (>20% in 5m) or just starting momentum?
+7. **Is this a dip buying opportunity (price down but order flow bullish)?**
 
 === MOMENTUM ANALYSIS (PREDICTIVE) ===
 1. **Volume Delta**: Is volume increasing on green candles? (Accumulation)
 2. **Trend Pattern**: Are we seeing higher lows? (Uptrend forming)
 3. **Breakout**: Is price breaking above recent resistance levels?
-4. **Momentum Intensity**: Are green candles getting bigger? (Strengthening trend)
+4. **Dip Analysis**: If price dropped >5%, is volume increasing with buy pressure?
 5. **Prediction**: Based on current order flow and volume, is the next 5m likely UP or DOWN?
 
 === ORDER FLOW ENTRY ANALYSIS ===
@@ -258,9 +264,15 @@ ${relevantLearnings || "None"}
 4. Does volume spike align with positive order flow? (Real momentum vs trap)
 5. Is there any bearish order flow warning? (Selling pressure building)
 
+**Falling Knife Strategy (High Risk Entry):**
+- Price dropping >5% BUT smart money net flow > $1000 → Potential dip buy
+- Check: Is sell volume decreasing while buy volume increasing?
+- Risk: Only if strong smart money support, skip if weak or retail-only
+
 Key Decision Logic:
 - BUY if: Bullish order flow + volume spike + smart money buying + momentum confirmation + predicted UP
-- SKIP if: Bearish order flow OR smart money selling OR high risk metrics OR overextended price OR predicted DOWN
+- BUY (Dip) if: Price down 5-20% + strong smart money buying + increasing buy volume on dip
+- SKIP if: Bearish order flow OR smart money selling OR high risk metrics OR overextended price (>20%) OR predicted DOWN + weak volume
 
 === TRADING TARGETS ===
 Take Profit Target: +${takeProfitPercent}%
