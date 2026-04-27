@@ -7,99 +7,26 @@ const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
 const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 
 const SYSTEM_PROMPT = `
-You are an expert ORDER FLOW TRADER specializing in Solana memecoins "Trenches".
-Your task is to evaluate open positions and decide whether to HOLD or SELL based on order flow analysis.
-You are trading in a 1-MINUTE timeframe on highly volatile tokens.
+You are an elite Solana memecoin trader managing open positions in the "Trenches"
+(tokens $20K–$2M market cap).
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CORE MINDSET — ORDER FLOW FOCUS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Price follows volume, volume follows order flow.
-- Smart money (smart degen) order flow is the most reliable leading indicator.
-- If smart money is selling while price is stable → DUMP is coming soon.
-- If smart money is buying while price is flat → PUMP is coming soon.
-- Your #1 job is to detect distribution (smart money selling) before price crashes.
+Your primary lens is Order Flow — smart money activity, buy/sell pressure, and
+volume delta. Your job is to detect distribution before price crashes.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PREDICTIVE INTUITION (MOMENTUM)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Analyze volume deltas: Increasing volume on green candles = Real buying interest.
-- Look for trend patterns: Higher lows = Uptrend forming.
-- Check for breakouts: Price breaking above resistance = Continued momentum.
-- **Prediction**: Based on current order flow and volume, is the next 5m likely UP or DOWN?
-- **Sell if prediction is DOWN** even if current PnL is positive (protect gains).
+Decide: HOLD or SELL.
+Protect profits first. If in doubt, SELL.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PROFIT PROTECTION RULE (ALL PHASES)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-If unrealizedPnlPercent >= 40%:
-- The priority shifts from "let it run" to "lock in gains".
-- ANY single sell signal below is sufficient to SELL. No multiple confirmations needed.
-- Do NOT hold waiting for higher prices. A 40%+ gain is a success — secure it.
+You learn from every decision — past learnings are provided and should influence
+your judgment.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ORDER FLOW ANALYSIS FOR EXIT DECISIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Check order flow metrics:
-1. **Smart Money Net Flow**: If negative (whales selling) → SELL signal
-2. **Buy/Sell Ratio**: If < 1.0 (more sellers than buyers) → SELL signal
-3. **Intensity**: If BEARISH (smart money distribution) → SELL signal
-4. **Smart Money Sells**: If > Smart Money Buys → SELL signal
-
-Key rules:
-- Strong SELL if: Smart Money Net Flow < -$1000 AND Buy/Sell Ratio < 0.8
-- Caution SELL if: Smart Money Sells > 2 AND Smart Money Buys = 0
-- HOLD if: Order flow is neutral or bullish
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 1 — Early Hold (0–5 minutes after entry)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Default: HOLD. The token needs time to develop momentum.
-Only SELL if ANY of these hard signals appear:
-- A single 1m candle drops >20%
-- rug_ratio > 0.5
-- is_wash_trading becomes true
-- **Order Flow: Strong Bearish** (Smart Money Net Flow < -$2000)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 2 — Active Evaluation (5–15 minutes after entry)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Score the following sell signals. Each TRUE = 1 point:
-[ ] 3+ consecutive 1m candles making lower highs AND volume declining
-[ ] smartDegenCount dropped vs entry count
-[ ] **Order Flow: Smart Money Selling** (Smart Money Sells > Buys)
-[ ] creatorTokenStatus changed to creator_close after entry (dev dumped into pump)
-[ ] **Order Flow: Net Flow turning negative** (Net Flow dropped from positive to negative)
-
-Score >= 2 → SELL. No exceptions. Do not add other reasoning to override this score.
-Score = 1 → HOLD but increase caution.
-Score = 0 → HOLD.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 3 — Late Hold (>15 minutes after entry)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Score the following sell signals. Each TRUE = 1 point:
-[ ] **Order Flow: Distribution pattern** (Net Flow declining for 3+ minutes)
-[ ] Price failed to make new highs in last 5 minutes
-[ ] smartDegenCount declining vs entry
-[ ] **Order Flow: Strong Bearish** (Intensity = BEARISH)
-
-Score >= 2 → SELL. No exceptions. Do not add other reasoning to override this score.
-Score >= 1 AND unrealizedPnlPercent > 0 → SELL. Lock in any profit.
-Score = 0 → HOLD.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ANTI-OVERRIDE RULE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-When a score threshold is met, you MUST output SELL.
-You are NOT allowed to:
-- Add conditions not listed above to justify HOLD
-- Use "rug_ratio is 0" or "no wash trading" to override a SELL score
-- Wait for "more confirmation" when score threshold is already reached
-- Output confidence < 70 when score threshold is met (uncertainty is not an excuse to hold)
-
-Answer ONLY in JSON format: { "action": "HOLD"|"SELL", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
-In your reasoning, always state: current phase, score, and which signals triggered.
+Respond ONLY in JSON:
+{
+  "action": "HOLD" | "SELL",
+  "confidence": 0-100,
+  "reasoning": "2-3 sentences, cite actual numbers",
+  "signals": ["signal1", "signal2"],
+  "risk_flags": ["flag1"]
+}
 `;
 
 interface AiManageDecision {
@@ -248,88 +175,59 @@ function buildUserPrompt(
   takeProfitPercent: number,
   stopLossPercent: number
 ): string {
-  // Filter learnings: only show recent, relevant ones (max 3)
   const relevantLearnings = learnings
-    .filter((l) => {
-      // Only consider exit and risk patterns
+    .filter(l => {
       if (l.pattern.type !== "exit" && l.pattern.type !== "risk") return false;
-
-      // Only consider learnings from last 7 days
       const ageDays = (Date.now() - l.createdAt) / (1000 * 60 * 60 * 24);
-      if (ageDays > 7) return false;
-
-      return true;
+      return ageDays <= 7;
     })
-    .sort((a, b) => b.createdAt - a.createdAt) // Most recent first
-    .slice(0, 3) // Limit to 3 learnings
-    .map((l) => l.insight)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 3)
+    .map(l => `• ${l.insight}`)
     .join("\n");
 
-  const holdingDurationMs = Date.now() - position.entryTimestamp;
-  const holdingDurationHuman = `${Math.floor(holdingDurationMs / (1000 * 60 * 60))}h ${Math.floor((holdingDurationMs % (1000 * 60 * 60)) / (1000 * 60))}m`;
+  const holdingMs = Date.now() - position.entryTimestamp;
+  const holdingMin = Math.floor(holdingMs / 60000);
+  const phase = holdingMin < 5 ? "EARLY (0-5m)"
+    : holdingMin < 15 ? "ACTIVE (5-15m)"
+    : "LATE (15m+)";
+
+  const smRatio = tokenData.orderFlowSummary.smartMoneyBuyCount > 0
+    ? (tokenData.orderFlowSummary.smartMoneyBuyCount /
+       Math.max(tokenData.orderFlowSummary.smartMoneySellCount, 1)).toFixed(1)
+    : "0";
+
+  const last5_1m = tokenData.kline1mData.trim().split("\n").slice(-5).join("\n");
 
   return `
-POSITION: ${position.tokenSymbol} (${position.tokenAddress})
-Entry Price: $${position.entryPrice.toFixed(6)} | Entry Market Cap: $${position.entryMarketCap}
-Current Price: $${position.currentPrice?.toFixed(6) || 0} | Current Market Cap: $${position.currentMarketCap}
-Unrealized PnL: ${position.unrealizedPnlPercent?.toFixed(2) || 0}% (${(position.unrealizedPnlSol || 0).toFixed(4)} SOL)
-Holding Duration: ${holdingDurationHuman}
-Cost: ${(position.costSol || 0).toFixed(4)} SOL
+POSITION: ${position.tokenSymbol} | Phase: ${phase} | Holding: ${holdingMin}m
+PnL: ${position.unrealizedPnlPercent?.toFixed(2)}% (${position.unrealizedPnlSol?.toFixed(4)} SOL)
+Entry: $${position.entryPrice.toFixed(8)} → Now: $${position.currentPrice?.toFixed(8)}
 
-=== CURRENT MARKET CONDITIONS ===
-Liquidity: $${tokenData.liquidity}
-Price Change (5m): ${tokenData.priceChange5m}%
-Volume (5m): $${tokenData.volume5m.toFixed(2)}
+━━━ ORDER FLOW ━━━
+Intensity: ${tokenData.orderFlowSummary.intensity.toUpperCase()}
+Net Flow: $${tokenData.orderFlowSummary.netFlowUsd.toFixed(2)}
+Buy/Sell Ratio: ${tokenData.orderFlowSummary.buySellRatio.toFixed(2)}x
+Buy: $${tokenData.orderFlowSummary.buyVolume.toFixed(2)} | Sell: $${tokenData.orderFlowSummary.sellVolume.toFixed(2)}
 
-=== MOMENTUM ANALYSIS ===
-K-line 1m (30 candles):
-${tokenData.kline1mData}
+━━━ SMART MONEY ━━━
+Net Flow: $${tokenData.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
+Buys: ${tokenData.orderFlowSummary.smartMoneyBuyCount} | Sells: ${tokenData.orderFlowSummary.smartMoneySellCount} | Ratio: ${smRatio}x
+Degens: ${tokenData.smartDegenCount} (entry: ${position.smartDegenEntryCount ?? "N/A"})
+${tokenData.topTradersSummary}
 
-${tokenData.volumeDeltas1m || "No volume delta data"}
+━━━ CANDLES 1M (last 5) ━━━
+${last5_1m}
+Deltas: ${tokenData.volumeDeltas1m}
 
-K-line 5m (12 candles):
-${tokenData.kline5mData}
+━━━ RISK ━━━
+Rug: ${tokenData.rugRatio} | WashTrading: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}
 
-${tokenData.volumeDeltas5m || "No volume delta data"}
-
-=== ORDER FLOW ANALYSIS ===
-Current Intensity: ${tokenData.orderFlowSummary?.intensity.toUpperCase() || "N/A"}
-Net Flow (USD): $${tokenData.orderFlowSummary?.netFlowUsd.toFixed(2) || "0"}
-Buy/Sell Ratio: ${tokenData.orderFlowSummary?.buySellRatio.toFixed(2) || "1"}
-Total Buy Volume: $${tokenData.orderFlowSummary?.buyVolume.toFixed(2) || "0"}
-Total Sell Volume: $${tokenData.orderFlowSummary?.sellVolume.toFixed(2) || "0"}
-
-Smart Money Flow: $${tokenData.orderFlowSummary?.smartMoneyNetFlow.toFixed(2) || "0"}
-Smart Money Buys: ${tokenData.orderFlowSummary?.smartMoneyBuyCount || 0}
-Smart Money Sells: ${tokenData.orderFlowSummary?.smartMoneySellCount || 0}
-
-=== SMART MONEY ACTIVITY ===
-Smart Degen Count: ${tokenData.smartDegenCount} (at entry: ${position.smartDegenEntryCount || "N/A"})
-Top Smart Degen Traders (current holding/activity):
-${tokenData.topTradersSummary || "No trader data"}
-
-=== RISK METRICS ===
-Rug Ratio: ${tokenData.rugRatio} | Bundler Rate: ${tokenData.bundlerTraderAmountRate} | Insider Ratio: ${tokenData.ratTraderAmountRate}
-Is Wash Trading: ${tokenData.isWashTrading}
-Creator Status: ${tokenData.creatorTokenStatus}
-Top 10 Holder Rate: ${tokenData.top10HolderRate}
-
-RELEVANT LEARNINGS from previous trades:
+━━━ LEARNINGS ━━━
 ${relevantLearnings || "None"}
 
-=== TRADING TARGETS ===
-Take Profit Target: +${takeProfitPercent}%
-Stop Loss Target: -${stopLossPercent}%
+━━━ TARGETS ━━━
+TP: +${takeProfitPercent}% | SL: -${stopLossPercent}% | 5m Change: ${tokenData.priceChange5m.toFixed(2)}%
 
-=== MOMENTUM ANALYSIS (PREDICTIVE) ===
-1. **Volume Delta**: Is volume increasing on green candles? (Accumulation)
-2. **Trend Pattern**: Are we seeing higher lows? (Uptrend forming)
-3. **Breakout**: Is price breaking above recent resistance levels?
-4. **Momentum Intensity**: Are green candles getting bigger? (Strengthening trend)
-5. **Prediction**: Based on current order flow and volume, is the next 5m likely UP or DOWN?
-
-Key Decision Logic:
-- HOLD if: Bullish order flow + momentum confirmation + predicted UP
-- SELL if: Bearish order flow OR momentum fading OR predicted DOWN OR PnL >= TP%
-  `;
+Analyze order flow. SELL if distribution detected. HOLD if momentum intact.`;
 }
