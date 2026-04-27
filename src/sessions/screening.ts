@@ -20,7 +20,9 @@ const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
 const MAX_OPEN_POSITIONS = parseInt(process.env.MAX_OPEN_POSITIONS || "5");
-const SCAN_INTERVAL_MINUTES = parseFloat(process.env.SCAN_INTERVAL_MINUTES || "0.5");
+const SCAN_INTERVAL_MINUTES = parseFloat(
+  process.env.SCAN_INTERVAL_MINUTES || "0.5",
+);
 const SCAN_INTERVAL_MS = SCAN_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
 const SOLD_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes cooldown
@@ -65,7 +67,9 @@ async function scanAndFilter() {
   const now = Date.now();
 
   // Cleanup old sold tokens (older than cooldown)
-  const activeSoldTokens = soldTokens.filter(s => now - s.soldAt < SOLD_COOLDOWN_MS);
+  const activeSoldTokens = soldTokens.filter(
+    (s) => now - s.soldAt < SOLD_COOLDOWN_MS,
+  );
   if (activeSoldTokens.length !== soldTokens.length) {
     await saveSoldTokens(activeSoldTokens);
   }
@@ -73,7 +77,7 @@ async function scanAndFilter() {
   const openPositionAddresses = new Set(positions.map((p) => p.tokenAddress));
 
   // Filter sold tokens that are still in cooldown period
-  const recentSoldAddresses = new Set(activeSoldTokens.map(s => s.address));
+  const recentSoldAddresses = new Set(activeSoldTokens.map((s) => s.address));
 
   const filteredCandidates = candidates.filter((token) => {
     if (openPositionAddresses.has(token.address)) {
@@ -101,7 +105,7 @@ async function scanAndFilter() {
 
     if (totalPositions >= MAX_OPEN_POSITIONS) {
       logger.info(
-        `Max open positions reached (${totalPositions}/${MAX_OPEN_POSITIONS}, ${pendingBuyCount} pending), stopping screening`
+        `Max open positions reached (${totalPositions}/${MAX_OPEN_POSITIONS}, ${pendingBuyCount} pending), stopping screening`,
       );
       break;
     }
@@ -131,22 +135,20 @@ async function processCandidate(token: TokenData): Promise<void> {
     const learnings = await getLearnings();
 
     // AI Decision
-    const decision = await getBuySkipDecision(
-      token,
-      learnings,
-    );
+    const decision = await getBuySkipDecision(token, learnings);
 
     logger.info(
-      `Decision for ${token.symbol}: ${decision.action} (${decision.confidence}%)`,
-      {
-        reasoning: decision.reasoning,
-      },
+      `Decision for ${token.symbol}: ${decision.action} (${decision.confidence}%) {${decision.reasoning}}`,
     );
 
     if (decision.action === "BUY") {
       // Add to pending set to prevent duplicate buys in same scan cycle
       pendingBuys.add(token.address);
-      await executeBuyOrder(token);
+      await executeBuyOrder({
+        token,
+        aiReasoning: decision.reasoning,
+        signalsUsed: decision.signals,
+      });
     }
   } catch (error) {
     logger.error(`Error processing candidate ${token.symbol}`, {
@@ -155,7 +157,15 @@ async function processCandidate(token: TokenData): Promise<void> {
   }
 }
 
-async function executeBuyOrder(token: TokenData) {
+async function executeBuyOrder({
+  token,
+  aiReasoning,
+  signalsUsed,
+}: {
+  token: TokenData;
+  aiReasoning?: string;
+  signalsUsed?: string[];
+}) {
   if (!WALLET_ADDRESS) {
     logger.error("WALLET_ADDRESS not set, cannot execute buy");
     pendingBuys.delete(token.address);
@@ -185,7 +195,10 @@ async function executeBuyOrder(token: TokenData) {
       orderId: "dry-run-" + crypto.randomUUID(),
       orderStatus: "confirmed",
       isDryRun: true,
-      aiReasoning: "Dry run buy",
+
+      // AI context saat decision
+      aiReasoning,
+      signalsUsed,
     };
 
     const position: Position = {
@@ -207,7 +220,10 @@ async function executeBuyOrder(token: TokenData) {
     };
 
     // Optimized: Load once, modify, save once
-    const [trades, positions] = await Promise.all([getTrades(), getPositions()]);
+    const [trades, positions] = await Promise.all([
+      getTrades(),
+      getPositions(),
+    ]);
     trades.push(trade);
     positions.push(position);
     await Promise.all([saveTrades(trades), savePositions(positions)]);
@@ -322,7 +338,10 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
             });
           }
           return;
-        } else if (orderStatus.status === "failed" || orderStatus.status === "expired") {
+        } else if (
+          orderStatus.status === "failed" ||
+          orderStatus.status === "expired"
+        ) {
           // Order failed or expired
           logger.warn(`Order ${orderStatus.status} for ${token.symbol}`, {
             orderId: trade.orderId,

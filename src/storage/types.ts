@@ -19,7 +19,9 @@ export interface Trade {
 
   // Diisi saat SELL
   entryPrice?: number;
+  entryMarketCap?: number;
   exitPrice?: number;
+  exitMarketCap?: number;
   pnlSol?: number;
   pnlPercent?: number;
   holdingDurationMs?: number;
@@ -28,7 +30,9 @@ export interface Trade {
     | "stop_loss"
     | "ai_decision"
     | "manual"
-    | "max_holding_time";
+    | "max_holding_time"
+    | "invalid_price"
+    | "trailing_stop";
 
   // AI context saat decision
   aiReasoning?: string;
@@ -65,11 +69,11 @@ export interface Learning {
   pattern: {
     type: "entry" | "exit" | "filter" | "risk";
     description: string;
-    successRate?: number;
-    avgPnlPercent?: number;
+    successRate: number;
+    avgPnlPercent: number;
+    appliedCount: number; // berapa kali pattern ini dipakai
+    successCount: number; // berapa kali berhasil
   };
-  appliedCount: number; // berapa kali pattern ini dipakai
-  successCount: number; // berapa kali berhasil
 }
 
 export interface Performance {

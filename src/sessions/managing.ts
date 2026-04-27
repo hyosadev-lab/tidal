@@ -1,6 +1,18 @@
-import { getPositions, savePositions, getTrades, saveTrades, getLearnings, addSoldToken, updatePerformance } from "../storage/db";
+import {
+  getPositions,
+  savePositions,
+  getTrades,
+  saveTrades,
+  getLearnings,
+  addSoldToken,
+  updatePerformance,
+} from "../storage/db";
 import { generateLearnings } from "../agent/learner";
-import { getTokenDetails, getTokenInfo, getTokenSecurity } from "../gmgn/market";
+import {
+  getTokenDetails,
+  getTokenInfo,
+  getTokenSecurity,
+} from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
 import { getManageDecision, checkHardRules } from "../agent/manager";
 import type { Position, Trade, TokenData } from "../storage/types";
@@ -12,8 +24,12 @@ const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
 const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "30");
 const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "15");
-const TRAILING_STOP_PERCENT = parseInt(process.env.TRAILING_STOP_PERCENT || "10");
-const MANAGE_INTERVAL_MINUTES = parseFloat(process.env.MANAGE_INTERVAL_MINUTES || "0.1667");
+const TRAILING_STOP_PERCENT = parseInt(
+  process.env.TRAILING_STOP_PERCENT || "10",
+);
+const MANAGE_INTERVAL_MINUTES = parseFloat(
+  process.env.MANAGE_INTERVAL_MINUTES || "0.1667",
+);
 const MANAGE_INTERVAL_MS = MANAGE_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
 
@@ -69,12 +85,15 @@ async function monitorPositions() {
 
   // Learn from recent trades periodically
   const trades = await getTrades();
-  const confirmedTrades = trades.filter(t => t.orderStatus === "confirmed");
+  const confirmedTrades = trades.filter((t) => t.orderStatus === "confirmed");
 
   // Generate learnings only when count increases by multiples of 5
   // e.g., if last count was 0 and now 5, generate. If 5 and still 5, don't generate.
   const currentCount = confirmedTrades.length;
-  const shouldGenerate = currentCount > 0 && currentCount % 5 === 0 && currentCount > lastLearningsCount;
+  const shouldGenerate =
+    currentCount > 0 &&
+    currentCount % 5 === 0 &&
+    currentCount > lastLearningsCount;
 
   if (shouldGenerate) {
     logger.info(`Generating learnings for ${currentCount} confirmed trades`);
@@ -92,7 +111,8 @@ async function processPosition(position: Position): Promise<Position | null> {
 
     // Update position PnL
     position.currentPrice = currentPrice;
-    position.currentMarketCap = position.entryMarketCap * (currentPrice / position.entryPrice); // Approximate
+    position.currentMarketCap =
+      position.entryMarketCap * (currentPrice / position.entryPrice); // Approximate
 
     // Update Peak Price for Trailing Stop
     if (!position.peakPrice || currentPrice > position.peakPrice) {
@@ -100,25 +120,32 @@ async function processPosition(position: Position): Promise<Position | null> {
       position.peakPriceTimestamp = Date.now();
     }
 
-    // Fix PnL SOL calculation: use costSol and price ratio
-    // entryPrice and currentPrice are in USD (from GMGN API)
     // costSol is the SOL amount spent at entry
     // Calculate current SOL value using price ratio: costSol * (currentPrice / entryPrice)
     const priceRatio = currentPrice / position.entryPrice;
     const currentValueSol = position.costSol * priceRatio;
     position.unrealizedPnlSol = currentValueSol - position.costSol;
 
-    position.unrealizedPnlPercent = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    position.unrealizedPnlPercent =
+      ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
     position.lastUpdated = Date.now();
 
     // 2. Check Trailing Stop
     if (position.peakPrice && TRAILING_STOP_PERCENT > 0) {
-      const trailingStopPrice = position.peakPrice * (1 - TRAILING_STOP_PERCENT / 100);
+      const trailingStopPrice =
+        position.peakPrice * (1 - TRAILING_STOP_PERCENT / 100);
       if (currentPrice < trailingStopPrice) {
-        logger.info(`Trailing stop triggered for ${position.tokenSymbol}: Current ${currentPrice.toFixed(6)} < Peak ${position.peakPrice.toFixed(6)} * (1 - ${TRAILING_STOP_PERCENT}%)`);
-        const result = await executeSellOrder(position, "trailing_stop");
+        logger.info(
+          `Trailing stop triggered for ${position.tokenSymbol}: Current ${currentPrice.toFixed(6)} < Peak ${position.peakPrice.toFixed(6)} * (1 - ${TRAILING_STOP_PERCENT}%)`,
+        );
+        const result = await executeSellOrder({
+          exitReason: "trailing_stop",
+          position,
+        });
         // Check if position was actually removed (sold)
-        const isSold = !result.find(p => p.tokenAddress === position.tokenAddress);
+        const isSold = !result.find(
+          (p) => p.tokenAddress === position.tokenAddress,
+        );
         if (isSold) {
           await savePositions(result);
           return null; // Position sold
@@ -128,11 +155,22 @@ async function processPosition(position: Position): Promise<Position | null> {
     }
 
     // 3. Check hard rules
-    const hardRule = checkHardRules(position, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT);
+    const hardRule = checkHardRules(
+      position,
+      TAKE_PROFIT_PERCENT,
+      STOP_LOSS_PERCENT,
+    );
     if (hardRule) {
-      logger.info(`Hard rule triggered for ${position.tokenSymbol}: ${hardRule}`);
-      const result = await executeSellOrder(position, hardRule);
-      const isSold = !result.find(p => p.tokenAddress === position.tokenAddress);
+      logger.info(
+        `Hard rule triggered for ${position.tokenSymbol}: ${hardRule}`,
+      );
+      const result = await executeSellOrder({
+        exitReason: hardRule,
+        position,
+      });
+      const isSold = !result.find(
+        (p) => p.tokenAddress === position.tokenAddress,
+      );
       if (isSold) {
         await savePositions(result);
         return null; // Position sold
@@ -168,7 +206,10 @@ async function processPosition(position: Position): Promise<Position | null> {
       smartDegenCount: tokenInfo?.smartDegenCount || 0,
       renownedCount: tokenInfo?.renownedCount || 0,
       top10HolderRate: tokenInfo?.top10HolderRate || 0,
-      creatorTokenStatus: tokenSecurity?.creatorTokenStatus || tokenInfo?.creatorTokenStatus || "",
+      creatorTokenStatus:
+        tokenSecurity?.creatorTokenStatus ||
+        tokenInfo?.creatorTokenStatus ||
+        "",
       creatorBalanceRate: tokenInfo?.creatorBalanceRate || 0,
       // Data from token security
       rugRatio: tokenSecurity?.rugRatio || 0,
@@ -185,9 +226,19 @@ async function processPosition(position: Position): Promise<Position | null> {
     const decision = await getManageDecision(position, tokenData, learnings);
 
     if (decision.action === "SELL") {
-      logger.info(`AI decision to SELL ${position.tokenSymbol}: ${decision.reasoning}`);
-      const result = await executeSellOrder(position, "ai_decision");
-      const isSold = !result.find(p => p.tokenAddress === position.tokenAddress);
+      logger.info(
+        `Decision for ${position.tokenSymbol}: ${decision.action} (${decision.confidence}%) {${decision.reasoning}}`,
+      );
+
+      const result = await executeSellOrder({
+        exitReason: "ai_decision",
+        position,
+        signalsUsed: decision.signals,
+        aiReasoning: decision.reasoning,
+      });
+      const isSold = !result.find(
+        (p) => p.tokenAddress === position.tokenAddress,
+      );
       if (isSold) {
         await savePositions(result);
         return null; // Position sold
@@ -198,26 +249,40 @@ async function processPosition(position: Position): Promise<Position | null> {
       // Position held, return updated position
       return position;
     }
-
   } catch (error) {
-    logger.error(`Error processing position ${position.tokenSymbol}`, { error: String(error) });
+    logger.error(`Error processing position ${position.tokenSymbol}`, {
+      error: String(error),
+    });
     return position; // Return unchanged position on error
   }
 }
 
-async function executeSellOrder(position: Position, reason: string): Promise<Position[]> {
+async function executeSellOrder({
+  position,
+  exitReason,
+  aiReasoning,
+  signalsUsed,
+}: {
+  position: Position;
+  exitReason: string;
+  aiReasoning?: string;
+  signalsUsed?: string[];
+}): Promise<Position[]> {
   if (!WALLET_ADDRESS) {
     logger.error("WALLET_ADDRESS not set, cannot execute sell");
     return [];
   }
 
   if (DRY_RUN) {
-    logger.info(`[DRY RUN] Sell ${position.tokenSymbol} - Reason: ${reason}`);
+    logger.info(
+      `[DRY RUN] Sell ${position.tokenSymbol} - Exit Reason: ${exitReason}`,
+    );
 
     // Update position as sold (remove from list)
     const positions = await getPositions();
-    const filtered = positions.filter(p => p.tokenAddress !== position.tokenAddress);
-    // Don't save here, return filtered list
+    const filtered = positions.filter(
+      (p) => p.tokenAddress !== position.tokenAddress,
+    );
 
     // Add to trades history
     const trade: Trade = {
@@ -235,12 +300,18 @@ async function executeSellOrder(position: Position, reason: string): Promise<Pos
       orderId: "dry-run-" + crypto.randomUUID(),
       orderStatus: "confirmed",
       isDryRun: true,
+
       entryPrice: position.entryPrice,
-      exitPrice: position.currentPrice,
+      entryMarketCap: position.entryMarketCap,
+      exitPrice: position.currentPrice || 0,
+      exitMarketCap: position.currentMarketCap || 0,
       pnlSol: position.unrealizedPnlSol,
       pnlPercent: position.unrealizedPnlPercent,
       holdingDurationMs: Date.now() - position.entryTimestamp,
-      exitReason: reason as any,
+      exitReason: exitReason as any,
+
+      aiReasoning,
+      signalsUsed,
     };
 
     const trades = await getTrades();
@@ -249,7 +320,10 @@ async function executeSellOrder(position: Position, reason: string): Promise<Pos
     await updatePerformance();
 
     // Record sold token for cooldown
-    await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
+    await addSoldToken({
+      address: position.tokenAddress,
+      symbol: position.tokenSymbol,
+    });
 
     // Return filtered list for caller to save
     return filtered;
@@ -264,12 +338,16 @@ async function executeSellOrder(position: Position, reason: string): Promise<Pos
       slippage: SLIPPAGE,
     });
 
-    logger.info(`Sell order submitted for ${position.tokenSymbol}`, { orderId: result.order_id });
+    logger.info(`Sell order submitted for ${position.tokenSymbol}`, {
+      orderId: result.order_id,
+    });
 
     // Wait for confirmation (polling logic)
     // Remove position from list immediately
     const positions = await getPositions();
-    const filtered = positions.filter(p => p.tokenAddress !== position.tokenAddress);
+    const filtered = positions.filter(
+      (p) => p.tokenAddress !== position.tokenAddress,
+    );
 
     const trade: Trade = {
       id: crypto.randomUUID(),
@@ -286,8 +364,18 @@ async function executeSellOrder(position: Position, reason: string): Promise<Pos
       orderId: result.order_id,
       orderStatus: "pending",
       isDryRun: false,
+
       entryPrice: position.entryPrice,
-      exitReason: reason as any,
+      entryMarketCap: position.entryMarketCap,
+      exitPrice: position.currentPrice || 0,
+      exitMarketCap: position.currentMarketCap || 0,
+      pnlSol: position.unrealizedPnlSol,
+      pnlPercent: position.unrealizedPnlPercent,
+      holdingDurationMs: Date.now() - position.entryTimestamp,
+      exitReason: exitReason as any,
+
+      aiReasoning,
+      signalsUsed,
     };
 
     const trades = await getTrades();
@@ -298,13 +386,17 @@ async function executeSellOrder(position: Position, reason: string): Promise<Pos
     pollSellOrderConfirmation(position, trade);
 
     // Record sold token for cooldown
-    await addSoldToken({ address: position.tokenAddress, symbol: position.tokenSymbol });
+    await addSoldToken({
+      address: position.tokenAddress,
+      symbol: position.tokenSymbol,
+    });
 
     // Return filtered list for caller to save
     return filtered;
-
   } catch (error) {
-    logger.error(`Failed to execute sell for ${position.tokenSymbol}`, { error: String(error) });
+    logger.error(`Failed to execute sell for ${position.tokenSymbol}`, {
+      error: String(error),
+    });
     // Return original positions list (no change) to indicate failure
     const positions = await getPositions();
     return positions;
@@ -316,9 +408,12 @@ async function pollSellOrderConfirmation(position: Position, trade: Trade) {
   const pollInterval = 3000; // Check every 3 seconds
   const startTime = Date.now();
 
-  logger.info(`Starting sell order confirmation polling for ${position.tokenSymbol}`, {
-    orderId: trade.orderId,
-  });
+  logger.info(
+    `Starting sell order confirmation polling for ${position.tokenSymbol}`,
+    {
+      orderId: trade.orderId,
+    },
+  );
 
   try {
     while (Date.now() - startTime < maxWaitTime) {
@@ -338,23 +433,30 @@ async function pollSellOrderConfirmation(position: Position, trade: Trade) {
           if (tradeIndex !== -1 && trades[tradeIndex]) {
             const confirmedTrade = trades[tradeIndex]!;
             confirmedTrade.orderStatus = "confirmed";
-            confirmedTrade.aiReasoning = "Order confirmed by GMGN";
             confirmedTrade.exitPrice = position.currentPrice || 0;
+            confirmedTrade.exitMarketCap = position.currentMarketCap || 0;
             confirmedTrade.pnlSol = position.unrealizedPnlSol;
             confirmedTrade.pnlPercent = position.unrealizedPnlPercent;
-            confirmedTrade.holdingDurationMs = Date.now() - position.entryTimestamp;
+            confirmedTrade.holdingDurationMs =
+              Date.now() - position.entryTimestamp;
             confirmedTrade.txHash = orderStatus.tx_hash;
 
             await saveTrades(trades);
             await updatePerformance();
           }
           return;
-        } else if (orderStatus.status === "failed" || orderStatus.status === "expired") {
+        } else if (
+          orderStatus.status === "failed" ||
+          orderStatus.status === "expired"
+        ) {
           // Order failed or expired
-          logger.warn(`Sell order ${orderStatus.status} for ${position.tokenSymbol}`, {
-            orderId: trade.orderId,
-            status: orderStatus.status,
-          });
+          logger.warn(
+            `Sell order ${orderStatus.status} for ${position.tokenSymbol}`,
+            {
+              orderId: trade.orderId,
+              status: orderStatus.status,
+            },
+          );
 
           const trades = await getTrades();
           const tradeIndex = trades.findIndex((t) => t.id === trade.id);
@@ -366,10 +468,13 @@ async function pollSellOrderConfirmation(position: Position, trade: Trade) {
         }
         // If still pending, continue polling
       } catch (error) {
-        logger.error(`Error polling sell order status for ${position.tokenSymbol}`, {
-          orderId: trade.orderId,
-          error: String(error),
-        });
+        logger.error(
+          `Error polling sell order status for ${position.tokenSymbol}`,
+          {
+            orderId: trade.orderId,
+            error: String(error),
+          },
+        );
       }
     }
     // Timeout
