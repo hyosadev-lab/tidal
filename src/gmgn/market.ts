@@ -78,14 +78,12 @@ export interface OrderFlowSummary {
 
 export interface TokenDetails {
   kline1mData: string;
-  kline5mData: string;
   topTradersSummary: string;
   orderFlowSummary: OrderFlowSummary;
   price: number;
   priceChange5m: number;
   volume5m: number;
   volumeDeltas1m: string;
-  volumeDeltas5m: string;
 }
 
 export async function getOrderFlowSummary(
@@ -172,18 +170,15 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
   try {
     const now = Math.floor(Date.now() / 1000);
     const from1m = now - 1800; // 30 minutes ago
-    const from5m = now - 3600; // 60 minutes ago
 
-    // Parallel fetch: traders, 1m kline, 5m kline
-    const [tradersResult, kline1mResult, kline5mResult] = await Promise.all([
+    // Parallel fetch: traders, 1m kline (remove 5m kline)
+    const [tradersResult, kline1mResult] = await Promise.all([
       fetchTopTraders(chain, address, "smart_degen", 50), // Fetch more traders for order flow
       fetchKline(chain, address, "1m", from1m, now),
-      fetchKline(chain, address, "5m", from5m, now),
     ]);
 
     const traders = tradersResult?.list || [];
     const kline1mData = kline1mResult?.list || [];
-    const kline5mData = kline5mResult?.list || [];
 
     // Format traders summary (top 10 for display)
     const tradersSummary = traders.slice(0, 10).map((t: any) => {
@@ -251,10 +246,6 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
     }).join("\n");
 
-    const kline5mSummary = kline5mData.map((candle: any) => {
-      return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
-    }).join("\n");
-
     // Parse current price from last 1m candle
     let currentPrice = 0;
     if (kline1mData.length > 0) {
@@ -294,34 +285,22 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       parseFloat(candle.volume) || 0,
     ]);
 
-    const kline5mArray = kline5mData.map((candle: any) => [
-      parseFloat(candle.open) || 0,
-      parseFloat(candle.high) || 0,
-      parseFloat(candle.low) || 0,
-      parseFloat(candle.close) || 0,
-      parseFloat(candle.volume) || 0,
-    ]);
-
-    // Calculate volume deltas
+    // Calculate volume deltas (only 1m needed)
     const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
-    const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 4);
 
     return {
       kline1mData: kline1mSummary,
-      kline5mData: kline5mSummary,
       topTradersSummary: tradersSummary,
       orderFlowSummary,
       price: currentPrice,
       priceChange5m: priceChange5m,
       volume5m: volume5m,
       volumeDeltas1m: volumeDeltas1m,
-      volumeDeltas5m: volumeDeltas5m,
     };
   } catch (error) {
     console.error("Error fetching token details:", error);
     return {
       kline1mData: "",
-      kline5mData: "",
       topTradersSummary: "",
       orderFlowSummary: {
         buyVolume: 0,
@@ -337,7 +316,6 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       priceChange5m: 0,
       volume5m: 0,
       volumeDeltas1m: "",
-      volumeDeltas5m: "",
     };
   }
 }

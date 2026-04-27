@@ -218,7 +218,8 @@ ${tokenData.topTradersSummary}
 
 ━━━ CANDLES 1M (last 5) ━━━
 ${last5_1m}
-Deltas: ${tokenData.volumeDeltas1m}
+
+${tokenData.volumeDeltas1m}
 
 ━━━ RISK ━━━
 Rug: ${tokenData.rugRatio} | WashTrading: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}

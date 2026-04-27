@@ -171,15 +171,13 @@ async function processPosition(position: Position): Promise<Position | null> {
       priceChange5m: priceChange5m,
       usdMarketCap: tokenInfo?.usdMarketCap || position.currentMarketCap || 0,
       kline1mData: details.kline1mData,
-      kline5mData: details.kline5mData,
       topTradersSummary: details.topTradersSummary,
       orderFlowSummary: details.orderFlowSummary,
       // Data from token info
       liquidity: tokenInfo?.liquidity || 0,
-      // Volume data from kline 5m
+      // Volume data
       volume5m: details.volume5m,
       volumeDeltas1m: details.volumeDeltas1m,
-      volumeDeltas5m: details.volumeDeltas5m,
       holderCount: tokenInfo?.holderCount || 0,
       smartDegenCount: tokenInfo?.smartDegenCount || 0,
       renownedCount: tokenInfo?.renownedCount || 0,

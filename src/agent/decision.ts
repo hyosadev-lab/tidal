@@ -148,9 +148,8 @@ function buildUserPrompt(
   const isOverextended = token.priceChange5m > 20;
   const isDip = token.priceChange5m < -5;
 
-  // Last 5-10 candles 1m (lebih sedikit = lebih fokus)
+  // Last 8 candles 1m (lebih sedikit = lebih fokus)
   const lastCandles1m = token.kline1mData.trim().split("\n").slice(-8).join("\n");
-  const lastCandles5m = token.kline5mData.trim().split("\n").slice(-4).join("\n");
 
   return `
 TOKEN: ${token.symbol} (${token.address})

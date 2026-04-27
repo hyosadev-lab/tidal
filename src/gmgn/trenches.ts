@@ -1,7 +1,9 @@
 import { fetchTrenches } from "./client";
 import type { TokenData } from "../storage/types";
 
-export async function fetchTrenchesTokens(chain: string = "sol"): Promise<TokenData[]> {
+export async function fetchTrenchesTokens(
+  chain: string = "sol",
+): Promise<TokenData[]> {
   try {
     const result = await fetchTrenches(chain);
 
@@ -48,12 +50,20 @@ function mapToTokenData(item: any): TokenData {
     ctoFlag: item.cto_flag || false,
     // Enriched fields (will be filled later)
     kline1mData: "",
-    kline5mData: "",
     topTradersSummary: "",
     price: 0, // Will be populated from kline data
     priceChange5m: 0, // Will be populated from kline data
     volume5m: 0, // Will be populated from kline data
     volumeDeltas1m: "", // Will be populated from kline data
-    volumeDeltas5m: "", // Will be populated from kline data
+    orderFlowSummary: {
+      buySellRatio: 0,
+      buyVolume: 0,
+      intensity: "neutral",
+      netFlowUsd: 0,
+      sellVolume: 0,
+      smartMoneyBuyCount: 0,
+      smartMoneyNetFlow: 0,
+      smartMoneySellCount: 0,
+    },
   };
 }

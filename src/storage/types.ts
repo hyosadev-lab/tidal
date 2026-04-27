@@ -135,13 +135,11 @@ export interface TokenData {
 
   // Enriched Fields from gmgn-cli market kline and gmgn-cli token traders
   kline1mData: string;
-  kline5mData: string;
   price: number;
   priceChange5m: number;
   topTradersSummary: string;
   volume5m: number;
   volumeDeltas1m: string;
-  volumeDeltas5m: string;
   orderFlowSummary: OrderFlowSummary;
 }
 
