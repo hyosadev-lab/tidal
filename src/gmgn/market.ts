@@ -1,69 +1,5 @@
-import { fetchKline, fetchTopTraders, fetchTokenTraders, fetchTokenInfo, fetchTokenSecurity } from "./client";
+import { fetchKline, fetchTopTraders, fetchTokenInfo, fetchTokenSecurity } from "./client";
 import { getVolumeDeltasFromKline } from "../utils/kline";
-
-export interface TokenInfo {
-  price: number;
-  liquidity: number;
-  holderCount: number;
-  smartDegenCount: number;
-  renownedCount: number;
-  usdMarketCap: number;
-  launchpadPlatform: string;
-  creatorTokenStatus: string;
-  rugRatio: number;
-  isWashTrading: boolean;
-  top10HolderRate: number;
-  creatorBalanceRate: number;
-  bundlerTraderAmountRate: number;
-  ratTraderAmountRate: number;
-  renouncedMint: boolean;
-  renouncedFreezeAccount: boolean;
-  hasAtLeastOneSocial: boolean;
-  ctoFlag: boolean;
-}
-
-export async function getTokenInfo(chain: string, address: string): Promise<Partial<TokenInfo>> {
-  try {
-    const info = await fetchTokenInfo(chain, address);
-
-    return {
-      price: parseFloat(info.price) || 0,
-      liquidity: parseFloat(info.liquidity) || 0,
-      holderCount: info.holder_count || 0,
-      smartDegenCount: info.wallet_tags_stat?.smart_wallets || 0,
-      renownedCount: info.wallet_tags_stat?.renowned_wallets || 0,
-      usdMarketCap: parseFloat(info.price) * parseFloat(info.circulating_supply) || 0,
-      launchpadPlatform: info.launchpad_platform || "",
-      top10HolderRate: parseFloat(info.stat?.top_10_holder_rate) || 0,
-      creatorBalanceRate: parseFloat(info.stat?.creator_hold_rate) || 0,
-      creatorTokenStatus: info.dev?.creator_token_status === "sell" ? "creator_close" : "creator_hold",
-    };
-  } catch (error) {
-    console.error("Error fetching token info:", error);
-    return {};
-  }
-}
-
-export async function getTokenSecurity(chain: string, address: string): Promise<Partial<TokenInfo>> {
-  try {
-    const security = await fetchTokenSecurity(chain, address);
-
-    return {
-      rugRatio: parseFloat(security.rug_ratio) || 0,
-      isWashTrading: security.is_wash_trading || false,
-      creatorTokenStatus: security.creator_token_status === "creator_close" ? "creator_close" : "creator_hold",
-      bundlerTraderAmountRate: parseFloat(security.bundler_trader_amount_rate) || 0,
-      ratTraderAmountRate: parseFloat(security.rat_trader_amount_rate) || 0,
-      renouncedMint: security.renounced_mint || false,
-      renouncedFreezeAccount: security.renounced_freeze_account || false,
-      hasAtLeastOneSocial: security.has_at_least_one_social || false,
-      ctoFlag: security.cto_flag || false,
-    };
-  } catch (error) {
-    console.error("Error fetching token security:", error);
-    return {};
-  }
-}
 
 export interface OrderFlowSummary {
   buyVolume: number;
@@ -84,86 +20,25 @@ export interface TokenDetails {
   priceChange5m: number;
   volume5m: number;
   volumeDeltas1m: string;
-}
-
-export async function getOrderFlowSummary(
-  chain: string,
-  address: string,
-  existingTraders?: any[]
-): Promise<OrderFlowSummary> {
-  try {
-    // Use existing traders data if provided, otherwise fetch
-    let traders: any[];
-    if (existingTraders && existingTraders.length > 0) {
-      traders = existingTraders;
-    } else {
-      const tradersResult = await fetchTokenTraders(chain, address, 50);
-      traders = tradersResult?.list || [];
-    }
-
-    let totalBuyVolume = 0;
-    let totalSellVolume = 0;
-    let smartMoneyNetFlow = 0;
-    let smartMoneyBuyCount = 0;
-    let smartMoneySellCount = 0;
-
-    traders.forEach((t: any) => {
-      const isSmartDegen = t.tags?.includes("smart_degen") || false;
-      const netflow = parseFloat(t.netflow_usd) || 0;
-
-      // Track total volumes
-      if (netflow > 0) {
-        totalBuyVolume += netflow;
-        if (isSmartDegen) {
-          smartMoneyBuyCount++;
-          smartMoneyNetFlow += netflow;
-        }
-      } else if (netflow < 0) {
-        totalSellVolume += Math.abs(netflow);
-        if (isSmartDegen) {
-          smartMoneySellCount++;
-          smartMoneyNetFlow += netflow; // netflow is negative for sells
-        }
-      }
-    });
-
-    const totalVolume = totalBuyVolume + totalSellVolume;
-    const netFlow = totalBuyVolume - totalSellVolume;
-    const buySellRatio = totalSellVolume > 0 ? totalBuyVolume / totalSellVolume : (totalBuyVolume > 0 ? 999 : 1);
-
-    // Determine intensity based on net flow and volume
-    let intensity: "bullish" | "bearish" | "neutral";
-    if (netFlow > totalVolume * 0.1) {
-      intensity = "bullish";
-    } else if (netFlow < -totalVolume * 0.1) {
-      intensity = "bearish";
-    } else {
-      intensity = "neutral";
-    }
-
-    return {
-      buyVolume: totalBuyVolume,
-      sellVolume: totalSellVolume,
-      netFlowUsd: netFlow,
-      buySellRatio,
-      intensity,
-      smartMoneyNetFlow,
-      smartMoneyBuyCount,
-      smartMoneySellCount,
-    };
-  } catch (error) {
-    console.error("Error fetching order flow data:", error);
-    return {
-      buyVolume: 0,
-      sellVolume: 0,
-      netFlowUsd: 0,
-      buySellRatio: 1,
-      intensity: "neutral",
-      smartMoneyNetFlow: 0,
-      smartMoneyBuyCount: 0,
-      smartMoneySellCount: 0,
-    };
-  }
+  // Token Info fields (real-time data)
+  liquidity: number;
+  holderCount: number;
+  smartDegenCount: number;
+  renownedCount: number;
+  usdMarketCap: number;
+  launchpadPlatform: string;
+  creatorTokenStatus: string;
+  top10HolderRate: number;
+  creatorBalanceRate: number;
+  // Token Security fields
+  rugRatio: number;
+  isWashTrading: boolean;
+  bundlerTraderAmountRate: number;
+  ratTraderAmountRate: number;
+  renouncedMint: boolean;
+  renouncedFreezeAccount: boolean;
+  hasAtLeastOneSocial: boolean;
+  ctoFlag: boolean;
 }
 
 export async function getTokenDetails(chain: string, address: string): Promise<TokenDetails> {
@@ -171,7 +46,13 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const now = Math.floor(Date.now() / 1000);
     const from1m = now - 1800; // 30 minutes ago for context
 
-    // Parallel fetch: traders, 1m kline
+    // Step 1: Fetch core data (info & security) in parallel (lightweight)
+    const [tokenInfo, tokenSecurity] = await Promise.all([
+      fetchTokenInfo(chain, address),
+      fetchTokenSecurity(chain, address),
+    ]);
+
+    // Step 2: Fetch market data (kline & traders) in parallel
     const [tradersResult, kline1mResult] = await Promise.all([
       fetchTopTraders(chain, address, "smart_degen", 50),
       fetchKline(chain, address, "1m", from1m, now),
@@ -183,8 +64,11 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     // Calculate Order Flow (reuse traders data)
     const orderFlowSummary = calculateOrderFlow(traders);
 
-    // Process K-line Data
-    const { kline1mSummary, currentPrice, volume5m, priceChange5m, volumeDeltas1m } = processKlineData(kline1mData);
+    // Get REAL-TIME price from token info (more accurate than kline)
+    const currentPrice = parseFloat(tokenInfo.price) || 0;
+
+    // Process K-line Data for volume and price change analysis only
+    const { kline1mSummary, volume5m, priceChange5m, volumeDeltas1m } = processKlineData(kline1mData, currentPrice);
 
     // Process Traders Summary
     const tradersSummary = formatTradersSummary(traders);
@@ -197,6 +81,25 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       priceChange5m: priceChange5m,
       volume5m: volume5m,
       volumeDeltas1m: volumeDeltas1m,
+      // Token Info fields
+      liquidity: parseFloat(tokenInfo.liquidity) || 0,
+      holderCount: tokenInfo.holder_count || 0,
+      smartDegenCount: tokenInfo.wallet_tags_stat?.smart_wallets || 0,
+      renownedCount: tokenInfo.wallet_tags_stat?.renowned_wallets || 0,
+      usdMarketCap: parseFloat(tokenInfo.price) * parseFloat(tokenInfo.circulating_supply) || 0,
+      launchpadPlatform: tokenInfo.launchpad_platform || "",
+      creatorTokenStatus: tokenSecurity.creator_token_status === "creator_close" ? "creator_close" : "creator_hold",
+      top10HolderRate: parseFloat(tokenInfo.stat?.top_10_holder_rate) || 0,
+      creatorBalanceRate: parseFloat(tokenInfo.stat?.creator_hold_rate) || 0,
+      // Token Security fields
+      rugRatio: parseFloat(tokenSecurity.rug_ratio) || 0,
+      isWashTrading: tokenSecurity.is_wash_trading || false,
+      bundlerTraderAmountRate: parseFloat(tokenSecurity.bundler_trader_amount_rate) || 0,
+      ratTraderAmountRate: parseFloat(tokenSecurity.rat_trader_amount_rate) || 0,
+      renouncedMint: tokenSecurity.renounced_mint || false,
+      renouncedFreezeAccount: tokenSecurity.renounced_freeze_account || false,
+      hasAtLeastOneSocial: tokenSecurity.has_at_least_one_social || false,
+      ctoFlag: tokenSecurity.cto_flag || false,
     };
   } catch (error) {
     console.error("Error fetching token details:", error);
@@ -217,6 +120,23 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       priceChange5m: 0,
       volume5m: 0,
       volumeDeltas1m: "",
+      liquidity: 0,
+      holderCount: 0,
+      smartDegenCount: 0,
+      renownedCount: 0,
+      usdMarketCap: 0,
+      launchpadPlatform: "",
+      creatorTokenStatus: "",
+      top10HolderRate: 0,
+      creatorBalanceRate: 0,
+      rugRatio: 0,
+      isWashTrading: false,
+      bundlerTraderAmountRate: 0,
+      ratTraderAmountRate: 0,
+      renouncedMint: false,
+      renouncedFreezeAccount: false,
+      hasAtLeastOneSocial: false,
+      ctoFlag: false,
     };
   }
 }
@@ -272,18 +192,11 @@ function calculateOrderFlow(traders: any[]): OrderFlowSummary {
   };
 }
 
-function processKlineData(kline1mData: any[]) {
+function processKlineData(kline1mData: any[], realTimePrice: number) {
   // Format kline summaries
   const kline1mSummary = kline1mData.map((candle: any) => {
     return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
   }).join("\n");
-
-  // Parse current price from last 1m candle
-  let currentPrice = 0;
-  if (kline1mData.length > 0) {
-    const lastCandle = kline1mData[kline1mData.length - 1];
-    currentPrice = parseFloat(lastCandle.close) || 0;
-  }
 
   // Calculate volume 5m and price change 5m from last 5 candles of 1m data
   let volume5m = 0;
@@ -299,11 +212,10 @@ function processKlineData(kline1mData: any[]) {
       volume5m = last5Candles.reduce((sum: number, candle: any) =>
         sum + (parseFloat(candle.volume) || 0), 0);
 
-      // Calculate price change 5m
+      // Calculate price change 5m based on first candle close vs REAL-TIME price
       const firstClose = parseFloat(firstCandle.close) || 0;
-      const lastClose = parseFloat(lastCandle.close) || 0;
-      if (firstClose > 0) {
-        priceChange5m = ((lastClose - firstClose) / firstClose) * 100;
+      if (firstClose > 0 && realTimePrice > 0) {
+        priceChange5m = ((realTimePrice - firstClose) / firstClose) * 100;
       }
     }
   }
@@ -320,7 +232,7 @@ function processKlineData(kline1mData: any[]) {
   // Calculate volume deltas (only 1m needed)
   const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
 
-  return { kline1mSummary, currentPrice, volume5m, priceChange5m, volumeDeltas1m };
+  return { kline1mSummary, volume5m, priceChange5m, volumeDeltas1m };
 }
 
 function formatTradersSummary(traders: any[]): string {

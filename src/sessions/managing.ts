@@ -10,8 +10,6 @@ import {
 import { generateLearnings } from "../agent/learner";
 import {
   getTokenDetails,
-  getTokenInfo,
-  getTokenSecurity,
 } from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
 import { getManageDecision, checkHardRules } from "../agent/manager";
@@ -82,7 +80,7 @@ async function monitorPositions() {
 
 async function processPosition(position: Position): Promise<Position | null> {
   try {
-    // 1. Fetch current price and calculate price change
+    // 1. Fetch all token data in single call (price, kline, security, order flow)
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
     const currentPrice = details.price;
     const priceChange5m = details.priceChange5m;
@@ -155,13 +153,7 @@ async function processPosition(position: Position): Promise<Position | null> {
       }
     }
 
-    // 3. Fetch token info and security data
-    const [tokenInfo, tokenSecurity] = await Promise.all([
-      getTokenInfo(CHAIN, position.tokenAddress),
-      getTokenSecurity(CHAIN, position.tokenAddress),
-    ]);
-
-    // 4. AI Decision
+    // 4. AI Decision - use data from getTokenDetails (no redundant API calls)
     const learnings = await getLearnings();
     const tokenData: TokenData = {
       address: position.tokenAddress,
@@ -169,34 +161,30 @@ async function processPosition(position: Position): Promise<Position | null> {
       name: position.tokenName,
       price: currentPrice,
       priceChange5m: priceChange5m,
-      usdMarketCap: tokenInfo?.usdMarketCap || position.currentMarketCap || 0,
+      usdMarketCap: details.usdMarketCap || position.currentMarketCap || 0,
       kline1mData: details.kline1mData,
       topTradersSummary: details.topTradersSummary,
       orderFlowSummary: details.orderFlowSummary,
-      // Data from token info
-      liquidity: tokenInfo?.liquidity || 0,
-      // Volume data
+      // Data from token details (all in one call)
+      liquidity: details.liquidity || 0,
       volume5m: details.volume5m,
       volumeDeltas1m: details.volumeDeltas1m,
-      holderCount: tokenInfo?.holderCount || 0,
-      smartDegenCount: tokenInfo?.smartDegenCount || 0,
-      renownedCount: tokenInfo?.renownedCount || 0,
-      top10HolderRate: tokenInfo?.top10HolderRate || 0,
-      creatorTokenStatus:
-        tokenSecurity?.creatorTokenStatus ||
-        tokenInfo?.creatorTokenStatus ||
-        "",
-      creatorBalanceRate: tokenInfo?.creatorBalanceRate || 0,
+      holderCount: details.holderCount || 0,
+      smartDegenCount: details.smartDegenCount || 0,
+      renownedCount: details.renownedCount || 0,
+      top10HolderRate: details.top10HolderRate || 0,
+      creatorTokenStatus: details.creatorTokenStatus || "",
+      creatorBalanceRate: details.creatorBalanceRate || 0,
       // Data from token security
-      rugRatio: tokenSecurity?.rugRatio || 0,
-      bundlerTraderAmountRate: tokenSecurity?.bundlerTraderAmountRate || 0,
-      ratTraderAmountRate: tokenSecurity?.ratTraderAmountRate || 0,
-      isWashTrading: tokenSecurity?.isWashTrading || false,
-      launchpadPlatform: tokenInfo?.launchpadPlatform || "",
-      renouncedMint: tokenSecurity?.renouncedMint || false,
-      renouncedFreezeAccount: tokenSecurity?.renouncedFreezeAccount || false,
-      hasAtLeastOneSocial: tokenSecurity?.hasAtLeastOneSocial || false,
-      ctoFlag: tokenSecurity?.ctoFlag || false,
+      rugRatio: details.rugRatio || 0,
+      bundlerTraderAmountRate: details.bundlerTraderAmountRate || 0,
+      ratTraderAmountRate: details.ratTraderAmountRate || 0,
+      isWashTrading: details.isWashTrading || false,
+      launchpadPlatform: details.launchpadPlatform || "",
+      renouncedMint: details.renouncedMint || false,
+      renouncedFreezeAccount: details.renouncedFreezeAccount || false,
+      hasAtLeastOneSocial: details.hasAtLeastOneSocial || false,
+      ctoFlag: details.ctoFlag || false,
     };
 
     const decision = await getManageDecision(position, tokenData, learnings, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT);
