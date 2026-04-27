@@ -72,10 +72,12 @@ interface AiDecision {
 
 export async function getBuySkipDecision(
   token: TokenData,
-  learnings: Learning[]
+  learnings: Learning[],
+  takeProfitPercent: number,
+  stopLossPercent: number
 ): Promise<AiDecision> {
   // Build user prompt
-  const userPrompt = buildUserPrompt(token, learnings);
+  const userPrompt = buildUserPrompt(token, learnings, takeProfitPercent, stopLossPercent);
 
   // Call OpenRouter API
   try {
@@ -89,8 +91,8 @@ export async function getBuySkipDecision(
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://github.com/trading-agent",
-        "X-Title": "Trenches Trading Agent"
+        "HTTP-Referer": "https://github.com/hyosadev-lab/tidal",
+        "X-Title": "TIDAL · Autonomous Trading Agent"
       },
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
@@ -154,7 +156,9 @@ function getFallbackDecision(token: TokenData): AiDecision {
 
 function buildUserPrompt(
   token: TokenData,
-  learnings: Learning[]
+  learnings: Learning[],
+  takeProfitPercent: number,
+  stopLossPercent: number
 ): string {
   // Filter learnings: only show recent, relevant ones (max 3)
   const relevantLearnings = learnings
@@ -235,5 +239,13 @@ ${relevantLearnings || "None"}
 Key Decision Logic:
 - BUY if: Bullish order flow + volume spike + smart money buying
 - SKIP if: Bearish order flow OR smart money selling OR high risk metrics
+
+=== TRADING TARGETS ===
+Take Profit Target: +${takeProfitPercent}%
+Stop Loss Target: -${stopLossPercent}%
+
+=== ENTRY THRESHOLDS ===
+Price Change 5m Max: +20% (avoid buying local tops)
+Net Flow Min: $500 (buying pressure threshold)
   `;
 }

@@ -132,13 +132,15 @@ export function checkHardRules(
 export async function getManageDecision(
   position: Position,
   tokenData: TokenData, // Current market data
-  learnings: Learning[]
+  learnings: Learning[],
+  takeProfitPercent: number,
+  stopLossPercent: number
 ): Promise<AiManageDecision> {
   // NOTE: Hard rules (TP/SL) are checked in managing.ts BEFORE calling this function
   // This function focuses on AI-driven decisions based on market analysis
 
   // 1. Build user prompt
-  const userPrompt = buildUserPrompt(position, tokenData, learnings);
+  const userPrompt = buildUserPrompt(position, tokenData, learnings, takeProfitPercent, stopLossPercent);
 
   // 3. Call OpenRouter API
   try {
@@ -152,8 +154,8 @@ export async function getManageDecision(
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://github.com/trading-agent",
-        "X-Title": "Trenches Trading Agent"
+        "HTTP-Referer": "https://github.com/hyosadev-lab/tidal",
+        "X-Title": "TIDAL · Autonomous Trading Agent"
       },
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
@@ -233,7 +235,9 @@ function getFallbackDecision(tokenData: TokenData): AiManageDecision {
 function buildUserPrompt(
   position: Position,
   tokenData: TokenData,
-  learnings: Learning[]
+  learnings: Learning[],
+  takeProfitPercent: number,
+  stopLossPercent: number
 ): string {
   // Filter learnings: only show recent, relevant ones (max 3)
   const relevantLearnings = learnings
@@ -303,5 +307,9 @@ Top 10 Holder Rate: ${tokenData.top10HolderRate}
 
 RELEVANT LEARNINGS from previous trades:
 ${relevantLearnings || "None"}
+
+=== TRADING TARGETS ===
+Take Profit Target: +${takeProfitPercent}%
+Stop Loss Target: -${stopLossPercent}%
   `;
 }

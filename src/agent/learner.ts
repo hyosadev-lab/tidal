@@ -164,8 +164,8 @@ async function analyzeWithAI(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-          "HTTP-Referer": "https://github.com/trading-agent",
-          "X-Title": "Trenches Trading Agent",
+          "HTTP-Referer": "https://github.com/hyosadev-lab/tidal",
+          "X-Title": "TIDAL · Autonomous Trading Agent",
         },
         body: JSON.stringify({
           model: OPENROUTER_MODEL,

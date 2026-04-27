@@ -201,7 +201,7 @@ async function processPosition(position: Position): Promise<Position | null> {
       ctoFlag: tokenSecurity?.ctoFlag || false,
     };
 
-    const decision = await getManageDecision(position, tokenData, learnings);
+    const decision = await getManageDecision(position, tokenData, learnings, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT);
 
     if (decision.action === "SELL") {
       logger.info(

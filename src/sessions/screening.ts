@@ -27,6 +27,8 @@ const SCAN_INTERVAL_MS = SCAN_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
 const SOLD_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes cooldown
 const AMOUNT_SOL = parseFloat(process.env.AMOUNT_SOL || "0.1");
+const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "50");
+const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "30");
 
 // Track tokens currently being processed to prevent race conditions
 const pendingBuys = new Set<string>();
@@ -135,7 +137,7 @@ async function processCandidate(token: TokenData): Promise<void> {
     const learnings = await getLearnings();
 
     // AI Decision
-    const decision = await getBuySkipDecision(token, learnings);
+    const decision = await getBuySkipDecision(token, learnings, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT);
 
     logger.info(
       `Decision for ${token.symbol}: ${decision.action} (${decision.confidence}%) {${decision.reasoning}}`,
