@@ -2,9 +2,10 @@ import type { Trade, Learning } from "../storage/types";
 import { getTrades, saveLearnings, getLearnings } from "../storage/db";
 import { logger } from "../utils/logger";
 
+let lastLearningsCount = 0;
+
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
 const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
 const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 
@@ -77,12 +78,18 @@ export async function generateLearnings(): Promise<void> {
       (t) => t.orderStatus === "confirmed",
     );
 
-    if (confirmedTrades.length < 5) {
-      logger.info(
-        `Not enough trades for learning: ${confirmedTrades.length}/5`,
-      );
-      return;
-    }
+    // Generate learnings only when count increases by multiples of 5
+    // e.g., if last count was 0 and now 5, generate. If 5 and still 5, don't generate.
+    const currentCount = confirmedTrades.length;
+    const shouldGenerate =
+      currentCount > 0 &&
+      currentCount % 5 === 0 &&
+      currentCount > lastLearningsCount;
+
+    if (!shouldGenerate) return;
+
+    logger.info(`Generating learnings for ${currentCount} confirmed trades`);
+    lastLearningsCount = currentCount;
 
     // Get last 20 trades for analysis
     const recentTrades = confirmedTrades.slice(-20);

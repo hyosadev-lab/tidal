@@ -24,12 +24,8 @@ const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
 const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "30");
 const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "15");
-const TRAILING_STOP_PERCENT = parseInt(
-  process.env.TRAILING_STOP_PERCENT || "10",
-);
-const MANAGE_INTERVAL_MINUTES = parseFloat(
-  process.env.MANAGE_INTERVAL_MINUTES || "0.1667",
-);
+const TRAILING_STOP_PERCENT = parseInt(process.env.TRAILING_STOP_PERCENT || "10");
+const MANAGE_INTERVAL_MINUTES = parseFloat(process.env.MANAGE_INTERVAL_MINUTES || "0.1667");
 const MANAGE_INTERVAL_MS = MANAGE_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
 
@@ -56,8 +52,6 @@ export async function startManagingSession() {
   }, MANAGE_INTERVAL_MS);
 }
 
-let lastLearningsCount = 0;
-
 async function monitorPositions() {
   const positions = await getPositions();
 
@@ -83,23 +77,7 @@ async function monitorPositions() {
     await savePositions(updatedPositions);
   }
 
-  // Learn from recent trades periodically
-  const trades = await getTrades();
-  const confirmedTrades = trades.filter((t) => t.orderStatus === "confirmed");
-
-  // Generate learnings only when count increases by multiples of 5
-  // e.g., if last count was 0 and now 5, generate. If 5 and still 5, don't generate.
-  const currentCount = confirmedTrades.length;
-  const shouldGenerate =
-    currentCount > 0 &&
-    currentCount % 5 === 0 &&
-    currentCount > lastLearningsCount;
-
-  if (shouldGenerate) {
-    logger.info(`Generating learnings for ${currentCount} confirmed trades`);
-    await generateLearnings();
-    lastLearningsCount = currentCount;
-  }
+  await generateLearnings();
 }
 
 async function processPosition(position: Position): Promise<Position | null> {
