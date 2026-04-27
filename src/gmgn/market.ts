@@ -169,124 +169,25 @@ export async function getOrderFlowSummary(
 export async function getTokenDetails(chain: string, address: string): Promise<TokenDetails> {
   try {
     const now = Math.floor(Date.now() / 1000);
-    const from1m = now - 1800; // 30 minutes ago
+    const from1m = now - 1800; // 30 minutes ago for context
 
-    // Parallel fetch: traders, 1m kline (remove 5m kline)
+    // Parallel fetch: traders, 1m kline
     const [tradersResult, kline1mResult] = await Promise.all([
-      fetchTopTraders(chain, address, "smart_degen", 50), // Fetch more traders for order flow
+      fetchTopTraders(chain, address, "smart_degen", 50),
       fetchKline(chain, address, "1m", from1m, now),
     ]);
 
     const traders = tradersResult?.list || [];
     const kline1mData = kline1mResult?.list || [];
 
-    // Format traders summary (top 10 for display)
-    const tradersSummary = traders.slice(0, 10).map((t: any) => {
-      const walletName = t.name || t.address.slice(0, 6);
-      const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
-      const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
-      const netflow = t.netflow_usd ? `$${Math.abs(t.netflow_usd).toFixed(2)}` : "";
-      const tags = t.tags && t.tags.length > 0 ? `[${t.tags.join(",")}]` : "";
+    // Calculate Order Flow (reuse traders data)
+    const orderFlowSummary = calculateOrderFlow(traders);
 
-      return `${walletName}: ${side} ${netflow} (Val: $${value}) ${tags}`;
-    }).join("\n");
+    // Process K-line Data
+    const { kline1mSummary, currentPrice, volume5m, priceChange5m, volumeDeltas1m } = processKlineData(kline1mData);
 
-    // Calculate order flow summary from fetched traders (reuse data, no extra API call)
-    let totalBuyVolume = 0;
-    let totalSellVolume = 0;
-    let smartMoneyNetFlow = 0;
-    let smartMoneyBuyCount = 0;
-    let smartMoneySellCount = 0;
-
-    traders.forEach((t: any) => {
-      const isSmartDegen = t.tags?.includes("smart_degen") || false;
-      const netflow = parseFloat(t.netflow_usd) || 0;
-
-      if (netflow > 0) {
-        totalBuyVolume += netflow;
-        if (isSmartDegen) {
-          smartMoneyBuyCount++;
-          smartMoneyNetFlow += netflow;
-        }
-      } else if (netflow < 0) {
-        totalSellVolume += Math.abs(netflow);
-        if (isSmartDegen) {
-          smartMoneySellCount++;
-          smartMoneyNetFlow += netflow;
-        }
-      }
-    });
-
-    const totalVolume = totalBuyVolume + totalSellVolume;
-    const netFlow = totalBuyVolume - totalSellVolume;
-    const buySellRatio = totalSellVolume > 0 ? totalBuyVolume / totalSellVolume : (totalBuyVolume > 0 ? 999 : 1);
-
-    let intensity: "bullish" | "bearish" | "neutral";
-    if (netFlow > totalVolume * 0.1) {
-      intensity = "bullish";
-    } else if (netFlow < -totalVolume * 0.1) {
-      intensity = "bearish";
-    } else {
-      intensity = "neutral";
-    }
-
-    const orderFlowSummary = {
-      buyVolume: totalBuyVolume,
-      sellVolume: totalSellVolume,
-      netFlowUsd: netFlow,
-      buySellRatio,
-      intensity,
-      smartMoneyNetFlow,
-      smartMoneyBuyCount,
-      smartMoneySellCount,
-    };
-
-    // Format kline summaries
-    const kline1mSummary = kline1mData.map((candle: any) => {
-      return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
-    }).join("\n");
-
-    // Parse current price from last 1m candle
-    let currentPrice = 0;
-    if (kline1mData.length > 0) {
-      const lastCandle = kline1mData[kline1mData.length - 1];
-      currentPrice = parseFloat(lastCandle.close) || 0;
-    }
-
-    // Calculate volume 5m and price change 5m from last 5 candles of 1m data
-    let volume5m = 0;
-    let priceChange5m = 0;
-
-    const last5Candles = kline1mData.slice(-5);
-    if (last5Candles.length >= 2) {
-      const firstCandle = last5Candles[0];
-      const lastCandle = last5Candles[last5Candles.length - 1];
-
-      if (firstCandle && lastCandle) {
-        // Calculate volume 5m
-        volume5m = last5Candles.reduce((sum: number, candle: any) =>
-          sum + (parseFloat(candle.volume) || 0), 0);
-
-        // Calculate price change 5m
-        const firstClose = parseFloat(firstCandle.close) || 0;
-        const lastClose = parseFloat(lastCandle.close) || 0;
-        if (firstClose > 0) {
-          priceChange5m = ((lastClose - firstClose) / firstClose) * 100;
-        }
-      }
-    }
-
-    // Convert kline objects to number arrays for volume delta calculation
-    const kline1mArray = kline1mData.map((candle: any) => [
-      parseFloat(candle.open) || 0,
-      parseFloat(candle.high) || 0,
-      parseFloat(candle.low) || 0,
-      parseFloat(candle.close) || 0,
-      parseFloat(candle.volume) || 0,
-    ]);
-
-    // Calculate volume deltas (only 1m needed)
-    const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
+    // Process Traders Summary
+    const tradersSummary = formatTradersSummary(traders);
 
     return {
       kline1mData: kline1mSummary,
@@ -318,4 +219,118 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       volumeDeltas1m: "",
     };
   }
+}
+
+function calculateOrderFlow(traders: any[]): OrderFlowSummary {
+  let totalBuyVolume = 0;
+  let totalSellVolume = 0;
+  let smartMoneyNetFlow = 0;
+  let smartMoneyBuyCount = 0;
+  let smartMoneySellCount = 0;
+
+  traders.forEach((t: any) => {
+    const isSmartDegen = t.tags?.includes("smart_degen") || false;
+    const netflow = parseFloat(t.netflow_usd) || 0;
+
+    if (netflow > 0) {
+      totalBuyVolume += netflow;
+      if (isSmartDegen) {
+        smartMoneyBuyCount++;
+        smartMoneyNetFlow += netflow;
+      }
+    } else if (netflow < 0) {
+      totalSellVolume += Math.abs(netflow);
+      if (isSmartDegen) {
+        smartMoneySellCount++;
+        smartMoneyNetFlow += netflow;
+      }
+    }
+  });
+
+  const totalVolume = totalBuyVolume + totalSellVolume;
+  const netFlow = totalBuyVolume - totalSellVolume;
+  const buySellRatio = totalSellVolume > 0 ? totalBuyVolume / totalSellVolume : (totalBuyVolume > 0 ? 999 : 1);
+
+  let intensity: "bullish" | "bearish" | "neutral";
+  if (netFlow > totalVolume * 0.1) {
+    intensity = "bullish";
+  } else if (netFlow < -totalVolume * 0.1) {
+    intensity = "bearish";
+  } else {
+    intensity = "neutral";
+  }
+
+  return {
+    buyVolume: totalBuyVolume,
+    sellVolume: totalSellVolume,
+    netFlowUsd: netFlow,
+    buySellRatio,
+    intensity,
+    smartMoneyNetFlow,
+    smartMoneyBuyCount,
+    smartMoneySellCount,
+  };
+}
+
+function processKlineData(kline1mData: any[]) {
+  // Format kline summaries
+  const kline1mSummary = kline1mData.map((candle: any) => {
+    return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
+  }).join("\n");
+
+  // Parse current price from last 1m candle
+  let currentPrice = 0;
+  if (kline1mData.length > 0) {
+    const lastCandle = kline1mData[kline1mData.length - 1];
+    currentPrice = parseFloat(lastCandle.close) || 0;
+  }
+
+  // Calculate volume 5m and price change 5m from last 5 candles of 1m data
+  let volume5m = 0;
+  let priceChange5m = 0;
+
+  const last5Candles = kline1mData.slice(-5);
+  if (last5Candles.length >= 2) {
+    const firstCandle = last5Candles[0];
+    const lastCandle = last5Candles[last5Candles.length - 1];
+
+    if (firstCandle && lastCandle) {
+      // Calculate volume 5m
+      volume5m = last5Candles.reduce((sum: number, candle: any) =>
+        sum + (parseFloat(candle.volume) || 0), 0);
+
+      // Calculate price change 5m
+      const firstClose = parseFloat(firstCandle.close) || 0;
+      const lastClose = parseFloat(lastCandle.close) || 0;
+      if (firstClose > 0) {
+        priceChange5m = ((lastClose - firstClose) / firstClose) * 100;
+      }
+    }
+  }
+
+  // Convert kline objects to number arrays for volume delta calculation
+  const kline1mArray = kline1mData.map((candle: any) => [
+    parseFloat(candle.open) || 0,
+    parseFloat(candle.high) || 0,
+    parseFloat(candle.low) || 0,
+    parseFloat(candle.close) || 0,
+    parseFloat(candle.volume) || 0,
+  ]);
+
+  // Calculate volume deltas (only 1m needed)
+  const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
+
+  return { kline1mSummary, currentPrice, volume5m, priceChange5m, volumeDeltas1m };
+}
+
+function formatTradersSummary(traders: any[]): string {
+  return traders.slice(0, 10).map((t: any) => {
+    const walletName = t.name || t.address.slice(0, 6);
+    const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
+    const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
+    const netflow = t.netflow_usd ? `$${Math.abs(t.netflow_usd).toFixed(2)}` : "";
+    const tags = t.tags && t.tags.length > 0 ? `[${t.tags.join(",")}]` : "";
+
+    return `${walletName}: ${side} ${netflow} (Val: $${value}) ${tags}`;
+  }).join("\n");
 }
