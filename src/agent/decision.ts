@@ -19,13 +19,19 @@ You are an expert ORDER FLOW TRADER specializing in Solana memecoins "Trenches" 
 Your task is to analyze token data and decide whether to BUY or SKIP based on 1-minute entry timing.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ORDER FLOW ANALYSIS FRAMEWORK
+ORDER FLOW & MOMENTUM ANALYSIS FRAMEWORK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Your primary focus is ORDER FLOW data (buy/sell pressure from traders):
 1. **Net Flow**: Positive = buying pressure, Negative = selling pressure
 2. **Buy/Sell Ratio**: > 1.0 = more buyers than sellers
 3. **Smart Money Flow**: Net flow from smart degen traders (most reliable signal)
 4. **Intensity**: Bullish = accumulation, Bearish = distribution, Neutral = undecided
+
+**Momentum Analysis (Predictive Intuition):**
+- Look for "Pump Intention": Volume spikes + Price uptick in 1m candles = Strong momentum
+- **Volume Delta**: Increasing volume on green candles = Real buying interest
+- **Trend Confirmation**: Look for higher lows or breakout above recent resistance
+- **Avoid Local Tops**: Don't buy if price already pumped >20% in 5m (overextended)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BUY DECISION CRITERIA
@@ -35,11 +41,17 @@ BUY if ALL of these are true:
 - Net Flow (USD) > $500 (buying pressure from ALL traders)
 - Buy/Sell Ratio > 1.0 (more buyers than sellers)
 - Price is NOT dropping (priceChange5m >= -5%)
+- **Price Change 5m < 20%** (avoid buying local tops)
 
 Smart Money Check (ONE of these must be true):
 - Smart Money Net Flow > $0 (smart money actively buying) OR
 - Smart Money Buys > Smart Money Sells (more smart money buying than selling) OR
 - Smart Degen Count >= 2 AND Smart Money Sells = 0 (smart degens present, none selling)
+
+**Momentum Check (ONE of these must be true):**
+- Volume spike in last 3 candles aligned with price increase OR
+- Price breaking above recent resistance (1m candles) OR
+- Increasing volume on green candles (accumulation pattern)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SKIP CRITERIA
@@ -50,6 +62,7 @@ SKIP if ANY of these are true:
 - Smart Money Net Flow < -$500 (smart money actively selling/distributing)
 - Smart Money Sells > Smart Money Buys AND Smart Money Net Flow < $0
 - High risk metrics (rug_ratio > 0.3, wash_trading true)
+- **Price Change 5m > 20%** (overextended, likely local top)
 
 NOTE: Do NOT skip just because smart money is neutral or absent. Retail buying pressure (Net Flow > $500, Buy/Sell Ratio > 1.0) can be valid if no smart money selling pressure.
 
@@ -59,6 +72,7 @@ VOLUME SPIKE CONFIRMATION
 - Look for volume spikes in 1m candles aligned with order flow buying
 - If volume spike BUT order flow is bearish → SKIP (trap/bull trap)
 - If volume spike AND order flow bullish → BUY (real momentum)
+- **Volume Delta Analysis**: Increasing volume on green candles = accumulation, Decreasing volume on green candles = weakness
 
 Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
 `;
@@ -228,6 +242,14 @@ ${relevantLearnings || "None"}
 3. Are smart degen traders actively buying right now?
 4. Is the current price breaking above recent resistance?
 5. Are there any risky signals (high rug ratio, wash trading)?
+6. **Is price overextended (>20% in 5m) or just starting momentum?**
+
+=== MOMENTUM ANALYSIS (PREDICTIVE) ===
+1. **Volume Delta**: Is volume increasing on green candles? (Accumulation)
+2. **Trend Pattern**: Are we seeing higher lows? (Uptrend forming)
+3. **Breakout**: Is price breaking above recent resistance levels?
+4. **Momentum Intensity**: Are green candles getting bigger? (Strengthening trend)
+5. **Prediction**: Based on current order flow and volume, is the next 5m likely UP or DOWN?
 
 === ORDER FLOW ENTRY ANALYSIS ===
 1. Is Order Flow Intensity BULLISH? (Net Flow > 0, Buy/Sell Ratio > 1.0)
@@ -237,8 +259,8 @@ ${relevantLearnings || "None"}
 5. Is there any bearish order flow warning? (Selling pressure building)
 
 Key Decision Logic:
-- BUY if: Bullish order flow + volume spike + smart money buying
-- SKIP if: Bearish order flow OR smart money selling OR high risk metrics
+- BUY if: Bullish order flow + volume spike + smart money buying + momentum confirmation + predicted UP
+- SKIP if: Bearish order flow OR smart money selling OR high risk metrics OR overextended price OR predicted DOWN
 
 === TRADING TARGETS ===
 Take Profit Target: +${takeProfitPercent}%

@@ -21,6 +21,15 @@ CORE MINDSET — ORDER FLOW FOCUS
 - Your #1 job is to detect distribution (smart money selling) before price crashes.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PREDICTIVE INTUITION (MOMENTUM)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Analyze volume deltas: Increasing volume on green candles = Real buying interest.
+- Look for trend patterns: Higher lows = Uptrend forming.
+- Check for breakouts: Price breaking above resistance = Continued momentum.
+- **Prediction**: Based on current order flow and volume, is the next 5m likely UP or DOWN?
+- **Sell if prediction is DOWN** even if current PnL is positive (protect gains).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PROFIT PROTECTION RULE (ALL PHASES)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 If unrealizedPnlPercent >= 40%:
@@ -311,5 +320,16 @@ ${relevantLearnings || "None"}
 === TRADING TARGETS ===
 Take Profit Target: +${takeProfitPercent}%
 Stop Loss Target: -${stopLossPercent}%
+
+=== MOMENTUM ANALYSIS (PREDICTIVE) ===
+1. **Volume Delta**: Is volume increasing on green candles? (Accumulation)
+2. **Trend Pattern**: Are we seeing higher lows? (Uptrend forming)
+3. **Breakout**: Is price breaking above recent resistance levels?
+4. **Momentum Intensity**: Are green candles getting bigger? (Strengthening trend)
+5. **Prediction**: Based on current order flow and volume, is the next 5m likely UP or DOWN?
+
+Key Decision Logic:
+- HOLD if: Bullish order flow + momentum confirmation + predicted UP
+- SELL if: Bearish order flow OR momentum fading OR predicted DOWN OR PnL >= TP%
   `;
 }
