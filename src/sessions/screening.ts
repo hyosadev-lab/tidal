@@ -263,6 +263,8 @@ async function executeBuyOrder({
       orderId: result.order_id,
       orderStatus: "pending",
       isDryRun: false,
+      aiReasoning,
+      signalsUsed,
     };
 
     const trades = await getTrades();
