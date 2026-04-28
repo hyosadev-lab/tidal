@@ -136,10 +136,30 @@ function buildUserPrompt(
   const relevantPatterns = learnings
     .flatMap(l =>
       l.patterns
-        .filter(p => (p.type === "entry" || p.type === "filter") && p.successRate >= 50)
+        .filter(p => (p.type === "entry" || p.type === "filter") && p.avgPnlPercent >= 10)
         .map(p => ({ ...p, createdAt: l.createdAt }))
     )
-    .sort((a, b) => b.createdAt - a.createdAt)
+    .sort((a, b) => {
+      // Calculate composite score based on recency, success rate, and avg pnl
+      const now = Date.now();
+
+      const maxAgeDays = 7;
+      const wRecency = 0.3;
+      const wSuccess = 0.3;
+      const wPnl = 0.4;
+
+      // Recency score: 0-100 (0 = older than 7 days, 100 = today)
+      const aDaysAgo = (now - (a.createdAt || 0)) / (1000 * 60 * 60 * 24);
+      const bDaysAgo = (now - (b.createdAt || 0)) / (1000 * 60 * 60 * 24);
+      const aRecency = Math.max(0, 100 - (aDaysAgo / maxAgeDays) * 100);
+      const bRecency = Math.max(0, 100 - (bDaysAgo / maxAgeDays) * 100);
+
+      // Weighted composite score: recency(30%) + successRate(30%) + avgPnl(40%)
+      const aScore = (aRecency * wRecency) + ((a.successRate || 0) * wSuccess) + ((a.avgPnlPercent || 0) * wPnl);
+      const bScore = (bRecency * wRecency) + ((b.successRate || 0) * wSuccess) + ((b.avgPnlPercent || 0) * wPnl);
+
+      return bScore - aScore;
+    })
     .slice(0, 3);
 
   const relevantLearnings = relevantPatterns
