@@ -1,7 +1,19 @@
 import { $ } from "bun";
 import { logger } from "../utils/logger";
 
+// Rate limiter: delay 500ms antar request
+let lastRequestTime = 0;
+const RATE_LIMIT_MS = 100;
+
 async function executeGmgnCommand<T>(args: string[]): Promise<T> {
+  // Enforce rate limit
+  const now = Date.now();
+  const timeSinceLast = now - lastRequestTime;
+  if (timeSinceLast < RATE_LIMIT_MS) {
+    await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_MS - timeSinceLast));
+  }
+  lastRequestTime = Date.now();
+
   logger.debug("Executing gmgn-cli command", { args });
 
   try {

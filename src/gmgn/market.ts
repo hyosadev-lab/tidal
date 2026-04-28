@@ -46,17 +46,13 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const now = Math.floor(Date.now() / 1000);
     const from1m = now - 1800; // 30 minutes ago for context
 
-    // Step 1: Fetch core data (info & security) in parallel (lightweight)
-    const [tokenInfo, tokenSecurity] = await Promise.all([
-      fetchTokenInfo(chain, address),
-      fetchTokenSecurity(chain, address),
-    ]);
+    // Step 1: Fetch core data (info & security) sequential with rate limit
+    const tokenInfo = await fetchTokenInfo(chain, address);
+    const tokenSecurity = await fetchTokenSecurity(chain, address);
 
-    // Step 2: Fetch market data (kline & traders) in parallel
-    const [tradersResult, kline1mResult] = await Promise.all([
-      fetchTopTraders(chain, address, "smart_degen", 50),
-      fetchKline(chain, address, "1m", from1m, now),
-    ]);
+    // Step 2: Fetch market data (kline & traders) sequential with rate limit
+    const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 50);
+    const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
 
     const traders = tradersResult?.list || [];
     const kline1mData = kline1mResult?.list || [];
