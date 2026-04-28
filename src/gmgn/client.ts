@@ -51,7 +51,12 @@ export async function fetchTrenches(chain: string) {
   if (process.env.GMGN_SORT_BY) args.push("--sort-by", process.env.GMGN_SORT_BY);
   if (process.env.GMGN_LIMIT) args.push("--limit", process.env.GMGN_LIMIT);
   if (process.env.GMGN_TYPE) args.push("--type", process.env.GMGN_TYPE);
-  if (process.env.GMGN_LAUNCHPAD_PLATFORM) args.push("--launchpad-platform", process.env.GMGN_LAUNCHPAD_PLATFORM);
+  if (process.env.GMGN_LAUNCHPAD_PLATFORM) {
+    const launchpadPlatform = process.env.GMGN_LAUNCHPAD_PLATFORM.split(",")
+    for (let i = 0; i < launchpadPlatform.length; i++) {
+      args.push("--launchpad-platform", launchpadPlatform[i]);
+    }
+  }
 
   // Apply server-side filters from environment variables
   if (process.env.GMGN_FILTER_PRESET) args.push("--filter-preset", process.env.GMGN_FILTER_PRESET);

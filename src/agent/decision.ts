@@ -160,7 +160,7 @@ function buildUserPrompt(
 
       return bScore - aScore;
     })
-    .slice(0, 3);
+    .slice(0, 5);
 
   const relevantLearnings = relevantPatterns
     .map(p => `• ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent || ""}% avg)`)
