@@ -133,15 +133,17 @@ function buildUserPrompt(
   takeProfitPercent: number,
   stopLossPercent: number
 ): string {
-  const relevantLearnings = learnings
-    .filter(l => {
-      if (l.pattern.type !== "entry" && l.pattern.type !== "filter") return false;
-      const ageDays = (Date.now() - l.createdAt) / (1000 * 60 * 60 * 24);
-      return ageDays <= 7;
-    })
+  const relevantPatterns = learnings
+    .flatMap(l =>
+      l.patterns
+        .filter(p => (p.type === "entry" || p.type === "filter") && p.successRate >= 50)
+        .map(p => ({ ...p, createdAt: l.createdAt }))
+    )
     .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 3)
-    .map(l => `• ${l.insight}`)
+    .slice(0, 3);
+
+  const relevantLearnings = relevantPatterns
+    .map(p => `• ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent || ""}% avg)`)
     .join("\n");
 
   // Pre-compute flags

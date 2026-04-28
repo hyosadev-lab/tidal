@@ -61,19 +61,26 @@ export interface Position {
   peakPriceTimestamp?: number;
 }
 
+export interface PatternAnalysis {
+  type: "entry" | "exit" | "risk" | "filter";
+  description: string;
+  successRate: number;
+  avgPnlPercent: number;
+  appliedCount: number;
+  successCount: number;
+}
+
+export interface LearningResponse {
+  patterns: PatternAnalysis[];
+  insights: string;
+}
+
 export interface Learning {
   id: string;
   createdAt: number;
   basedOnTradeIds: string[];
-  insight: string; // AI-generated insight
-  pattern: {
-    type: "entry" | "exit" | "filter" | "risk";
-    description: string;
-    successRate: number;
-    avgPnlPercent: number;
-    appliedCount: number; // berapa kali pattern ini dipakai
-    successCount: number; // berapa kali berhasil
-  };
+  patterns: PatternAnalysis[];
+  insights: string;
 }
 
 export interface Performance {

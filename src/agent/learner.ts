@@ -1,4 +1,4 @@
-import type { Trade, Learning } from "../storage/types";
+import type { Trade, Learning, LearningResponse, PatternAnalysis } from "../storage/types";
 import { getTrades, saveLearnings, getLearnings } from "../storage/db";
 import { logger } from "../utils/logger";
 
@@ -31,20 +31,6 @@ Respond ONLY in JSON:
   "insights": "1-2 sentences summary"
 }
 `;
-
-interface PatternAnalysis {
-  type: "entry" | "exit" | "risk" | "filter";
-  description: string;
-  successRate: number;
-  avgPnlPercent: number;
-  appliedCount: number;
-  successCount: number;
-}
-
-interface LearningResponse {
-  patterns: PatternAnalysis[];
-  insights: string;
-}
 
 /**
  * Generate new learning insights from recent trades
@@ -79,28 +65,21 @@ export async function generateLearnings(): Promise<void> {
     const stats = calculateStats(recentTrades);
 
     // Call OpenRouter for pattern analysis
-    const patterns = await analyzeWithAI(recentTrades, stats);
+    const aiResponse = await analyzeWithAI(recentTrades, stats);
 
-    if (patterns.length === 0) {
+    if (aiResponse.patterns.length === 0) {
       logger.warn("No patterns generated from AI analysis");
       return;
     }
 
-    // Convert to Learning format
-    const newLearnings: Learning[] = patterns.map((pattern, index) => ({
-      id: `learning_${Date.now()}_${index}`,
+    // Save raw AI response with metadata
+    const newLearnings: Learning[] = [{
+      id: `learning_${Date.now()}`,
       createdAt: Date.now(),
       basedOnTradeIds: recentTrades.slice(-5).map((t) => t.id),
-      insight: generateInsightText(pattern),
-      pattern: {
-        type: pattern.type,
-        description: pattern.description,
-        successRate: pattern.successRate,
-        avgPnlPercent: pattern.avgPnlPercent,
-        appliedCount: pattern.appliedCount,
-        successCount: pattern.successCount,
-      },
-    }));
+      patterns: aiResponse.patterns,
+      insights: aiResponse.insights
+    }];
 
     // Save learnings (append to existing, keep only recent 7 days)
     const allLearnings = await getLearnings();
@@ -114,11 +93,11 @@ export async function generateLearnings(): Promise<void> {
 
 
     logger.info(
-      `Generated ${newLearnings.length} new learning patterns from ${recentTrades.length} trades (total ${currentCount} confirmed trades)`,
+      `Generated ${aiResponse.patterns.length} new learning patterns from ${recentTrades.length} trades (total ${currentCount} confirmed trades)`,
     );
 
     // Log insights for review
-    const insightsSummary = patterns
+    const insightsSummary = aiResponse.patterns
       .map(
         (p) =>
           `[${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent}% avg PnL)`,
@@ -126,6 +105,7 @@ export async function generateLearnings(): Promise<void> {
       .join("\n");
 
     logger.info(`Learning Insights:\n${insightsSummary}`);
+    logger.info(`AI Insights Summary: ${aiResponse.insights}`);
   } catch (error) {
     logger.error("Error generating learnings", { error: String(error) });
   }
@@ -137,10 +117,10 @@ export async function generateLearnings(): Promise<void> {
 async function analyzeWithAI(
   trades: Trade[],
   stats: any,
-): Promise<PatternAnalysis[]> {
+): Promise<LearningResponse> {
   if (!OPENROUTER_API_KEY) {
     logger.warn("OPENROUTER_API_KEY not set, using fallback pattern analysis");
-    return fallbackPatternAnalysis(trades);
+    return { patterns: fallbackPatternAnalysis(trades), insights: "Fallback analysis" };
   }
 
   try {
@@ -175,7 +155,7 @@ async function analyzeWithAI(
         status: response.status,
         error: errorText,
       });
-      return fallbackPatternAnalysis(trades);
+      return { patterns: fallbackPatternAnalysis(trades), insights: "OpenRouter API error" };
     }
 
     const data = (await response.json()) as any;
@@ -183,14 +163,14 @@ async function analyzeWithAI(
 
     if (!content) {
       logger.error("Invalid OpenRouter response format", { data });
-      return fallbackPatternAnalysis(trades);
+      return { patterns: fallbackPatternAnalysis(trades), insights: "Invalid response format" };
     }
 
     const parsed = JSON.parse(content) as LearningResponse;
-    return parsed.patterns || [];
+    return { patterns: parsed.patterns || [], insights: parsed.insights || "No insights" };
   } catch (error) {
     logger.error("Error calling OpenRouter", { error: String(error) });
-    return fallbackPatternAnalysis(trades);
+    return { patterns: fallbackPatternAnalysis(trades), insights: "Error calling AI" };
   }
 }
 
@@ -389,25 +369,3 @@ function calculateAvgPnl(trades: Trade[]): number {
   return sum / sellTrades.length;
 }
 
-/**
- * Generate human-readable insight text from pattern
- */
-function generateInsightText(pattern: PatternAnalysis): string {
-  const successText =
-    pattern.successRate >= 60
-      ? "HIGH SUCCESS"
-      : pattern.successRate >= 40
-        ? "MODERATE"
-        : "LOW SUCCESS";
-
-  switch (pattern.type) {
-    case "entry":
-      return `[ENTRY] ${pattern.description} → ${successText} (${pattern.avgPnlPercent > 0 ? "+" : ""}${pattern.avgPnlPercent}% avg)`;
-    case "exit":
-      return `[EXIT] ${pattern.description} → ${successText} (avg ${pattern.avgPnlPercent > 0 ? "+" : ""}${pattern.avgPnlPercent}%)`;
-    case "risk":
-      return `[RISK] ${pattern.description} → AVOID (${pattern.successRate}% success, avg ${pattern.avgPnlPercent}%)`;
-    case "filter":
-      return `[FILTER] ${pattern.description} → ${successText} (${pattern.successRate}% success rate)`;
-  }
-}
