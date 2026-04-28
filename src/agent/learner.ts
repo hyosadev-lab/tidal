@@ -102,18 +102,16 @@ export async function generateLearnings(): Promise<void> {
       },
     }));
 
-    // Save learnings
-    await saveLearnings(newLearnings);
+    // Save learnings (append to existing, keep only recent 7 days)
+    const allLearnings = await getLearnings();
+    const combinedLearnings = [...allLearnings, ...newLearnings];
 
     // Cleanup old learnings (older than 7 days)
-    const allLearnings = await getLearnings();
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const recentLearnings = allLearnings.filter(l => l.createdAt > sevenDaysAgo);
+    const recentLearnings = combinedLearnings.filter(l => l.createdAt > sevenDaysAgo);
 
-    if (recentLearnings.length < allLearnings.length) {
-      await saveLearnings(recentLearnings);
-      logger.info(`Cleaned up ${allLearnings.length - recentLearnings.length} old learnings (older than 7 days)`);
-    }
+    await saveLearnings(recentLearnings);
+
 
     logger.info(
       `Generated ${newLearnings.length} new learning patterns from ${recentTrades.length} trades (total ${currentCount} confirmed trades)`,
