@@ -171,7 +171,7 @@ function buildUserPrompt(
   const isDip = token.priceChange5m < -5;
 
   // Last 7 candles 1m (lebih sedikit = lebih fokus)
-  const lastCandles1m = token.kline1mData.trim().split("\n").slice(-7).join("\n");
+  const lastCandles1m = token.kline1mData.trim().split("\n").slice(-10).join("\n");
 
   return `
 TOKEN: ${token.symbol} (${token.address})
@@ -193,7 +193,7 @@ Buys: ${token.orderFlowSummary.smartMoneyBuyCount} | Sells: ${token.orderFlowSum
 Degens: ${token.smartDegenCount}
 ${token.topTradersSummary}
 
-━━━ CANDLES 1M (last 7) ━━━
+━━━ CANDLES 1M (last 10) ━━━
 ${lastCandles1m}
 
 ${token.volumeDeltas1m}
