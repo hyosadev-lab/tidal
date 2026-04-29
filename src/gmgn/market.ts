@@ -226,7 +226,7 @@ function processKlineData(kline1mData: any[], realTimePrice: number) {
   ]);
 
   // Calculate volume deltas (only 1m needed)
-  const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 8);
+  const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 5);
 
   return { kline1mSummary, volume5m, priceChange5m, volumeDeltas1m };
 }

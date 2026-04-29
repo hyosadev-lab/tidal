@@ -167,7 +167,7 @@ function buildUserPrompt(
     .join("\n");
 
   // Pre-compute flags
-  const isOverextended = token.priceChange5m > 20;
+  const isOverextended = token.priceChange5m > 30;
   const isDip = token.priceChange5m < -5;
 
   // Last 7 candles 1m (lebih sedikit = lebih fokus)
