@@ -83,7 +83,7 @@ async function processPosition(position: Position): Promise<Position | null> {
     // 1. Fetch all token data in single call (price, kline, security, order flow)
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
     const currentPrice = details.price;
-    const priceChange5m = details.priceChange5m;
+    const priceChange1h = details.priceChange1h;
 
     // Update position PnL
     position.currentPrice = currentPrice;
@@ -160,15 +160,15 @@ async function processPosition(position: Position): Promise<Position | null> {
       symbol: position.tokenSymbol,
       name: position.tokenName,
       price: currentPrice,
-      priceChange5m: priceChange5m,
+      priceChange1h: priceChange1h,
       usdMarketCap: details.usdMarketCap || position.currentMarketCap || 0,
-      kline1mData: details.kline1mData,
+      kline5mData: details.kline5mData,
       topTradersSummary: details.topTradersSummary,
       orderFlowSummary: details.orderFlowSummary,
       // Data from token details (all in one call)
       liquidity: details.liquidity || 0,
-      volume5m: details.volume5m,
-      volumeDeltas1m: details.volumeDeltas1m,
+      volume1h: details.volume1h,
+      volumeDeltas5m: details.volumeDeltas5m,
       holderCount: details.holderCount || 0,
       smartDegenCount: details.smartDegenCount || 0,
       renownedCount: details.renownedCount || 0,

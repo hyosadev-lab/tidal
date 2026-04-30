@@ -167,19 +167,18 @@ function buildUserPrompt(
     .join("\n");
 
   // Pre-compute flags
-  const isOverextended = token.priceChange5m > 30;
-  const isDip = token.priceChange5m < -5;
+  const isOverextended = token.priceChange1h > 30;
+  const isDip = token.priceChange1h < -10;
 
-  // Last 7 candles 1m (lebih sedikit = lebih fokus)
-  const lastCandles1m = token.kline1mData.trim().split("\n").slice(-10).join("\n");
+  const lastCandles5m = token.kline5mData.trim().split("\n").slice(-12).join("\n");
 
   return `
 TOKEN: ${token.symbol} (${token.address})
 
-━━━ PRICE & VOLUME (1m focus) ━━━
+━━━ PRICE & VOLUME (1h metrics) ━━━
 Price: $${token.price.toFixed(8)}
-5m Change: ${token.priceChange5m.toFixed(2)}%${isOverextended ? " ⚠ OVEREXTENDED" : isDip ? " ▼ DIP" : ""}
-5m Volume: $${token.volume5m.toFixed(0)}
+1h Change: ${token.priceChange1h.toFixed(2)}%${isOverextended ? " ⚠ OVEREXTENDED" : isDip ? " ▼ DIP" : ""}
+1h Volume: $${token.volume1h.toFixed(0)}
 
 ━━━ ORDER FLOW (CORE SIGNAL) ━━━
 Intensity: ${token.orderFlowSummary.intensity.toUpperCase()}
@@ -193,10 +192,10 @@ Buys: ${token.orderFlowSummary.smartMoneyBuyCount} | Sells: ${token.orderFlowSum
 Degens: ${token.smartDegenCount}
 ${token.topTradersSummary}
 
-━━━ CANDLES 1M (last 10) ━━━
-${lastCandles1m}
+━━━ CANDLES 5M (last 12) ━━━
+${lastCandles5m}
 
-${token.volumeDeltas1m}
+${token.volumeDeltas5m}
 
 ━━━ RISK (FAST FILTER) ━━━
 Rug: ${token.rugRatio.toFixed(3)} | Wash: ${token.isWashTrading} | Creator: ${token.creatorTokenStatus}

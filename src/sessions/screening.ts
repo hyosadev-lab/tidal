@@ -123,13 +123,13 @@ async function processCandidate(token: TokenData): Promise<void> {
   try {
     // Fetch detailed data (kline, top traders, price, order flow)
     const details = await getTokenDetails(CHAIN, token.address);
-    token.kline1mData = details.kline1mData;
+    token.kline5mData = details.kline5mData;
     token.topTradersSummary = details.topTradersSummary;
     token.orderFlowSummary = details.orderFlowSummary;
     token.price = details.price;
-    token.priceChange5m = details.priceChange5m;
-    token.volume5m = details.volume5m;
-    token.volumeDeltas1m = details.volumeDeltas1m;
+    token.priceChange1h = details.priceChange1h;
+    token.volume1h = details.volume1h;
+    token.volumeDeltas5m = details.volumeDeltas5m;
 
     // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();

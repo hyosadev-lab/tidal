@@ -13,13 +13,13 @@ export interface OrderFlowSummary {
 }
 
 export interface TokenDetails {
-  kline1mData: string;
+  kline5mData: string;
   topTradersSummary: string;
   orderFlowSummary: OrderFlowSummary;
   price: number;
-  priceChange5m: number;
-  volume5m: number;
-  volumeDeltas1m: string;
+  priceChange1h: number;
+  volume1h: number;
+  volumeDeltas5m: string;
   // Token Info fields (real-time data)
   liquidity: number;
   holderCount: number;
@@ -44,7 +44,7 @@ export interface TokenDetails {
 export async function getTokenDetails(chain: string, address: string): Promise<TokenDetails> {
   try {
     const now = Math.floor(Date.now() / 1000);
-    const from1m = now - 1800; // 30 minutes ago for context
+    const from5m = now - 4500; // 1 hour 15 minutes ago for ~15 candles of 5m data
 
     // Step 1: Fetch core data (info & security) sequential with rate limit
     const tokenInfo = await fetchTokenInfo(chain, address);
@@ -52,10 +52,10 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
 
     // Step 2: Fetch market data (kline & traders) sequential with rate limit
     const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 50);
-    const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
+    const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
 
     const traders = tradersResult?.list || [];
-    const kline1mData = kline1mResult?.list || [];
+    const kline5mData = kline5mResult?.list || [];
 
     // Calculate Order Flow (reuse traders data)
     const orderFlowSummary = calculateOrderFlow(traders);
@@ -64,19 +64,19 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const currentPrice = parseFloat(tokenInfo.price) || 0;
 
     // Process K-line Data for volume and price change analysis only
-    const { kline1mSummary, volume5m, priceChange5m, volumeDeltas1m } = processKlineData(kline1mData, currentPrice);
+    const { kline5mSummary, volume1h, priceChange1h, volumeDeltas5m } = processKlineData(kline5mData, currentPrice);
 
     // Process Traders Summary
     const tradersSummary = formatTradersSummary(traders);
 
     return {
-      kline1mData: kline1mSummary,
+      kline5mData: kline5mSummary,
       topTradersSummary: tradersSummary,
       orderFlowSummary,
       price: currentPrice,
-      priceChange5m: priceChange5m,
-      volume5m: volume5m,
-      volumeDeltas1m: volumeDeltas1m,
+      priceChange1h: priceChange1h,
+      volume1h: volume1h,
+      volumeDeltas5m: volumeDeltas5m,
       // Token Info fields
       liquidity: parseFloat(tokenInfo.liquidity) || 0,
       holderCount: tokenInfo.holder_count || 0,
@@ -100,7 +100,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
   } catch (error) {
     console.error("Error fetching token details:", error);
     return {
-      kline1mData: "",
+      kline5mData: "",
       topTradersSummary: "",
       orderFlowSummary: {
         buyVolume: 0,
@@ -113,9 +113,9 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
         smartMoneySellCount: 0,
       },
       price: 0,
-      priceChange5m: 0,
-      volume5m: 0,
-      volumeDeltas1m: "",
+      priceChange1h: 0,
+      volume1h: 0,
+      volumeDeltas5m: "",
       liquidity: 0,
       holderCount: 0,
       smartDegenCount: 0,
@@ -188,36 +188,37 @@ function calculateOrderFlow(traders: any[]): OrderFlowSummary {
   };
 }
 
-function processKlineData(kline1mData: any[], realTimePrice: number) {
-  // Format kline summaries
-  const kline1mSummary = kline1mData.map((candle: any) => {
-    return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`;
+function processKlineData(kline5mData: any[], realTimePrice: number) {
+  // Format kline summaries with LATEST marker on last candle
+  const kline5mSummary = kline5mData.map((candle: any, index: number) => {
+    const isLatest = index === kline5mData.length - 1;
+    return `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}${isLatest ? " ← LATEST" : ""}`;
   }).join("\n");
 
-  // Calculate volume 5m and price change 5m from last 5 candles of 1m data
-  let volume5m = 0;
-  let priceChange5m = 0;
+  // Calculate volume 1h and price change 1h from last 12 candles of 5m data (1 hour)
+  let volume1h = 0;
+  let priceChange1h = 0;
 
-  const last5Candles = kline1mData.slice(-5);
-  if (last5Candles.length >= 2) {
-    const firstCandle = last5Candles[0];
-    const lastCandle = last5Candles[last5Candles.length - 1];
+  const last12Candles = kline5mData.slice(-12);
+  if (last12Candles.length >= 2) {
+    const firstCandle = last12Candles[0];
+    const lastCandle = last12Candles[last12Candles.length - 1];
 
     if (firstCandle && lastCandle) {
-      // Calculate volume 5m
-      volume5m = last5Candles.reduce((sum: number, candle: any) =>
+      // Calculate volume 1h (sum of last 12 candles = 1 hour)
+      volume1h = last12Candles.reduce((sum: number, candle: any) =>
         sum + (parseFloat(candle.volume) || 0), 0);
 
-      // Calculate price change 5m based on first candle close vs REAL-TIME price
+      // Calculate price change 1h based on first candle close vs REAL-TIME price
       const firstClose = parseFloat(firstCandle.close) || 0;
       if (firstClose > 0 && realTimePrice > 0) {
-        priceChange5m = ((realTimePrice - firstClose) / firstClose) * 100;
+        priceChange1h = ((realTimePrice - firstClose) / firstClose) * 100;
       }
     }
   }
 
   // Convert kline objects to number arrays for volume delta calculation
-  const kline1mArray = kline1mData.map((candle: any) => [
+  const kline5mArray = kline5mData.map((candle: any) => [
     parseFloat(candle.open) || 0,
     parseFloat(candle.high) || 0,
     parseFloat(candle.low) || 0,
@@ -225,10 +226,10 @@ function processKlineData(kline1mData: any[], realTimePrice: number) {
     parseFloat(candle.volume) || 0,
   ]);
 
-  // Calculate volume deltas (only 1m needed)
-  const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 10);
+  // Calculate volume deltas on 5m data (last 5 candles = 25 minutes)
+  const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 5);
 
-  return { kline1mSummary, volume5m, priceChange5m, volumeDeltas1m };
+  return { kline5mSummary, volume1h, priceChange1h, volumeDeltas5m };
 }
 
 function formatTradersSummary(traders: any[]): string {

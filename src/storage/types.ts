@@ -141,12 +141,12 @@ export interface TokenData {
   usdMarketCap: number;
 
   // Enriched Fields from gmgn-cli market kline and gmgn-cli token traders
-  kline1mData: string;
+  kline5mData: string;
   price: number;
-  priceChange5m: number;
+  priceChange1h: number;
   topTradersSummary: string;
-  volume5m: number;
-  volumeDeltas1m: string;
+  volume1h: number;
+  volumeDeltas5m: string;
   orderFlowSummary: OrderFlowSummary;
 }
 

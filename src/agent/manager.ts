@@ -215,8 +215,8 @@ function buildUserPrompt(
        Math.max(tokenData.orderFlowSummary.smartMoneySellCount, 1)).toFixed(1)
     : "0";
 
-  // Last 7 candles 1m (lebih sedikit = lebih fokus)
-  const lastCandles1m = tokenData.kline1mData.trim().split("\n").slice(-10).join("\n");
+  // Last 12 candles 5m (1 hour of data)
+  const lastCandles5m = tokenData.kline5mData.trim().split("\n").slice(-12).join("\n");
 
   return `
 POSITION: ${position.tokenSymbol} | Phase: ${phase} | Holding: ${holdingMin}m
@@ -235,10 +235,10 @@ Buys: ${tokenData.orderFlowSummary.smartMoneyBuyCount} | Sells: ${tokenData.orde
 Degens: ${tokenData.smartDegenCount} (entry: ${position.smartDegenEntryCount ?? "N/A"})
 ${tokenData.topTradersSummary}
 
-━━━ CANDLES 1M (last 10) ━━━
-${lastCandles1m}
+━━━ CANDLES 5M (last 12) ━━━
+${lastCandles5m}
 
-${tokenData.volumeDeltas1m}
+${tokenData.volumeDeltas5m}
 
 ━━━ RISK ━━━
 Rug: ${tokenData.rugRatio} | WashTrading: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}
@@ -247,7 +247,7 @@ Rug: ${tokenData.rugRatio} | WashTrading: ${tokenData.isWashTrading} | Creator: 
 ${relevantLearnings || "None"}
 
 ━━━ TARGETS ━━━
-TP: +${takeProfitPercent}% | SL: -${stopLossPercent}% | 5m Change: ${tokenData.priceChange5m.toFixed(2)}%
+TP: +${takeProfitPercent}% | SL: -${stopLossPercent}% | 1h Change: ${tokenData.priceChange1h.toFixed(2)}%
 
 Analyze order flow. SELL if distribution detected. HOLD if momentum intact.`;
 }
