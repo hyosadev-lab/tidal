@@ -36,47 +36,13 @@ interface AiManageDecision {
   signals: string[];
 }
 
-export function checkHardRules(
-  position: Position,
-  takeProfitPercent: number,
-  stopLossPercent: number
-): "take_profit" | "stop_loss" | "invalid_price" | null {
-  // 1. Check for Invalid/Zero Prices (Critical Risk)
-  if (!position.currentPrice || position.currentPrice <= 0) {
-    logger.warn(`Invalid current price for ${position.tokenSymbol}: ${position.currentPrice}. Triggering sell.`);
-    return "invalid_price";
-  }
-
-  // 2. Check Take Profit / Stop Loss
-  if (position.unrealizedPnlPercent !== undefined && !isNaN(position.unrealizedPnlPercent)) {
-    if (position.unrealizedPnlPercent >= takeProfitPercent) {
-      return "take_profit";
-    }
-    if (position.unrealizedPnlPercent <= -stopLossPercent) {
-      return "stop_loss";
-    }
-  } else {
-    // If PnL is undefined/NaN, we can't calculate TP/SL safely.
-    // Treat as high risk to prevent holding invalid data.
-    logger.warn(`Invalid PnL for ${position.tokenSymbol}. Triggering sell.`);
-    return "invalid_price";
-  }
-
-  return null;
-}
-
 export async function getManageDecision(
   position: Position,
   tokenData: TokenData, // Current market data
-  learnings: Learning[],
-  takeProfitPercent: number,
-  stopLossPercent: number
+  learnings: Learning[]
 ): Promise<AiManageDecision> {
-  // NOTE: Hard rules (TP/SL) are checked in managing.ts BEFORE calling this function
-  // This function focuses on AI-driven decisions based on market analysis
-
   // 1. Build user prompt
-  const userPrompt = buildUserPrompt(position, tokenData, learnings, takeProfitPercent, stopLossPercent);
+  const userPrompt = buildUserPrompt(position, tokenData, learnings);
 
   // 3. Call OpenRouter API
   try {
@@ -171,9 +137,7 @@ function getFallbackDecision(tokenData: TokenData): AiManageDecision {
 function buildUserPrompt(
   position: Position,
   tokenData: TokenData,
-  learnings: Learning[],
-  takeProfitPercent: number,
-  stopLossPercent: number
+  learnings: Learning[]
 ): string {
   const relevantPatterns = learnings
     .flatMap(l =>
@@ -184,9 +148,9 @@ function buildUserPrompt(
     .sort((a, b) => {
       const now = Date.now();
       const maxAgeDays = 7;
-      const wRecency = 0.3;
-      const wSuccess = 0.3;
-      const wPnl = 0.4;
+      const wRecency = 0.2;
+      const wSuccess = 0.35;
+      const wPnl = 0.45;
 
       const aDaysAgo = (now - (a.createdAt || 0)) / (1000 * 60 * 60 * 24);
       const bDaysAgo = (now - (b.createdAt || 0)) / (1000 * 60 * 60 * 24);
@@ -246,8 +210,8 @@ Rug: ${tokenData.rugRatio} | WashTrading: ${tokenData.isWashTrading} | Creator: 
 ━━━ LEARNINGS ━━━
 ${relevantLearnings || "None"}
 
-━━━ TARGETS ━━━
-TP: +${takeProfitPercent}% | SL: -${stopLossPercent}% | 1h Change: ${tokenData.priceChange1h.toFixed(2)}%
+━━━ MARKET ━━━
+1h Change: ${tokenData.priceChange1h.toFixed(2)}%
 
 Analyze order flow. SELL if distribution detected. HOLD if momentum intact.`;
 }

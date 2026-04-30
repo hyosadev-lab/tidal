@@ -1,4 +1,4 @@
-import type { Trade, Position, Learning, Performance, SoldToken } from "./types";
+import type { Trade, Position, Learning, Performance, SoldToken, DecisionRecord } from "./types";
 
 const DATA_DIR = "data";
 
@@ -185,4 +185,43 @@ export async function addSoldToken(token: { address: string; symbol: string }): 
     soldAt: Date.now(),
   });
   await saveSoldTokens(soldTokens);
+}
+
+// Decisions
+export async function getDecisions(): Promise<DecisionRecord[]> {
+  return readJSON<DecisionRecord[]>("decisions.json", []);
+}
+
+export async function saveDecisions(decisions: DecisionRecord[]): Promise<void> {
+  await writeJSON("decisions.json", decisions);
+}
+
+export async function recordDecision(
+  decision: Omit<DecisionRecord, "id" | "timestamp">
+): Promise<DecisionRecord> {
+  const decisions = await getDecisions();
+  const newDecision: DecisionRecord = {
+    ...decision,
+    id: crypto.randomUUID(),
+    timestamp: Date.now(),
+  };
+  decisions.push(newDecision);
+  await saveDecisions(decisions);
+  return newDecision;
+}
+
+export async function updateDecisionOutcome(
+  decisionId: string,
+  outcome: DecisionRecord["outcome"],
+  outcomeDetails?: DecisionRecord["outcomeDetails"]
+): Promise<void> {
+  const decisions = await getDecisions();
+  const index = decisions.findIndex((d) => d.id === decisionId);
+  if (index !== -1) {
+    decisions[index]!.outcome = outcome;
+    if (outcomeDetails) {
+      decisions[index]!.outcomeDetails = outcomeDetails;
+    }
+    await saveDecisions(decisions);
+  }
 }

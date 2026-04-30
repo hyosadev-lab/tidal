@@ -1,5 +1,5 @@
-import type { Trade, Learning, LearningResponse, PatternAnalysis } from "../storage/types";
-import { getTrades, saveLearnings, getLearnings } from "../storage/db";
+import type { DecisionRecord, Trade, Learning, LearningResponse, PatternAnalysis } from "../storage/types";
+import { getDecisions, saveLearnings, getLearnings } from "../storage/db";
 import { logger } from "../utils/logger";
 
 let lastLearningsCount = 0;
@@ -38,16 +38,21 @@ Respond ONLY in JSON:
  */
 export async function generateLearnings(): Promise<void> {
   try {
-    const allTrades = await getTrades();
+    // Use decisions instead of trades for decision-based learning
+    const allDecisions = await getDecisions();
 
-    // Get only confirmed trades (completed)
-    const confirmedTrades = allTrades.filter(
-      (t) => t.orderStatus === "confirmed",
+    // Get only successful decisions (BUY/SELL with success outcome)
+    const successfulDecisions = allDecisions.filter(
+      (d) => d.outcome === "success",
+    );
+
+    // Get failed decisions for risk patterns
+    const failedDecisions = allDecisions.filter(
+      (d) => d.outcome === "failure",
     );
 
     // Generate learnings only when count increases by multiples of 10
-    // e.g., if last count was 0 and now 10, generate. If 10 and still 10, don't generate.
-    const currentCount = confirmedTrades.length;
+    const currentCount = successfulDecisions.length;
     const shouldGenerate =
       currentCount > 0 &&
       currentCount % 10 === 0 &&
@@ -55,17 +60,18 @@ export async function generateLearnings(): Promise<void> {
 
     if (!shouldGenerate) return;
 
-    logger.info(`Generating learnings for ${currentCount} confirmed trades`);
+    logger.info(`Generating learnings for ${currentCount} successful decisions`);
     lastLearningsCount = currentCount;
 
-    // Get last 20 trades for analysis
-    const recentTrades = confirmedTrades.slice(-20);
+    // Get last 20 successful decisions for analysis
+    const recentDecisions = successfulDecisions.slice(-20);
+    const recentFailures = failedDecisions.slice(-10);
 
     // Calculate statistics
-    const stats = calculateStats(recentTrades);
+    const stats = calculateStatsFromDecisions(recentDecisions, recentFailures);
 
     // Call OpenRouter for pattern analysis
-    const aiResponse = await analyzeWithAI(recentTrades, stats);
+    const aiResponse = await analyzeWithDecisionsAI(recentDecisions, stats);
 
     if (aiResponse.patterns.length === 0) {
       logger.warn("No patterns generated from AI analysis");
@@ -76,7 +82,7 @@ export async function generateLearnings(): Promise<void> {
     const newLearnings: Learning[] = [{
       id: `learning_${Date.now()}`,
       createdAt: Date.now(),
-      basedOnTradeIds: recentTrades.slice(-5).map((t) => t.id),
+      basedOnTradeIds: recentDecisions.slice(-5).map((d) => d.id),
       patterns: aiResponse.patterns,
       insights: aiResponse.insights
     }];
@@ -93,7 +99,7 @@ export async function generateLearnings(): Promise<void> {
 
 
     logger.info(
-      `Generated ${aiResponse.patterns.length} new learning patterns from ${recentTrades.length} trades (total ${currentCount} confirmed trades)`,
+      `Generated ${aiResponse.patterns.length} new learning patterns from ${recentDecisions.length} decisions (total ${currentCount} successful decisions)`,
     );
 
     // Log insights for review
@@ -112,12 +118,47 @@ export async function generateLearnings(): Promise<void> {
 }
 
 /**
- * Analyze trades and extract patterns
+ * Convert decisions to trade-like format for backward compatibility with existing analysis
  */
-async function analyzeWithAI(
-  trades: Trade[],
+function decisionsToTrades(decisions: DecisionRecord[]): Trade[] {
+  // Filter for BUY and SELL only, as HOLD/SKIP don't have trade execution data
+  const tradeDecisions = decisions.filter(d => d.decisionType === "BUY" || d.decisionType === "SELL");
+
+  return tradeDecisions.map((d) => ({
+    id: d.id,
+    tokenAddress: d.tokenAddress,
+    tokenSymbol: d.tokenSymbol,
+    tokenName: d.tokenSymbol, // Not available in decision
+    action: d.decisionType as "BUY" | "SELL",
+    inputAmount: "",
+    inputAmountSol: d.outcomeDetails?.pnlSol || 0,
+    outputAmount: "",
+    priceAtTrade: 0,
+    marketCapAtTrade: 0,
+    timestamp: d.timestamp,
+    orderId: d.outcomeDetails?.orderId || "",
+    orderStatus: (d.outcomeDetails?.orderStatus as "pending" | "confirmed" | "failed" | "expired") || "confirmed",
+    isDryRun: true,
+    entryPrice: 0,
+    exitPrice: 0,
+    pnlSol: d.outcomeDetails?.pnlSol,
+    pnlPercent: d.outcomeDetails?.pnlPercent,
+    holdingDurationMs: d.outcomeDetails?.holdingDurationMs,
+    exitReason: d.outcomeDetails?.exitReason,
+    aiReasoning: d.aiReasoning,
+    signalsUsed: d.signals,
+  }));
+}
+
+/**
+ * Analyze decisions and extract patterns
+ */
+async function analyzeWithDecisionsAI(
+  decisions: DecisionRecord[],
   stats: any,
 ): Promise<LearningResponse> {
+  const trades = decisionsToTrades(decisions);
+
   if (!OPENROUTER_API_KEY) {
     logger.warn("OPENROUTER_API_KEY not set, using fallback pattern analysis");
     return { patterns: fallbackPatternAnalysis(trades), insights: "Fallback analysis" };
@@ -172,6 +213,31 @@ async function analyzeWithAI(
     logger.error("Error calling OpenRouter", { error: String(error) });
     return { patterns: fallbackPatternAnalysis(trades), insights: "Error calling AI" };
   }
+}
+
+/**
+ * Calculate statistics from decisions
+ */
+function calculateStatsFromDecisions(successDecisions: DecisionRecord[], failDecisions: DecisionRecord[]) {
+  const totalTrades = successDecisions.length + failDecisions.length;
+  const wins = successDecisions.length;
+  const losses = failDecisions.length;
+  const winRate = totalTrades > 0 ? Math.round((wins / totalTrades) * 100) : 0;
+  const avgWinPercent = successDecisions.length > 0
+    ? successDecisions.reduce((sum, d) => sum + (d.outcomeDetails?.pnlPercent || 0), 0) / successDecisions.length
+    : 0;
+  const avgLossPercent = failDecisions.length > 0
+    ? failDecisions.reduce((sum, d) => sum + (d.outcomeDetails?.pnlPercent || 0), 0) / failDecisions.length
+    : 0;
+
+  return {
+    totalTrades,
+    wins,
+    losses,
+    winRate,
+    avgWinPercent,
+    avgLossPercent,
+  };
 }
 
 /**
@@ -299,12 +365,12 @@ function buildAnalysisPrompt(trades: Trade[], stats: any): string {
       const isWin = t.pnlPercent && t.pnlPercent > 0;
       const status = t.action === "SELL"
         ? (isWin ? "WIN" : "LOSS")
-        : "BUY";
+        : t.action === "BUY" ? "BUY" : "SKIP";
 
       return `
 [${status}] ${t.tokenSymbol}
 Action: ${t.action} | Status: ${t.orderStatus}
-Price: $${t.priceAtTrade.toFixed(8)} | MC: $${Math.round(t.marketCapAtTrade).toLocaleString()}
+Price: $${t.priceAtTrade?.toFixed(8) || "N/A"} | MC: $${Math.round(t.marketCapAtTrade || 0).toLocaleString()}
 ${t.action === "SELL" ? `Entry: $${t.entryPrice?.toFixed(8)} | Exit: $${t.exitPrice?.toFixed(8)}
 PnL: ${t.pnlPercent?.toFixed(2)}% (${t.pnlSol?.toFixed(4)} SOL)
 Hold: ${t.holdingDurationMs ? (t.holdingDurationMs / 60000).toFixed(1) + "m" : "N/A"}
@@ -315,45 +381,22 @@ AI Reasoning: ${t.aiReasoning || "N/A"}
     })
     .join("\n---\n");
 
+  // Handle different stats formats
+  const winRate = stats.winRate !== undefined ? stats.winRate : (stats.wins / (stats.wins + stats.losses)) * 100;
+  const avgPnl = stats.avgPnl !== undefined ? stats.avgPnl : 0;
+  const avgHolding = stats.avgHoldingMinutes !== undefined ? stats.avgHoldingMinutes : 0;
+
   return `
-Analyze these ${trades.length} completed trades and extract Order Flow patterns.
+Analyze these ${trades.length} completed decisions and extract Order Flow patterns.
 Focus on: smart money activity, buy/sell pressure, volume delta, and entry/exit timing.
 
 Stats:
-- Total: ${stats.totalTrades} | Win Rate: ${stats.winRate.toFixed(1)}% | Avg PnL: ${stats.avgPnl.toFixed(4)} SOL | Avg Hold: ${stats.avgHoldingMinutes.toFixed(1)}m
+- Total: ${stats.totalTrades} | Win Rate: ${winRate.toFixed(1)}% | Avg PnL: ${avgPnl.toFixed(4)} SOL | Avg Hold: ${avgHolding.toFixed(1)}m
 - Wins: ${stats.wins} | Losses: ${stats.losses}
 
-Trades:
+Decisions:
 ${tradeDetails}
 `;
-}
-
-/**
- * Calculate statistics from trades
- */
-function calculateStats(trades: Trade[]) {
-  const sellTrades = trades.filter((t) => t.action === "SELL");
-  const wins = sellTrades.filter((t) => t.pnlSol && t.pnlSol > 0);
-  const losses = sellTrades.filter((t) => t.pnlSol && t.pnlSol < 0);
-
-  const totalPnl = sellTrades.reduce((sum, t) => sum + (t.pnlSol || 0), 0);
-  const avgPnl = sellTrades.length > 0 ? totalPnl / sellTrades.length : 0;
-  const avgHolding =
-    sellTrades.length > 0
-      ? sellTrades.reduce((sum, t) => sum + (t.holdingDurationMs || 0), 0) /
-        sellTrades.length /
-        60000
-      : 0;
-
-  return {
-    totalTrades: trades.length,
-    winRate:
-      sellTrades.length > 0 ? (wins.length / sellTrades.length) * 100 : 0,
-    avgPnl: avgPnl,
-    avgHoldingMinutes: avgHolding,
-    wins: wins.length,
-    losses: losses.length,
-  };
 }
 
 /**

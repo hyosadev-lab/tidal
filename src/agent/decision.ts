@@ -46,12 +46,10 @@ interface AiDecision {
 
 export async function getBuySkipDecision(
   token: TokenData,
-  learnings: Learning[],
-  takeProfitPercent: number,
-  stopLossPercent: number
+  learnings: Learning[]
 ): Promise<AiDecision> {
   // Build user prompt
-  const userPrompt = buildUserPrompt(token, learnings, takeProfitPercent, stopLossPercent);
+  const userPrompt = buildUserPrompt(token, learnings);
 
   // Call OpenRouter API
   try {
@@ -129,9 +127,7 @@ function getFallbackDecision(token: TokenData): AiDecision {
 
 function buildUserPrompt(
   token: TokenData,
-  learnings: Learning[],
-  takeProfitPercent: number,
-  stopLossPercent: number
+  learnings: Learning[]
 ): string {
   const relevantPatterns = learnings
     .flatMap(l =>
@@ -144,9 +140,9 @@ function buildUserPrompt(
       const now = Date.now();
 
       const maxAgeDays = 7;
-      const wRecency = 0.3;
-      const wSuccess = 0.3;
-      const wPnl = 0.4;
+      const wRecency = 0.2;
+      const wSuccess = 0.35;
+      const wPnl = 0.45;
 
       // Recency score: 0-100 (0 = older than 7 days, 100 = today)
       const aDaysAgo = (now - (a.createdAt || 0)) / (1000 * 60 * 60 * 24);
@@ -202,8 +198,5 @@ Rug: ${token.rugRatio.toFixed(3)} | Wash: ${token.isWashTrading} | Creator: ${to
 
 ━━━ LEARNINGS ━━━
 ${relevantLearnings || "None"}
-
-━━━ TARGETS ━━━
-TP: +${takeProfitPercent}% | SL: -${stopLossPercent}%
 `;
 }

@@ -11,6 +11,8 @@ import {
   getSoldTokens,
   saveSoldTokens,
   updatePerformance,
+  recordDecision,
+  updateDecisionOutcome,
 } from "../storage/db";
 import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
@@ -24,8 +26,6 @@ const SCAN_INTERVAL_MINUTES = parseFloat(process.env.SCAN_INTERVAL_MINUTES || "0
 const SOLD_COOLDOWN_MINUTES = parseFloat(process.env.SOLD_COOLDOWN_MINUTES || "3");
 const DRY_RUN = process.env.DRY_RUN === "true";
 const AMOUNT_SOL = parseFloat(process.env.AMOUNT_SOL || "0.1");
-const TAKE_PROFIT_PERCENT = parseInt(process.env.TAKE_PROFIT_PERCENT || "50");
-const STOP_LOSS_PERCENT = parseInt(process.env.STOP_LOSS_PERCENT || "30");
 
 const SCAN_INTERVAL_MS = SCAN_INTERVAL_MINUTES * 60 * 1000;
 const SOLD_COOLDOWN_MS = SOLD_COOLDOWN_MINUTES * 60 * 1000;
@@ -135,11 +135,23 @@ async function processCandidate(token: TokenData): Promise<void> {
     const learnings = await getLearnings();
 
     // AI Decision
-    const decision = await getBuySkipDecision(token, learnings, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT);
+    const decision = await getBuySkipDecision(token, learnings);
 
     logger.info(
       `Decision for ${token.symbol}: ${decision.action} (${decision.confidence}%) {${decision.reasoning}}`,
     );
+
+    // Record decision
+    const decisionRecord = await recordDecision({
+      tokenAddress: token.address,
+      tokenSymbol: token.symbol,
+      decisionType: decision.action === "BUY" ? "BUY" : "SKIP",
+      confidence: decision.confidence,
+      reasoning: decision.reasoning,
+      signals: decision.signals,
+      outcome: "pending",
+      aiReasoning: decision.reasoning,
+    });
 
     if (decision.action === "BUY") {
       // Add to pending set to prevent duplicate buys in same scan cycle
@@ -148,6 +160,12 @@ async function processCandidate(token: TokenData): Promise<void> {
         token,
         aiReasoning: decision.reasoning,
         signalsUsed: decision.signals,
+        decisionId: decisionRecord.id,
+      });
+    } else {
+      // SKIP decision - update outcome immediately
+      await updateDecisionOutcome(decisionRecord.id, "skipped", {
+        exitReason: "skip_decision",
       });
     }
   } catch (error) {
@@ -161,10 +179,12 @@ async function executeBuyOrder({
   token,
   aiReasoning,
   signalsUsed,
+  decisionId,
 }: {
   token: TokenData;
   aiReasoning?: string;
   signalsUsed?: string[];
+  decisionId?: string;
 }) {
   if (!WALLET_ADDRESS) {
     logger.error("WALLET_ADDRESS not set, cannot execute buy");
@@ -231,6 +251,14 @@ async function executeBuyOrder({
 
     // Clean up pending set for dry run
     pendingBuys.delete(token.address);
+
+    // Update decision outcome to success
+    if (decisionId) {
+      await updateDecisionOutcome(decisionId, "success", {
+        orderId: trade.orderId,
+        orderStatus: "confirmed",
+      });
+    }
     return;
   }
 
@@ -272,7 +300,7 @@ async function executeBuyOrder({
     await saveTrades(trades);
 
     // Start polling for order confirmation in background
-    pollOrderConfirmation(trade, token);
+    pollOrderConfirmation(trade, token, decisionId);
   } catch (error) {
     logger.error(`Failed to execute buy for ${token.symbol}`, {
       error: String(error),
@@ -281,7 +309,7 @@ async function executeBuyOrder({
   }
 }
 
-async function pollOrderConfirmation(trade: Trade, token: TokenData) {
+async function pollOrderConfirmation(trade: Trade, token: TokenData, decisionId?: string) {
   const maxWaitTime = 60000; // 60 seconds
   const pollInterval = 3000; // Check every 3 seconds
   const startTime = Date.now();
@@ -338,6 +366,14 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
             logger.info(`Position created for ${token.symbol}`, {
               costSol: position.costSol,
             });
+
+            // Update decision outcome to success
+            if (decisionId) {
+              await updateDecisionOutcome(decisionId, "success", {
+                orderId: trade.orderId,
+                orderStatus: "confirmed",
+              });
+            }
           }
           return;
         } else if (
@@ -355,6 +391,14 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
           if (tradeIndex !== -1 && trades[tradeIndex]) {
             trades[tradeIndex]!.orderStatus = orderStatus.status;
             await saveTrades(trades);
+          }
+
+          // Update decision outcome to failure
+          if (decisionId) {
+            await updateDecisionOutcome(decisionId, "failure", {
+              orderId: trade.orderId,
+              orderStatus: orderStatus.status,
+            });
           }
           return;
         }
@@ -378,6 +422,14 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData) {
     if (tradeIndex !== -1 && trades[tradeIndex]) {
       trades[tradeIndex]!.orderStatus = "expired";
       await saveTrades(trades);
+    }
+
+    // Update decision outcome to failure (timeout)
+    if (decisionId) {
+      await updateDecisionOutcome(decisionId, "failure", {
+        orderId: trade.orderId,
+        orderStatus: "expired",
+      });
     }
   } finally {
     // Always remove from pending set when done

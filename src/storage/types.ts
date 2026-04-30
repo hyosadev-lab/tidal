@@ -25,14 +25,7 @@ export interface Trade {
   pnlSol?: number;
   pnlPercent?: number;
   holdingDurationMs?: number;
-  exitReason?:
-    | "take_profit"
-    | "stop_loss"
-    | "ai_decision"
-    | "manual"
-    | "max_holding_time"
-    | "invalid_price"
-    | "trailing_stop";
+  exitReason?: string;
 
   // AI context saat decision
   aiReasoning?: string;
@@ -81,6 +74,31 @@ export interface Learning {
   basedOnTradeIds: string[];
   patterns: PatternAnalysis[];
   insights: string;
+}
+
+export interface DecisionOutcomeDetails {
+  pnlSol?: number;
+  pnlPercent?: number;
+  exitReason?: string;
+  holdingDurationMs?: number;
+  orderId?: string;
+  orderStatus?: string;
+  txHash?: string;
+  error?: string;
+}
+
+export interface DecisionRecord {
+  id: string; // UUID
+  tokenAddress: string;
+  tokenSymbol: string;
+  decisionType: "BUY" | "SELL" | "HOLD" | "SKIP";
+  timestamp: number; // Unix ms
+  confidence: number; // 0-100
+  reasoning: string;
+  signals: string[];
+  outcome: "success" | "failure" | "pending" | "executed" | "skipped";
+  outcomeDetails?: DecisionOutcomeDetails;
+  aiReasoning?: string;
 }
 
 export interface Performance {
