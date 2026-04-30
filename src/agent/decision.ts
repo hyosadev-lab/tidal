@@ -1,5 +1,6 @@
 import type { TokenData, Learning } from "../storage/types";
 import { logger } from "../utils/logger";
+import { getRelevantPatterns } from "./learner";
 
 interface OpenRouterResponse {
   choices: {
@@ -129,42 +130,31 @@ function buildUserPrompt(
   token: TokenData,
   learnings: Learning[]
 ): string {
-  const relevantPatterns = learnings
-    .flatMap(l =>
-      l.patterns
-        .filter(p => (p.type === "entry" || p.type === "filter") && p.avgPnlPercent >= 10)
-        .map(p => ({ ...p, createdAt: l.createdAt }))
-    )
-    .sort((a, b) => {
-      // Calculate composite score based on recency, success rate, and avg pnl
-      const now = Date.now();
-
-      const maxAgeDays = 7;
-      const wRecency = 0.2;
-      const wSuccess = 0.35;
-      const wPnl = 0.45;
-
-      // Recency score: 0-100 (0 = older than 7 days, 100 = today)
-      const aDaysAgo = (now - (a.createdAt || 0)) / (1000 * 60 * 60 * 24);
-      const bDaysAgo = (now - (b.createdAt || 0)) / (1000 * 60 * 60 * 24);
-      const aRecency = Math.max(0, 100 - (aDaysAgo / maxAgeDays) * 100);
-      const bRecency = Math.max(0, 100 - (bDaysAgo / maxAgeDays) * 100);
-
-      // Weighted composite score: recency(30%) + successRate(30%) + avgPnl(40%)
-      const aScore = (aRecency * wRecency) + ((a.successRate || 0) * wSuccess) + ((a.avgPnlPercent || 0) * wPnl);
-      const bScore = (bRecency * wRecency) + ((b.successRate || 0) * wSuccess) + ((b.avgPnlPercent || 0) * wPnl);
-
-      return bScore - aScore;
-    })
-    .slice(0, 5);
+  // Use new pattern scoring system from learner.ts
+  const relevantPatterns = getRelevantPatterns(learnings, "BUY");
 
   const relevantLearnings = relevantPatterns
-    .map(p => `• ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent || ""}% avg)`)
+    .map(p => {
+      const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+      return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
+    })
     .join("\n");
 
-  // Pre-compute flags
-  const isOverextended = token.priceChange1h > 30;
-  const isDip = token.priceChange1h < -10;
+  // Get top patterns for quick reference
+  const topEntryPatterns = relevantPatterns
+    .filter(p => p.type === "entry" || p.type === "timing")
+    .slice(0, 3);
+
+  const topEntryPatternsText = topEntryPatterns.length > 0
+    ? topEntryPatterns.map(p => {
+        const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+        return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg)`;
+      }).join("\n")
+    : "None";
+
+  // Pre-compute flags (adjusted for 5m timeframe)
+  const isOverextended = token.priceChange1h > 50;
+  const isDip = token.priceChange1h < -20;
 
   const lastCandles5m = token.kline5mData.trim().split("\n").slice(-12).join("\n");
 
@@ -196,7 +186,10 @@ ${token.volumeDeltas5m}
 ━━━ RISK (FAST FILTER) ━━━
 Rug: ${token.rugRatio.toFixed(3)} | Wash: ${token.isWashTrading} | Creator: ${token.creatorTokenStatus}
 
-━━━ LEARNINGS ━━━
+━━━ TOP ENTRY PATTERNS ━━━
+${topEntryPatternsText}
+
+━━━ ALL LEARNINGS ━━━
 ${relevantLearnings || "None"}
 `;
 }

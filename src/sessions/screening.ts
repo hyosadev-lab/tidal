@@ -141,7 +141,7 @@ async function processCandidate(token: TokenData): Promise<void> {
       `Decision for ${token.symbol}: ${decision.action} (${decision.confidence}%) {${decision.reasoning}}`,
     );
 
-    // Record decision
+    // Record decision with rich context for learning
     const decisionRecord = await recordDecision({
       tokenAddress: token.address,
       tokenSymbol: token.symbol,
@@ -151,6 +151,15 @@ async function processCandidate(token: TokenData): Promise<void> {
       signals: decision.signals,
       outcome: "pending",
       aiReasoning: decision.reasoning,
+      context: {
+        priceAtTrade: token.price,
+        marketCapAtTrade: token.usdMarketCap,
+        orderFlowIntensity: token.orderFlowSummary?.intensity,
+        volume1h: token.volume1h,
+        smartDegenCount: token.smartDegenCount,
+        rugRatio: token.rugRatio,
+        liquidity: token.liquidity,
+      },
     });
 
     if (decision.action === "BUY") {

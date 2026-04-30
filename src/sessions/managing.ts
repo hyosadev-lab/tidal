@@ -141,7 +141,7 @@ async function processPosition(position: Position): Promise<Position | null> {
 
     const decision = await getManageDecision(position, tokenData, learnings);
 
-    // Record decision
+    // Record decision with rich context for learning
     const decisionRecord = await recordDecision({
       tokenAddress: position.tokenAddress,
       tokenSymbol: position.tokenSymbol,
@@ -151,6 +151,17 @@ async function processPosition(position: Position): Promise<Position | null> {
       signals: decision.signals,
       outcome: "pending",
       aiReasoning: decision.reasoning,
+      context: {
+        priceAtTrade: currentPrice,
+        marketCapAtTrade: details.usdMarketCap || position.currentMarketCap || 0,
+        orderFlowIntensity: details.orderFlowSummary?.intensity,
+        volume1h: details.volume1h,
+        smartDegenCount: details.smartDegenCount,
+        rugRatio: details.rugRatio,
+        liquidity: details.liquidity,
+        entryPrice: position.entryPrice,
+        exitPrice: currentPrice,
+      },
     });
 
     if (decision.action === "SELL") {

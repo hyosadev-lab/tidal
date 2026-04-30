@@ -1,5 +1,6 @@
 import type { Position, Learning, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
+import { getRelevantPatterns } from "./learner";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
@@ -139,33 +140,14 @@ function buildUserPrompt(
   tokenData: TokenData,
   learnings: Learning[]
 ): string {
-  const relevantPatterns = learnings
-    .flatMap(l =>
-      l.patterns
-        .filter(p => (p.type === "exit" || p.type === "risk") && p.avgPnlPercent >= 10)
-        .map(p => ({ ...p, createdAt: l.createdAt }))
-    )
-    .sort((a, b) => {
-      const now = Date.now();
-      const maxAgeDays = 7;
-      const wRecency = 0.2;
-      const wSuccess = 0.35;
-      const wPnl = 0.45;
-
-      const aDaysAgo = (now - (a.createdAt || 0)) / (1000 * 60 * 60 * 24);
-      const bDaysAgo = (now - (b.createdAt || 0)) / (1000 * 60 * 60 * 24);
-      const aRecency = Math.max(0, 100 - (aDaysAgo / maxAgeDays) * 100);
-      const bRecency = Math.max(0, 100 - (bDaysAgo / maxAgeDays) * 100);
-
-      const aScore = (aRecency * wRecency) + ((a.successRate || 0) * wSuccess) + ((a.avgPnlPercent || 0) * wPnl);
-      const bScore = (bRecency * wRecency) + ((b.successRate || 0) * wSuccess) + ((b.avgPnlPercent || 0) * wPnl);
-
-      return bScore - aScore;
-    })
-    .slice(0, 5);
+  // Use new pattern scoring system from learner.ts for SELL decisions
+  const relevantPatterns = getRelevantPatterns(learnings, "SELL");
 
   const relevantLearnings = relevantPatterns
-    .map(p => `• ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent || ""}% avg)`)
+    .map(p => {
+      const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+      return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
+    })
     .join("\n");
 
   const holdingMs = Date.now() - position.entryTimestamp;

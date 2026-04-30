@@ -1,8 +1,10 @@
-import type { DecisionRecord, Trade, Learning, LearningResponse, PatternAnalysis } from "../storage/types";
+import type { DecisionRecord, Learning, LearningResponse, PatternAnalysis, LearningScore } from "../storage/types";
 import { getDecisions, saveLearnings, getLearnings } from "../storage/db";
 import { logger } from "../utils/logger";
 
-let lastLearningsCount = 0;
+let lastLearningsTimestamp = 0;
+const LEARNING_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const MIN_DECISIONS_FOR_LEARNING = 5;
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-alpha";
@@ -12,63 +14,77 @@ const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 const SYSTEM_PROMPT = `
 You are a trading strategy analyst for Solana memecoin "Trenches" trading.
 
-Analyze completed trades and extract actionable patterns to improve future
-BUY/SKIP and HOLD/SELL decisions. Focus on Order Flow signals — smart money
-activity, buy/sell pressure, and volume delta.
+Analyze completed DECISIONS (not trades) and extract actionable patterns to improve future
+BUY/SKIP and HOLD/SELL decisions. Focus on:
+
+1. ORDER FLOW — smart money activity, buy/sell pressure, volume delta
+2. TIMING — entry/exit timing, dip buying, overextended sells
+3. RISK — rug ratio thresholds, wash trading signals, creator behavior
+4. VOLUME — volume spike patterns, momentum confirmation
+
+Each decision includes: decision type, confidence, reasoning, signals, and outcome.
 
 Respond ONLY in JSON:
 {
   "patterns": [
     {
-      "type": "entry" | "exit" | "risk" | "filter",
-      "description": "concise, actionable pattern",
+      "type": "entry" | "exit" | "risk" | "filter" | "timing" | "volume",
+      "description": "concise, actionable pattern with specific thresholds",
       "successRate": 0-100,
       "avgPnlPercent": number,
       "appliedCount": number,
-      "successCount": number
+      "successCount": number,
+      "examples": ["token_address1", "token_address2"]
     }
   ],
-  "insights": "1-2 sentences summary"
+  "insights": "1-3 sentences summary of key learnings"
 }
 `;
 
 /**
  * Generate new learning insights from recent trades
- * Called every 5 completed trades
+ * Triggered by: time interval (30min) OR minimum decisions threshold
  */
 export async function generateLearnings(): Promise<void> {
   try {
-    // Use decisions instead of trades for decision-based learning
     const allDecisions = await getDecisions();
 
-    // Get only successful decisions (BUY/SELL with success outcome)
-    const successfulDecisions = allDecisions.filter(
-      (d) => d.outcome === "success",
+    // Get only completed decisions (success/failure, not pending)
+    const completedDecisions = allDecisions.filter(
+      (d) => d.outcome === "success" || d.outcome === "failure",
     );
 
-    // Get failed decisions for risk patterns
-    const failedDecisions = allDecisions.filter(
-      (d) => d.outcome === "failure",
-    );
+    const successfulDecisions = completedDecisions.filter((d) => d.outcome === "success");
+    const failedDecisions = completedDecisions.filter((d) => d.outcome === "failure");
 
-    // Generate learnings only when count increases by multiples of 10
-    const currentCount = successfulDecisions.length;
-    const shouldGenerate =
-      currentCount > 0 &&
-      currentCount % 10 === 0 &&
-      currentCount > lastLearningsCount;
+    const now = Date.now();
+    const timeSinceLastLearnings = now - lastLearningsTimestamp;
 
-    if (!shouldGenerate) return;
+    // Trigger conditions: time-based OR threshold-based
+    const shouldGenerateByTime = timeSinceLastLearnings >= LEARNING_INTERVAL_MS;
+    const shouldGenerateByThreshold =
+      completedDecisions.length >= MIN_DECISIONS_FOR_LEARNING &&
+      completedDecisions.length > 0;
 
-    logger.info(`Generating learnings for ${currentCount} successful decisions`);
-    lastLearningsCount = currentCount;
+    if (!shouldGenerateByTime && !shouldGenerateByThreshold) {
+      return;
+    }
 
-    // Get last 20 successful decisions for analysis
-    const recentDecisions = successfulDecisions.slice(-20);
+    // Need enough data to generate meaningful patterns
+    if (successfulDecisions.length < 3 && failedDecisions.length < 2) {
+      logger.info(`Not enough decisions for learning: ${successfulDecisions.length} success, ${failedDecisions.length} failure`);
+      return;
+    }
+
+    logger.info(`Generating learnings: ${successfulDecisions.length} success, ${failedDecisions.length} failure decisions`);
+
+    // Get recent decisions for analysis (last 30 for richness)
+    const recentDecisions = completedDecisions.slice(-30);
+    const recentSuccess = successfulDecisions.slice(-20);
     const recentFailures = failedDecisions.slice(-10);
 
     // Calculate statistics
-    const stats = calculateStatsFromDecisions(recentDecisions, recentFailures);
+    const stats = calculateStatsFromDecisions(recentSuccess, recentFailures);
 
     // Call OpenRouter for pattern analysis
     const aiResponse = await analyzeWithDecisionsAI(recentDecisions, stats);
@@ -81,25 +97,25 @@ export async function generateLearnings(): Promise<void> {
     // Save raw AI response with metadata
     const newLearnings: Learning[] = [{
       id: `learning_${Date.now()}`,
-      createdAt: Date.now(),
-      basedOnTradeIds: recentDecisions.slice(-5).map((d) => d.id),
+      createdAt: now,
+      basedOnTradeIds: recentDecisions.slice(-10).map((d) => d.id),
       patterns: aiResponse.patterns,
       insights: aiResponse.insights
     }];
 
-    // Save learnings (append to existing, keep only recent 7 days)
+    // Save learnings with cleanup
     const allLearnings = await getLearnings();
     const combinedLearnings = [...allLearnings, ...newLearnings];
 
-    // Cleanup old learnings (older than 7 days)
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    // Cleanup: keep 7 days + consolidate similar patterns
+    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
     const recentLearnings = combinedLearnings.filter(l => l.createdAt > sevenDaysAgo);
 
     await saveLearnings(recentLearnings);
-
+    lastLearningsTimestamp = now;
 
     logger.info(
-      `Generated ${aiResponse.patterns.length} new learning patterns from ${recentDecisions.length} decisions (total ${currentCount} successful decisions)`,
+      `Generated ${aiResponse.patterns.length} new learning patterns from ${recentDecisions.length} decisions`,
     );
 
     // Log insights for review
@@ -111,43 +127,10 @@ export async function generateLearnings(): Promise<void> {
       .join("\n");
 
     logger.info(`Learning Insights:\n${insightsSummary}`);
-    logger.info(`AI Insights Summary: ${aiResponse.insights}`);
+    logger.info(`AI Summary: ${aiResponse.insights}`);
   } catch (error) {
     logger.error("Error generating learnings", { error: String(error) });
   }
-}
-
-/**
- * Convert decisions to trade-like format for backward compatibility with existing analysis
- */
-function decisionsToTrades(decisions: DecisionRecord[]): Trade[] {
-  // Filter for BUY and SELL only, as HOLD/SKIP don't have trade execution data
-  const tradeDecisions = decisions.filter(d => d.decisionType === "BUY" || d.decisionType === "SELL");
-
-  return tradeDecisions.map((d) => ({
-    id: d.id,
-    tokenAddress: d.tokenAddress,
-    tokenSymbol: d.tokenSymbol,
-    tokenName: d.tokenSymbol, // Not available in decision
-    action: d.decisionType as "BUY" | "SELL",
-    inputAmount: "",
-    inputAmountSol: d.outcomeDetails?.pnlSol || 0,
-    outputAmount: "",
-    priceAtTrade: 0,
-    marketCapAtTrade: 0,
-    timestamp: d.timestamp,
-    orderId: d.outcomeDetails?.orderId || "",
-    orderStatus: (d.outcomeDetails?.orderStatus as "pending" | "confirmed" | "failed" | "expired") || "confirmed",
-    isDryRun: true,
-    entryPrice: 0,
-    exitPrice: 0,
-    pnlSol: d.outcomeDetails?.pnlSol,
-    pnlPercent: d.outcomeDetails?.pnlPercent,
-    holdingDurationMs: d.outcomeDetails?.holdingDurationMs,
-    exitReason: d.outcomeDetails?.exitReason,
-    aiReasoning: d.aiReasoning,
-    signalsUsed: d.signals,
-  }));
 }
 
 /**
@@ -157,15 +140,13 @@ async function analyzeWithDecisionsAI(
   decisions: DecisionRecord[],
   stats: any,
 ): Promise<LearningResponse> {
-  const trades = decisionsToTrades(decisions);
-
   if (!OPENROUTER_API_KEY) {
     logger.warn("OPENROUTER_API_KEY not set, using fallback pattern analysis");
-    return { patterns: fallbackPatternAnalysis(trades), insights: "Fallback analysis" };
+    return { patterns: fallbackPatternAnalysis(decisions), insights: "Fallback analysis" };
   }
 
   try {
-    const userMessage = buildAnalysisPrompt(trades, stats);
+    const userMessage = buildAnalysisPrompt(decisions, stats);
 
     const response = await fetch(
       "https://openrouter.ai/api/v1/chat/completions",
@@ -196,7 +177,7 @@ async function analyzeWithDecisionsAI(
         status: response.status,
         error: errorText,
       });
-      return { patterns: fallbackPatternAnalysis(trades), insights: "OpenRouter API error" };
+      return { patterns: fallbackPatternAnalysis(decisions), insights: "OpenRouter API error" };
     }
 
     const data = (await response.json()) as any;
@@ -204,14 +185,14 @@ async function analyzeWithDecisionsAI(
 
     if (!content) {
       logger.error("Invalid OpenRouter response format", { data });
-      return { patterns: fallbackPatternAnalysis(trades), insights: "Invalid response format" };
+      return { patterns: fallbackPatternAnalysis(decisions), insights: "Invalid response format" };
     }
 
     const parsed = JSON.parse(content) as LearningResponse;
     return { patterns: parsed.patterns || [], insights: parsed.insights || "No insights" };
   } catch (error) {
     logger.error("Error calling OpenRouter", { error: String(error) });
-    return { patterns: fallbackPatternAnalysis(trades), insights: "Error calling AI" };
+    return { patterns: fallbackPatternAnalysis(decisions), insights: "Error calling AI" };
   }
 }
 
@@ -241,115 +222,129 @@ function calculateStatsFromDecisions(successDecisions: DecisionRecord[], failDec
 }
 
 /**
- * Fallback: Rule-based pattern extraction when AI fails
+ * Fallback: Rule-based pattern extraction when AI fails (Decision-based)
+ * Extracts patterns directly from decision records without trade conversion
  */
-function fallbackPatternAnalysis(trades: Trade[]): PatternAnalysis[] {
+function fallbackPatternAnalysis(decisions: DecisionRecord[]): PatternAnalysis[] {
   const patterns: PatternAnalysis[] = [];
 
-  // Analyze entry patterns
-  const winningBuys = trades.filter((t) => {
-    const sellTrade = trades.find(
-      (s) => s.tokenAddress === t.tokenAddress && s.action === "SELL",
-    );
-    return sellTrade && sellTrade.pnlSol && sellTrade.pnlSol > 0;
-  });
+  // Filter decisions by type and outcome
+  const buyDecisions = decisions.filter(d => d.decisionType === "BUY");
+  const sellDecisions = decisions.filter(d => d.decisionType === "SELL");
 
-  const losingBuys = trades.filter((t) => {
-    const sellTrade = trades.find(
-      (s) => s.tokenAddress === t.tokenAddress && s.action === "SELL",
-    );
-    return sellTrade && sellTrade.pnlSol && sellTrade.pnlSol < 0;
-  });
+  // Get successful and failed BUY decisions
+  const successfulBuys = buyDecisions.filter(d => d.outcome === "success");
+  const failedBuys = buyDecisions.filter(d => d.outcome === "failure");
 
-  // Entry pattern: Smart money presence
-  if (winningBuys.length >= 2) {
-    const avgSmartDegenWin =
-      winningBuys.reduce((sum, t) => {
-        const signals = t.signalsUsed || [];
-        return sum + (signals.includes("smart_money") ? 1 : 0);
-      }, 0) / winningBuys.length;
-
-    patterns.push({
-      type: "entry",
-      description: "Smart degen traders present at entry",
-      successRate: Math.round((avgSmartDegenWin / 1) * 100),
-      avgPnlPercent: calculateAvgPnl(winningBuys),
-      appliedCount: winningBuys.length,
-      successCount: winningBuys.length,
+  // Pattern 1: Smart money presence at entry
+  if (successfulBuys.length >= 2) {
+    const smartMoneyBuys = successfulBuys.filter(d => {
+      const signals = d.signals || [];
+      return signals.includes("smart_money") || signals.includes("smart_degen");
     });
+    if (smartMoneyBuys.length > 0) {
+      patterns.push({
+        type: "entry",
+        description: "Smart degen traders present at entry (min 3 degens)",
+        successRate: Math.round((smartMoneyBuys.length / successfulBuys.length) * 100),
+        avgPnlPercent: calculateAvgPnlFromDecisions(smartMoneyBuys),
+        appliedCount: successfulBuys.length,
+        successCount: smartMoneyBuys.length,
+        examples: smartMoneyBuys.slice(0, 3).map(d => d.tokenAddress),
+      });
+    }
   }
 
-  // Risk pattern: High rug ratio
-  const rugRatioLosses = losingBuys.filter((t) => {
-    // This would need security data saved during trade
-    // For now, use signals if available
-    const signals = t.signalsUsed || [];
-    return signals.includes("high_risk");
+  // Pattern 2: Dip buying opportunity
+  if (buyDecisions.length >= 5) {
+    const dipBuys = buyDecisions.filter(d => {
+      const signals = d.signals || [];
+      return signals.includes("dip_buy") || signals.includes("price_dip");
+    });
+    const dipWins = dipBuys.filter(d => d.outcome === "success");
+    if (dipBuys.length >= 2) {
+      patterns.push({
+        type: "timing",
+        description: "Dip buying: entry during price decline (-10% or more)",
+        successRate: Math.round((dipWins.length / dipBuys.length) * 100),
+        avgPnlPercent: calculateAvgPnlFromDecisions(dipWins),
+        appliedCount: dipBuys.length,
+        successCount: dipWins.length,
+        examples: dipBuys.slice(0, 3).map(d => d.tokenAddress),
+      });
+    }
+  }
+
+  // Pattern 3: Risk filter - high rug ratio
+  const highRiskFailed = failedBuys.filter(d => {
+    const signals = d.signals || [];
+    return signals.includes("high_risk") || signals.includes("rug_ratio_high");
   });
 
-  if (rugRatioLosses.length > 0) {
+  if (highRiskFailed.length > 0) {
     patterns.push({
       type: "risk",
-      description: "High risk metrics (rug ratio, wash trading)",
+      description: "Avoid tokens with rug ratio > 0.3 or wash trading detected",
       successRate: 0,
-      avgPnlPercent: calculateAvgPnl(losingBuys),
-      appliedCount: rugRatioLosses.length,
+      avgPnlPercent: calculateAvgPnlFromDecisions(failedBuys),
+      appliedCount: highRiskFailed.length,
       successCount: 0,
+      examples: highRiskFailed.slice(0, 3).map(d => d.tokenAddress),
     });
   }
 
-  // Exit pattern: Quick profit taking
-  const quickWins = winningBuys.filter((t) => {
-    const sellTrade = trades.find(
-      (s) => s.tokenAddress === t.tokenAddress && s.action === "SELL",
-    );
-    if (!sellTrade || !sellTrade.holdingDurationMs) return false;
-    // Less than 10 minutes
-    return sellTrade.holdingDurationMs < 10 * 60 * 1000;
+  // Pattern 4: Exit timing - quick profit taking (SELL decisions)
+  const quickSellWins = sellDecisions.filter(d => {
+    if (d.outcome !== "success") return false;
+    const holdingMs = d.outcomeDetails?.holdingDurationMs || 0;
+    return holdingMs < 10 * 60 * 1000; // Under 10 min
   });
 
-  if (quickWins.length > 0) {
+  const allSellWins = sellDecisions.filter(d => d.outcome === "success");
+  if (quickSellWins.length > 0 && allSellWins.length > 0) {
     patterns.push({
-      type: "exit",
-      description: "Quick exit (under 10 min) on strong pumps preserves profit",
-      successRate:
-        Math.round((quickWins.length / winningBuys.length) * 100) || 100,
-      avgPnlPercent: calculateAvgPnl(quickWins),
-      appliedCount: quickWins.length,
-      successCount: quickWins.length,
+      type: "timing",
+      description: "Quick exit (under 10 min) preserves profit on strong pumps",
+      successRate: Math.round((quickSellWins.length / allSellWins.length) * 100) || 100,
+      avgPnlPercent: calculateAvgPnlFromDecisions(quickSellWins),
+      appliedCount: quickSellWins.length,
+      successCount: quickSellWins.length,
+      examples: quickSellWins.slice(0, 3).map(d => d.tokenAddress),
     });
   }
 
-  // Filter pattern: Skip if no smart money
-  const noSmartMoneyBuys = trades.filter((t) => {
-    const signals = t.signalsUsed || [];
-    return !signals.includes("smart_money") && t.action === "BUY";
+  // Pattern 5: Volume spike confirmation
+  const volumeBuys = successfulBuys.filter(d => {
+    const signals = d.signals || [];
+    return signals.includes("volume_spike") || signals.includes("high_volume");
   });
+  if (volumeBuys.length >= 2) {
+    patterns.push({
+      type: "volume",
+      description: "Volume spike confirmation for entry signal",
+      successRate: Math.round((volumeBuys.length / successfulBuys.length) * 100),
+      avgPnlPercent: calculateAvgPnlFromDecisions(volumeBuys),
+      appliedCount: successfulBuys.length,
+      successCount: volumeBuys.length,
+      examples: volumeBuys.slice(0, 3).map(d => d.tokenAddress),
+    });
+  }
 
-  const noSmartMoneyWins = noSmartMoneyBuys.filter((t) => {
-    const sellTrade = trades.find(
-      (s) => s.tokenAddress === t.tokenAddress && s.action === "SELL",
-    );
-    return sellTrade && sellTrade.pnlSol && sellTrade.pnlSol > 0;
+  // Pattern 6: Filter - skip low liquidity
+  const lowLiqBuys = buyDecisions.filter(d => {
+    const signals = d.signals || [];
+    return signals.includes("low_liquidity");
   });
-
-  if (noSmartMoneyBuys.length >= 3) {
+  const lowLiqWins = lowLiqBuys.filter(d => d.outcome === "success");
+  if (lowLiqBuys.length >= 2) {
     patterns.push({
       type: "filter",
-      description: "Skip tokens without smart degen participation",
-      successRate: Math.round(
-        (noSmartMoneyWins.length / noSmartMoneyBuys.length) * 100,
-      ),
-      avgPnlPercent: calculateAvgPnl(
-        noSmartMoneyBuys.filter((t) => {
-          const sellTrade = trades.find(
-            (s) => s.tokenAddress === t.tokenAddress && s.action === "SELL",
-          );
-          return sellTrade;
-        }),
-      ),
-      appliedCount: noSmartMoneyBuys.length,
-      successCount: noSmartMoneyWins.length,
+      description: "Skip tokens with liquidity under $50k",
+      successRate: Math.round((lowLiqWins.length / lowLiqBuys.length) * 100),
+      avgPnlPercent: calculateAvgPnlFromDecisions(lowLiqBuys.filter(d => d.outcome === "success")),
+      appliedCount: lowLiqBuys.length,
+      successCount: lowLiqWins.length,
+      examples: lowLiqBuys.slice(0, 3).map(d => d.tokenAddress),
     });
   }
 
@@ -357,58 +352,147 @@ function fallbackPatternAnalysis(trades: Trade[]): PatternAnalysis[] {
 }
 
 /**
- * Build analysis prompt from trades
+ * Score patterns based on recency, success rate, and PnL
+ * Higher scores = more weight in decision making
  */
-function buildAnalysisPrompt(trades: Trade[], stats: any): string {
-  const tradeDetails = trades
-    .map((t) => {
-      const isWin = t.pnlPercent && t.pnlPercent > 0;
-      const status = t.action === "SELL"
-        ? (isWin ? "WIN" : "LOSS")
-        : t.action === "BUY" ? "BUY" : "SKIP";
+export function scorePattern(
+  pattern: PatternAnalysis,
+  patternAgeDays: number = 0
+): LearningScore {
+  // Weights for scoring
+  const WEIGHT_SUCCESS = 0.35;
+  const WEIGHT_PNL = 0.40;
+  const WEIGHT_RECENCY = 0.25;
+  const MAX_AGE_DAYS = 7;
+
+  // Recency score: 0-100 (100 = today, 0 = older than max age)
+  const recencyScore = Math.max(0, 100 - (patternAgeDays / MAX_AGE_DAYS) * 100);
+
+  // Success rate score (0-100)
+  const successScore = pattern.successRate;
+
+  // PnL score: normalize to 0-100 (assuming ±50% PnL range)
+  const pnlScore = Math.min(100, Math.max(0, 50 + (pattern.avgPnlPercent || 0)));
+
+  // Weighted composite score
+  const compositeScore =
+    successScore * WEIGHT_SUCCESS +
+    pnlScore * WEIGHT_PNL +
+    recencyScore * WEIGHT_RECENCY;
+
+  return {
+    patternId: `pattern_${pattern.type}_${pattern.description.substring(0, 20)}`,
+    score: compositeScore,
+    reason: `Success: ${pattern.successRate}%, PnL: ${pattern.avgPnlPercent?.toFixed(1)}%, Recency: ${recencyScore.toFixed(0)}%`,
+  };
+}
+
+/**
+ * Get relevant learnings for a specific decision context
+ * Returns patterns weighted by relevance and recency
+ */
+export function getRelevantPatterns(
+  learnings: Learning[],
+  decisionType: "BUY" | "SELL"
+): PatternAnalysis[] {
+  const now = Date.now();
+  const maxAgeDays = 7;
+
+  // Collect all patterns from recent learnings
+  const allPatterns = learnings.flatMap((l) => {
+    const ageDays = (now - l.createdAt) / (1000 * 60 * 60 * 24);
+    if (ageDays > maxAgeDays) return [];
+
+    return l.patterns.map((p) => ({
+      pattern: p,
+      learningAge: ageDays,
+      learningId: l.id,
+    }));
+  });
+
+  // Filter and score patterns relevant to current decision
+  const relevantPatterns = allPatterns
+    .filter(({ pattern, learningAge }) => {
+      // Age filter: only use patterns from last 7 days
+      if (learningAge > maxAgeDays) return false;
+
+      // Type filter: match decision type
+      if (decisionType === "BUY") {
+        return ["entry", "timing", "volume", "filter"].includes(pattern.type);
+      } else {
+        return ["exit", "timing", "risk"].includes(pattern.type);
+      }
+    })
+    .map(({ pattern, learningAge }) => {
+      const scoreData = scorePattern(pattern, learningAge);
+      return {
+        ...pattern,
+        recencyWeight: 1 - learningAge / maxAgeDays,
+        confidence: scoreData.score,
+      };
+    })
+    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+    .slice(0, 10); // Return top 10 patterns
+
+  return relevantPatterns;
+}
+
+/**
+ * Build analysis prompt from decisions (Decision-based)
+ */
+function buildAnalysisPrompt(decisions: DecisionRecord[], stats: any): string {
+  const decisionDetails = decisions
+    .map((d) => {
+      const status = d.outcome === "success" ? "SUCCESS" :
+                     d.outcome === "failure" ? "FAILURE" :
+                     d.outcome === "skipped" ? "SKIPPED" : "PENDING";
+
+      const context = d.context || {};
+      const outcome = d.outcomeDetails || {};
 
       return `
-[${status}] ${t.tokenSymbol}
-Action: ${t.action} | Status: ${t.orderStatus}
-Price: $${t.priceAtTrade?.toFixed(8) || "N/A"} | MC: $${Math.round(t.marketCapAtTrade || 0).toLocaleString()}
-${t.action === "SELL" ? `Entry: $${t.entryPrice?.toFixed(8)} | Exit: $${t.exitPrice?.toFixed(8)}
-PnL: ${t.pnlPercent?.toFixed(2)}% (${t.pnlSol?.toFixed(4)} SOL)
-Hold: ${t.holdingDurationMs ? (t.holdingDurationMs / 60000).toFixed(1) + "m" : "N/A"}
-Exit Reason: ${t.exitReason ?? "N/A"}` : ""}
-Signals: ${t.signalsUsed?.join(", ") || "None"}
-AI Reasoning: ${t.aiReasoning || "N/A"}
+[${status}] ${d.tokenSymbol}
+Decision: ${d.decisionType} | Confidence: ${d.confidence}%
+${context.priceAtTrade ? `Price: $${context.priceAtTrade.toFixed(8)}` : ""}
+${context.marketCapAtTrade ? `MC: $${Math.round(context.marketCapAtTrade).toLocaleString()}` : ""}
+${outcome.pnlPercent !== undefined ? `PnL: ${outcome.pnlPercent.toFixed(2)}% (${outcome.pnlSol?.toFixed(4)} SOL)` : ""}
+${outcome.holdingDurationMs ? `Hold: ${(outcome.holdingDurationMs / 60000).toFixed(1)}m` : ""}
+${outcome.exitReason ? `Exit Reason: ${outcome.exitReason}` : ""}
+Signals: ${d.signals?.join(", ") || "None"}
+Reasoning: ${d.reasoning || "N/A"}
+Context: OrderFlow=${context.orderFlowIntensity || "N/A"}, SmartDegen=${context.smartDegenCount || "N/A"}, RugRatio=${context.rugRatio || "N/A"}
 `;
     })
     .join("\n---\n");
 
-  // Handle different stats formats
   const winRate = stats.winRate !== undefined ? stats.winRate : (stats.wins / (stats.wins + stats.losses)) * 100;
-  const avgPnl = stats.avgPnl !== undefined ? stats.avgPnl : 0;
-  const avgHolding = stats.avgHoldingMinutes !== undefined ? stats.avgHoldingMinutes : 0;
+  const avgPnl = stats.avgWinPercent !== undefined ? stats.avgWinPercent : 0;
+  const avgLoss = stats.avgLossPercent !== undefined ? stats.avgLossPercent : 0;
 
   return `
-Analyze these ${trades.length} completed decisions and extract Order Flow patterns.
+Analyze these ${decisions.length} completed decisions and extract Order Flow patterns.
 Focus on: smart money activity, buy/sell pressure, volume delta, and entry/exit timing.
 
 Stats:
-- Total: ${stats.totalTrades} | Win Rate: ${winRate.toFixed(1)}% | Avg PnL: ${avgPnl.toFixed(4)} SOL | Avg Hold: ${avgHolding.toFixed(1)}m
+- Total: ${stats.totalTrades} | Win Rate: ${winRate.toFixed(1)}%
+- Avg Win: ${avgPnl.toFixed(2)}% | Avg Loss: ${avgLoss.toFixed(2)}%
 - Wins: ${stats.wins} | Losses: ${stats.losses}
 
 Decisions:
-${tradeDetails}
+${decisionDetails}
 `;
 }
 
 /**
- * Calculate average PnL from trades
+ * Calculate average PnL from decision records (Decision-based)
  */
-function calculateAvgPnl(trades: Trade[]): number {
-  const sellTrades = trades.filter(
-    (t) => t.action === "SELL" && t.pnlPercent !== undefined,
+function calculateAvgPnlFromDecisions(decisions: DecisionRecord[]): number {
+  const sellDecisions = decisions.filter(
+    (d) => d.decisionType === "SELL" && d.outcomeDetails?.pnlPercent !== undefined,
   );
-  if (sellTrades.length === 0) return 0;
+  if (sellDecisions.length === 0) return 0;
 
-  const sum = sellTrades.reduce((acc, t) => acc + (t.pnlPercent || 0), 0);
-  return sum / sellTrades.length;
+  const sum = sellDecisions.reduce((acc, d) => acc + (d.outcomeDetails?.pnlPercent || 0), 0);
+  return sum / sellDecisions.length;
 }
 

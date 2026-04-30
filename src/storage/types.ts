@@ -55,12 +55,22 @@ export interface Position {
 }
 
 export interface PatternAnalysis {
-  type: "entry" | "exit" | "risk" | "filter";
+  type: "entry" | "exit" | "risk" | "filter" | "timing" | "volume";
   description: string;
   successRate: number;
   avgPnlPercent: number;
   appliedCount: number;
   successCount: number;
+  // Pattern metadata for weighting
+  recencyWeight?: number;
+  confidence?: number;
+  examples?: string[]; // Token addresses that matched this pattern
+}
+
+export interface LearningScore {
+  patternId: string;
+  score: number; // Weighted score for this pattern
+  reason: string;
 }
 
 export interface LearningResponse {
@@ -87,6 +97,24 @@ export interface DecisionOutcomeDetails {
   error?: string;
 }
 
+export interface DecisionContext {
+  // Token data snapshot at decision time
+  priceAtTrade?: number;
+  marketCapAtTrade?: number;
+  inputAmountSol?: number;
+  inputAmount?: string;
+  outputAmount?: string;
+  entryPrice?: number;
+  exitPrice?: number;
+  isDryRun?: boolean;
+  // Market conditions at decision time
+  orderFlowIntensity?: "bullish" | "bearish" | "neutral";
+  volume1h?: number;
+  smartDegenCount?: number;
+  rugRatio?: number;
+  liquidity?: number;
+}
+
 export interface DecisionRecord {
   id: string; // UUID
   tokenAddress: string;
@@ -99,6 +127,7 @@ export interface DecisionRecord {
   outcome: "success" | "failure" | "pending" | "executed" | "skipped";
   outcomeDetails?: DecisionOutcomeDetails;
   aiReasoning?: string;
+  context?: DecisionContext; // Rich context for learning
 }
 
 export interface Performance {
