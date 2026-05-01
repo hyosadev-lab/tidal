@@ -78,10 +78,21 @@ export async function generateLearnings(): Promise<void> {
 
     logger.info(`Generating learnings: ${successfulDecisions.length} success, ${failedDecisions.length} failure decisions`);
 
-    // Get recent decisions for analysis (last 30 for richness)
-    const recentDecisions = completedDecisions.slice(-30);
-    const recentSuccess = successfulDecisions.slice(-20);
-    const recentFailures = failedDecisions.slice(-10);
+    // Get recent decisions for analysis
+    // Filter to only include decisions with PnL >= 15% (for pattern generation)
+    const MIN_ANALYSIS_PNL = 15;
+    const highPnlDecisions = completedDecisions.filter(d => {
+      const pnl = d.outcomeDetails?.pnlPercent || 0;
+      // Keep all failures for risk patterns, but filter successes by PnL
+      return d.outcome === "failure" || pnl >= MIN_ANALYSIS_PNL;
+    });
+
+    // Use high-pnl decisions for analysis (up to 30)
+    const recentDecisions = highPnlDecisions.slice(-30);
+    const recentSuccess = highPnlDecisions.filter(d => d.outcome === "success").slice(-20);
+    const recentFailures = completedDecisions.filter(d => d.outcome === "failure").slice(-10);
+
+    logger.info(`Analyzing ${recentDecisions.length} decisions (${recentSuccess.length} high-PnL successes, ${recentFailures.length} failures)`);
 
     // Calculate statistics
     const stats = calculateStatsFromDecisions(recentSuccess, recentFailures);
@@ -94,12 +105,23 @@ export async function generateLearnings(): Promise<void> {
       return;
     }
 
+    // Filter patterns: only keep those with avgPnlPercent >= 15%
+    const MIN_PATTERN_PNL = 15;
+    const filteredPatterns = aiResponse.patterns.filter(p => (p.avgPnlPercent || 0) >= MIN_PATTERN_PNL);
+
+    if (filteredPatterns.length === 0) {
+      logger.warn(`No patterns met minimum PnL threshold of ${MIN_PATTERN_PNL}%`);
+      return;
+    }
+
+    logger.info(`Filtered ${aiResponse.patterns.length} patterns down to ${filteredPatterns.length} (min PnL: ${MIN_PATTERN_PNL}%)`);
+
     // Save raw AI response with metadata
     const newLearnings: Learning[] = [{
       id: `learning_${Date.now()}`,
       createdAt: now,
       basedOnTradeIds: recentDecisions.slice(-10).map((d) => d.id),
-      patterns: aiResponse.patterns,
+      patterns: filteredPatterns,
       insights: aiResponse.insights
     }];
 
@@ -227,13 +249,19 @@ function calculateStatsFromDecisions(successDecisions: DecisionRecord[], failDec
  */
 function fallbackPatternAnalysis(decisions: DecisionRecord[]): PatternAnalysis[] {
   const patterns: PatternAnalysis[] = [];
+  const MIN_TRADE_PNL = 25; // Minimum PnL untuk generate pattern
 
   // Filter decisions by type and outcome
   const buyDecisions = decisions.filter(d => d.decisionType === "BUY");
   const sellDecisions = decisions.filter(d => d.decisionType === "SELL");
 
   // Get successful and failed BUY decisions
-  const successfulBuys = buyDecisions.filter(d => d.outcome === "success");
+  // ONLY include trades with PnL >= MIN_TRADE_PNL
+  const successfulBuys = buyDecisions.filter(d => {
+    if (d.outcome !== "success") return false;
+    const pnl = d.outcomeDetails?.pnlPercent || 0;
+    return pnl >= MIN_TRADE_PNL;
+  });
   const failedBuys = buyDecisions.filter(d => d.outcome === "failure");
 
   // Pattern 1: Smart money presence at entry
@@ -293,23 +321,24 @@ function fallbackPatternAnalysis(decisions: DecisionRecord[]): PatternAnalysis[]
     });
   }
 
-  // Pattern 4: Exit timing - quick profit taking (SELL decisions)
-  const quickSellWins = sellDecisions.filter(d => {
+  // Pattern 4: Exit timing - HIGH PnL exits (SELL decisions)
+  // Only analyze exits with PnL >= MIN_TRADE_PNL
+  const highPnlSellWins = sellDecisions.filter(d => {
     if (d.outcome !== "success") return false;
-    const holdingMs = d.outcomeDetails?.holdingDurationMs || 0;
-    return holdingMs < 10 * 60 * 1000; // Under 10 min
+    const pnl = d.outcomeDetails?.pnlPercent || 0;
+    return pnl >= MIN_TRADE_PNL;
   });
 
   const allSellWins = sellDecisions.filter(d => d.outcome === "success");
-  if (quickSellWins.length > 0 && allSellWins.length > 0) {
+  if (highPnlSellWins.length >= 2) {
     patterns.push({
       type: "timing",
-      description: "Quick exit (under 10 min) preserves profit on strong pumps",
-      successRate: Math.round((quickSellWins.length / allSellWins.length) * 100) || 100,
-      avgPnlPercent: calculateAvgPnlFromDecisions(quickSellWins),
-      appliedCount: quickSellWins.length,
-      successCount: quickSellWins.length,
-      examples: quickSellWins.slice(0, 3).map(d => d.tokenAddress),
+      description: `High PnL exit (≥${MIN_TRADE_PNL}%) with optimal holding duration`,
+      successRate: Math.round((highPnlSellWins.length / allSellWins.length) * 100) || 100,
+      avgPnlPercent: calculateAvgPnlFromDecisions(highPnlSellWins),
+      appliedCount: highPnlSellWins.length,
+      successCount: highPnlSellWins.length,
+      examples: highPnlSellWins.slice(0, 3).map(d => d.tokenAddress),
     });
   }
 
@@ -371,8 +400,8 @@ export function scorePattern(
   // Success rate score (0-100)
   const successScore = pattern.successRate;
 
-  // PnL score: normalize to 0-100 (assuming ±50% PnL range)
-  const pnlScore = Math.min(100, Math.max(0, 50 + (pattern.avgPnlPercent || 0)));
+  // PnL score: direct mapping (5% PnL = score 5, 100%+ PnL = score 100)
+  const pnlScore = Math.min(100, Math.max(0, pattern.avgPnlPercent || 0));
 
   // Weighted composite score
   const compositeScore =
@@ -411,10 +440,14 @@ export function getRelevantPatterns(
   });
 
   // Filter and score patterns relevant to current decision
+  const MIN_PNL_THRESHOLD = 15; // Only show patterns with PnL >= 15%
   const relevantPatterns = allPatterns
     .filter(({ pattern, learningAge }) => {
       // Age filter: only use patterns from last 7 days
       if (learningAge > maxAgeDays) return false;
+
+      // PnL filter: only use patterns with decent PnL
+      if ((pattern.avgPnlPercent || 0) < MIN_PNL_THRESHOLD) return false;
 
       // Type filter: match decision type
       if (decisionType === "BUY") {
