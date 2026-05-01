@@ -145,7 +145,7 @@ async function processCandidate(token: TokenData): Promise<void> {
     const decisionRecord = await recordDecision({
       tokenAddress: token.address,
       tokenSymbol: token.symbol,
-      decisionType: decision.action === "BUY" ? "BUY" : "SKIP",
+      decisionType: decision.action,
       confidence: decision.confidence,
       reasoning: decision.reasoning,
       signals: decision.signals,

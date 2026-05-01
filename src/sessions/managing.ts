@@ -9,7 +9,6 @@ import {
   recordDecision,
   updateDecisionOutcome,
 } from "../storage/db";
-import { generateLearnings } from "../agent/learner";
 import {
   getTokenDetails,
 } from "../gmgn/market";
@@ -73,8 +72,6 @@ async function monitorPositions() {
   if (updatedPositions.length > 0) {
     await savePositions(updatedPositions);
   }
-
-  await generateLearnings();
 }
 
 async function processPosition(position: Position): Promise<Position | null> {
@@ -145,7 +142,7 @@ async function processPosition(position: Position): Promise<Position | null> {
     const decisionRecord = await recordDecision({
       tokenAddress: position.tokenAddress,
       tokenSymbol: position.tokenSymbol,
-      decisionType: decision.action === "SELL" ? "SELL" : "HOLD",
+      decisionType: decision.action,
       confidence: decision.confidence,
       reasoning: decision.reasoning,
       signals: decision.signals,
