@@ -194,6 +194,11 @@ async function processPosition(position: Position): Promise<Position | null> {
         exitReason: "hold_decision",
         holdingDurationMs: Date.now() - position.entryTimestamp,
       });
+
+      // Store HOLD decision ID in position for future outcome tracking
+      position.lastHoldDecisionId = decisionRecord.id;
+      position.lastUpdated = Date.now();
+
       return position;
     }
   } catch (error) {
@@ -284,6 +289,23 @@ async function executeSellOrder({
         orderId: trade.orderId,
         orderStatus: "confirmed",
       });
+    }
+
+    // Update HOLD decision with eventual outcome if exists
+    if (position.lastHoldDecisionId) {
+      const holdOutcome = position.unrealizedPnlPercent !== undefined
+        ? (position.unrealizedPnlPercent > 0 ? "profit" : position.unrealizedPnlPercent < 0 ? "loss" : "breakeven")
+        : "uncertain";
+
+      await updateDecisionOutcome(position.lastHoldDecisionId, "executed", {
+        linkedDecisionId: decisionId, // Link to the SELL decision
+        holdOutcome: holdOutcome as any,
+        pnlSol: position.unrealizedPnlSol,
+        pnlPercent: position.unrealizedPnlPercent,
+        holdingDurationMs: Date.now() - position.entryTimestamp,
+      });
+
+      logger.debug(`Updated HOLD decision ${position.lastHoldDecisionId} with outcome: ${holdOutcome}`);
     }
 
     // Return filtered list for caller to save
@@ -422,6 +444,22 @@ async function pollSellOrderConfirmation(
               txHash: orderStatus.tx_hash,
             });
           }
+
+          // Update HOLD decision with eventual outcome if exists
+          if (position.lastHoldDecisionId) {
+            const holdOutcome = position.unrealizedPnlPercent !== undefined
+              ? (position.unrealizedPnlPercent > 0 ? "profit" : position.unrealizedPnlPercent < 0 ? "loss" : "breakeven")
+              : "uncertain";
+
+            await updateDecisionOutcome(position.lastHoldDecisionId, "executed", {
+              linkedDecisionId: decisionId,
+              holdOutcome: holdOutcome as any,
+              pnlSol: position.unrealizedPnlSol,
+              pnlPercent: position.unrealizedPnlPercent,
+              holdingDurationMs: Date.now() - position.entryTimestamp,
+            });
+          }
+
           return;
         } else if (
           orderStatus.status === "failed" ||

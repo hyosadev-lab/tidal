@@ -138,7 +138,7 @@ export async function generateLearnings(): Promise<void> {
  * Analyze decisions with OpenRouter AI
  */
 async function analyzeDecisionsWithAI(decisions: DecisionRecord[]): Promise<{ patterns: PatternAnalysis[]; insights: string }> {
-  const userMessage = buildAnalysisPrompt(decisions);
+  const userMessage = await buildAnalysisPrompt(decisions);
 
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -189,7 +189,7 @@ async function analyzeDecisionsWithAI(decisions: DecisionRecord[]): Promise<{ pa
 /**
  * Build analysis prompt from decisions
  */
-function buildAnalysisPrompt(decisions: DecisionRecord[]): string {
+async function buildAnalysisPrompt(decisions: DecisionRecord[]): Promise<string> {
   const decisionDetails = decisions.map(d => {
     const status = d.outcome === "success" ? "SUCCESS" :
                    d.outcome === "failure" ? "FAILURE" :
@@ -221,6 +221,22 @@ Context: OrderFlow=${context.orderFlowIntensity || "N/A"}, SmartDegen=${context.
   const successfulSkips = skipDecisions.filter(d => d.outcome === "skipped");
   const successfulHolds = holdDecisions.filter(d => d.outcome === "executed");
 
+  // Analyze HOLD decisions with outcomes
+  const holdsWithOutcome = holdDecisions.filter(d => d.outcomeDetails?.holdOutcome);
+  const profitableHolds = holdsWithOutcome.filter(d => d.outcomeDetails?.holdOutcome === "profit");
+  const losingHolds = holdsWithOutcome.filter(d => d.outcomeDetails?.holdOutcome === "loss");
+  const breakevenHolds = holdsWithOutcome.filter(d => d.outcomeDetails?.holdOutcome === "breakeven");
+
+  // Get missed opportunity stats
+  const skippedStats = await analyzeSkippedTokens();
+
+  // Format missed opportunity details for the prompt
+  const missedOpportunityText = skippedStats.missedOpportunityDetails.length > 0
+    ? skippedStats.missedOpportunityDetails.slice(0, 5).map(d =>
+        `  - ${d.tokenSymbol}: MC ${d.marketCapAtSkip.toFixed(0)} → ${d.currentMarketCap.toFixed(0)} (${d.changePercent > 0 ? '+' : ''}${d.changePercent.toFixed(1)}%)`
+      ).join("\n")
+    : "  (No missed opportunities detected)";
+
   return `
 Analyze these ${decisions.length} completed decisions to extract patterns.
 
@@ -230,6 +246,22 @@ DECISION SUMMARY:
 - SKIP: ${skipDecisions.length} (${successfulSkips.length} skipped)
 - HOLD: ${holdDecisions.length} (${successfulHolds.length} held)
 
+HOLD OUTCOME ANALYSIS:
+- Holds with outcome: ${holdsWithOutcome.length}
+- Profitable holds: ${profitableHolds.length}
+- Losing holds: ${losingHolds.length}
+- Breakeven holds: ${breakevenHolds.length}
+
+MISSED OPPORTUNITY ANALYSIS (Last 24h):
+- Total skipped: ${skippedStats.totalSkipped}
+- Missed opportunities (>50% gain between skips): ${skippedStats.missedOpportunities}
+- Good skips (<20% change between skips): ${skippedStats.goodSkips}
+- Uncertain range: ${skippedStats.uncertain}
+- Missed opportunity rate: ${skippedStats.missedOpportunityRate.toFixed(1)}%
+
+Missed Opportunity Examples:
+${missedOpportunityText}
+
 Decisions:
 ${decisionDetails}
 
@@ -238,6 +270,7 @@ Generate patterns for:
 2. EXIT: When to SELL (take profit, stop loss signals)
 3. RISK: When to SKIP (avoidance criteria)
 4. HOLD: When to HOLD (momentum continuation)
+5. MISSED OPPORTUNITIES: When SKIP decisions resulted in missed gains (adjust skip criteria)
 `;
 }
 
@@ -336,4 +369,137 @@ export function scorePattern(
     score: compositeScore,
     reason: `Success: ${successScore}%, PnL: ${pattern.avgPnlPercent?.toFixed(1)}%, Recency: ${recencyScore.toFixed(0)}%`,
   };
+}
+
+/**
+ * Analyze skipped tokens for missed opportunities
+ * Uses multiple skips of same token to detect market movements without API calls
+ */
+export async function analyzeSkippedTokens(): Promise<{
+  totalSkipped: number;
+  missedOpportunities: number;
+  goodSkips: number;
+  uncertain: number;
+  missedOpportunityRate: number;
+  missedOpportunityDetails: {
+    tokenSymbol: string;
+    tokenAddress: string;
+    marketCapAtSkip: number;
+    currentMarketCap: number;
+    changePercent: number;
+  }[];
+}> {
+  try {
+    const allDecisions = await getDecisions();
+
+    // Get SKIP decisions from the last 24 hours
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const skippedDecisions = allDecisions.filter(d =>
+      d.decisionType === "SKIP" &&
+      d.outcome === "skipped" &&
+      d.timestamp > oneDayAgo &&
+      d.context?.marketCapAtTrade !== undefined
+    );
+
+    if (skippedDecisions.length === 0) {
+      return {
+        totalSkipped: 0,
+        missedOpportunities: 0,
+        goodSkips: 0,
+        uncertain: 0,
+        missedOpportunityRate: 0,
+        missedOpportunityDetails: []
+      };
+    }
+
+    logger.info(`Analyzing ${skippedDecisions.length} skipped tokens for missed opportunities`);
+
+    // Group skipped decisions by token address
+    const skippedByToken: Record<string, DecisionRecord[]> = {};
+    for (const decision of skippedDecisions) {
+      if (!skippedByToken[decision.tokenAddress]) {
+        skippedByToken[decision.tokenAddress] = [];
+      }
+      skippedByToken[decision.tokenAddress].push(decision);
+    }
+
+    const missedOpportunityDetails: {
+      tokenSymbol: string;
+      tokenAddress: string;
+      marketCapAtSkip: number;
+      currentMarketCap: number;
+      changePercent: number;
+    }[] = [];
+
+    let missedOpportunities = 0;
+    let goodSkips = 0;
+    let uncertain = 0;
+    let totalComparisons = 0;
+
+    // Analyze each token that was skipped multiple times
+    for (const [tokenAddress, decisions] of Object.entries(skippedByToken)) {
+      if (decisions.length < 2) continue; // Skip tokens with only 1 skip
+
+      // Sort by timestamp (oldest first)
+      decisions.sort((a, b) => a.timestamp - b.timestamp);
+
+      const tokenSymbol = decisions[0].tokenSymbol;
+
+      // Compare consecutive skips
+      for (let i = 1; i < decisions.length; i++) {
+        const prevDecision = decisions[i - 1];
+        const currDecision = decisions[i];
+
+        const prevMC = prevDecision.context?.marketCapAtTrade || 0;
+        const currMC = currDecision.context?.marketCapAtTrade || 0;
+
+        if (prevMC === 0) continue;
+
+        const changePercent = ((currMC - prevMC) / prevMC) * 100;
+        totalComparisons++;
+
+        // Categorize based on price movement between skips
+        if (changePercent > 50) {
+          // Token went up significantly between skips - potential missed opportunity
+          missedOpportunities++;
+          missedOpportunityDetails.push({
+            tokenSymbol,
+            tokenAddress,
+            marketCapAtSkip: prevMC,
+            currentMarketCap: currMC,
+            changePercent: Math.round(changePercent * 100) / 100,
+          });
+        } else if (changePercent < -20) {
+          // Token went down significantly between skips - good skip decision
+          goodSkips++;
+        } else {
+          // Uncertain range - not enough movement to judge
+          uncertain++;
+        }
+      }
+    }
+
+    logger.info(
+      `Missed opportunity analysis: ${missedOpportunities} missed, ${goodSkips} good, ${uncertain} uncertain (${totalComparisons} comparisons)`,
+    );
+
+    return {
+      totalSkipped: skippedDecisions.length,
+      missedOpportunities,
+      goodSkips,
+      uncertain,
+      missedOpportunityRate: totalComparisons > 0 ? (missedOpportunities / totalComparisons) * 100 : 0,
+      missedOpportunityDetails,
+    };
+  } catch (error) {
+    logger.error("Error analyzing skipped tokens", { error: String(error) });
+    return {
+      totalSkipped: 0,
+      missedOpportunities: 0,
+      goodSkips: 0,
+      uncertain: 0,
+      missedOpportunityRate: 0,
+      missedOpportunityDetails: [],
+    };
+  }
 }

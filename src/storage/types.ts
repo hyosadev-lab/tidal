@@ -52,6 +52,8 @@ export interface Position {
   // Trailing stop data
   peakPrice?: number;
   peakPriceTimestamp?: number;
+  // HOLD decision tracking
+  lastHoldDecisionId?: string; // Reference to most recent HOLD decision
 }
 
 export interface PatternAnalysis {
@@ -95,6 +97,9 @@ export interface DecisionOutcomeDetails {
   orderStatus?: string;
   txHash?: string;
   error?: string;
+  // For HOLD decisions - link to eventual SELL
+  linkedDecisionId?: string;
+  holdOutcome?: "profit" | "loss" | "breakeven" | "uncertain";
 }
 
 export interface DecisionContext {
