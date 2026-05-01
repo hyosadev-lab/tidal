@@ -225,3 +225,14 @@ export async function updateDecisionOutcome(
     await saveDecisions(decisions);
   }
 }
+
+export async function cleanupOldDecisions(maxCount: number = 200): Promise<void> {
+  const decisions = await getDecisions();
+
+  if (decisions.length > maxCount) {
+    const keepDecisions = decisions.slice(-maxCount);
+    const removedCount = decisions.length - keepDecisions.length;
+    console.log(`[DB] Cleanup: removed ${removedCount} decisions (keeping ${maxCount})`);
+    await saveDecisions(keepDecisions);
+  }
+}

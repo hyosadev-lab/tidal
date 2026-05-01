@@ -9,9 +9,7 @@ import {
   recordDecision,
   updateDecisionOutcome,
 } from "../storage/db";
-import {
-  getTokenDetails,
-} from "../gmgn/market";
+import { getTokenDetails } from "../gmgn/market";
 import { executeSell, checkOrderStatus } from "../gmgn/trade";
 import { getManageDecision } from "../agent/manager";
 import type { Position, Trade, TokenData } from "../storage/types";
@@ -21,7 +19,9 @@ import { delay } from "../utils/concurrency";
 const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
-const MANAGE_INTERVAL_MINUTES = parseFloat(process.env.MANAGE_INTERVAL_MINUTES || "0.1667");
+const MANAGE_INTERVAL_MINUTES = parseFloat(
+  process.env.MANAGE_INTERVAL_MINUTES || "0.1667",
+);
 const MANAGE_INTERVAL_MS = MANAGE_INTERVAL_MINUTES * 60 * 1000;
 const DRY_RUN = process.env.DRY_RUN === "true";
 
@@ -79,12 +79,12 @@ async function processPosition(position: Position): Promise<Position | null> {
     // 1. Fetch all token data in single call (price, kline, security, order flow)
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
     const currentPrice = details.price;
+    const currentMarketCap = details.usdMarketCap;
     const priceChange1h = details.priceChange1h;
 
     // Update position PnL
     position.currentPrice = currentPrice;
-    position.currentMarketCap =
-      position.entryMarketCap * (currentPrice / position.entryPrice); // Approximate
+    position.currentMarketCap = currentMarketCap;
 
     // Update Peak Price (for reference, but not used for hard rules)
     if (!position.peakPrice || currentPrice > position.peakPrice) {
@@ -110,7 +110,7 @@ async function processPosition(position: Position): Promise<Position | null> {
       name: position.tokenName,
       price: currentPrice,
       priceChange1h: priceChange1h,
-      usdMarketCap: details.usdMarketCap || position.currentMarketCap || 0,
+      usdMarketCap: currentMarketCap,
       kline5mData: details.kline5mData,
       topTradersSummary: details.topTradersSummary,
       orderFlowSummary: details.orderFlowSummary,
@@ -150,7 +150,8 @@ async function processPosition(position: Position): Promise<Position | null> {
       aiReasoning: decision.reasoning,
       context: {
         priceAtTrade: currentPrice,
-        marketCapAtTrade: details.usdMarketCap || position.currentMarketCap || 0,
+        marketCapAtTrade:
+          details.usdMarketCap || position.currentMarketCap || 0,
         orderFlowIntensity: details.orderFlowSummary?.intensity,
         volume1h: details.volume1h,
         smartDegenCount: details.smartDegenCount,
@@ -363,7 +364,11 @@ async function executeSellOrder({
   }
 }
 
-async function pollSellOrderConfirmation(position: Position, trade: Trade, decisionId?: string) {
+async function pollSellOrderConfirmation(
+  position: Position,
+  trade: Trade,
+  decisionId?: string,
+) {
   const maxWaitTime = 60000; // 60 seconds
   const pollInterval = 3000; // Check every 3 seconds
   const startTime = Date.now();

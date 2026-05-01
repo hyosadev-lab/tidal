@@ -1,5 +1,5 @@
 import type { DecisionRecord, Learning, PatternAnalysis, LearningScore } from "../storage/types";
-import { getDecisions, saveLearnings, getLearnings } from "../storage/db";
+import { getDecisions, saveLearnings, getLearnings, cleanupOldDecisions } from "../storage/db";
 import { logger } from "../utils/logger";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -118,6 +118,9 @@ export async function generateLearnings(): Promise<void> {
     const recentLearnings = combinedLearnings.filter(l => l.createdAt > sevenDaysAgo);
 
     await saveLearnings(recentLearnings);
+
+    // Cleanup old decisions (keep only last 200)
+    await cleanupOldDecisions(200);
 
     // Log insights
     const insightsSummary = filteredPatterns
