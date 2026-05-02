@@ -88,13 +88,22 @@ export async function generateLearnings(): Promise<void> {
       return;
     }
 
-    // Filter patterns by quality
+    // Valid pattern types only
+    const VALID_PATTERN_TYPES = ["entry", "exit", "risk", "filter", "timing", "volume", "hold_loss", "missed_opportunity"];
+
+    // Filter patterns by quality AND valid type
     const MIN_SUCCESS_RATE = 50;
     const MIN_APPLIED_COUNT = 2;
-    const filteredPatterns = aiResponse.patterns.filter(p =>
-      (p.successRate || 0) >= MIN_SUCCESS_RATE &&
-      (p.appliedCount || 0) >= MIN_APPLIED_COUNT
-    );
+    const filteredPatterns = aiResponse.patterns.filter(p => {
+      // Check if type is valid
+      if (!VALID_PATTERN_TYPES.includes(p.type)) {
+        logger.warn(`Invalid pattern type "${p.type}" skipped: ${p.description}`);
+        return false;
+      }
+      // Check quality thresholds
+      return (p.successRate || 0) >= MIN_SUCCESS_RATE &&
+             (p.appliedCount || 0) >= MIN_APPLIED_COUNT;
+    });
 
     if (filteredPatterns.length === 0) {
       logger.warn(`No patterns met quality thresholds (min success: ${MIN_SUCCESS_RATE}%, min count: ${MIN_APPLIED_COUNT})`);
