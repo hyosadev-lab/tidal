@@ -317,20 +317,22 @@ export function getRelevantPatterns(
       if ((pattern.successRate || 0) < 50) return false;
       if ((pattern.appliedCount || 0) < 2) return false;
 
+      const patternType: string[] = []
+
       if (decisionType.includes("BUY")) {
-        return ["entry", "timing", "volume"].includes(pattern.type)
+        patternType.push("entry", "timing", "volume")
       }
       if (decisionType.includes("SKIP")) {
-        return ["risk", "filter", "missed_opportunity"].includes(pattern.type)
+        patternType.push("risk", "filter", "missed_opportunity")
       }
       if (decisionType.includes("SELL")) {
-        return ["exit", "timing"].includes(pattern.type)
+        patternType.push("exit", "timing")
       }
       if (decisionType.includes("HOLD")) {
-        return ["timing", "hold_loss"].includes(pattern.type)
+        patternType.push("timing", "hold_loss")
       }
 
-      return false;
+      return patternType.includes(pattern.type)
     })
     .map(({ pattern, learningAge }) => {
       const scoreData = scorePattern(pattern, learningAge);

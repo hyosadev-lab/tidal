@@ -26,7 +26,6 @@ function mapToTokenData(item: any): TokenData {
     address: item.address,
     symbol: item.symbol,
     name: item.name || item.symbol,
-    usdMarketCap: parseFloat(item.usd_market_cap) || 0,
     liquidity: parseFloat(item.liquidity) || 0,
     holderCount: item.holder_count || 0,
     smartDegenCount: item.smart_degen_count || 0,
@@ -43,11 +42,13 @@ function mapToTokenData(item: any): TokenData {
     renouncedFreezeAccount: item.renounced_freeze_account || false,
     hasAtLeastOneSocial: item.has_at_least_one_social || false,
     ctoFlag: item.cto_flag || false,
+
     // Enriched fields (will be filled later)
     kline5mData: "",
-    topTradersSummary: "",
     price: 0, // Will be populated from kline data
     priceChange1h: 0, // Will be populated from kline data
+    topTradersSummary: "",
+    usdMarketCap: 0,
     volume1h: 0, // Will be populated from kline data
     volumeDeltas5m: "", // Will be populated from kline data
     orderFlowSummary: {

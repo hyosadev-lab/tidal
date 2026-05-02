@@ -124,10 +124,11 @@ async function processCandidate(token: TokenData): Promise<void> {
     // Fetch detailed data (kline, top traders, price, order flow)
     const details = await getTokenDetails(CHAIN, token.address);
     token.kline5mData = details.kline5mData;
-    token.topTradersSummary = details.topTradersSummary;
     token.orderFlowSummary = details.orderFlowSummary;
     token.price = details.price;
+    token.usdMarketCap = details.usdMarketCap;
     token.priceChange1h = details.priceChange1h;
+    token.topTradersSummary = details.topTradersSummary;
     token.volume1h = details.volume1h;
     token.volumeDeltas5m = details.volumeDeltas5m;
 

@@ -190,13 +190,13 @@ export interface TokenData {
   smartDegenCount: number;
   symbol: string;
   top10HolderRate: number;
-  usdMarketCap: number;
 
   // Enriched Fields from gmgn-cli market kline and gmgn-cli token traders
   kline5mData: string;
   price: number;
   priceChange1h: number;
   topTradersSummary: string;
+  usdMarketCap: number;
   volume1h: number;
   volumeDeltas5m: string;
   orderFlowSummary: OrderFlowSummary;
