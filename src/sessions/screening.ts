@@ -4,7 +4,7 @@ import { executeBuy, checkOrderStatus } from "../gmgn/trade";
 import { getBuySkipDecision } from "../agent/decision";
 import {
   getPositions,
-  savePositions,
+  addPosition,
   getTrades,
   saveTrades,
   getLearnings,
@@ -248,14 +248,10 @@ async function executeBuyOrder({
       peakPriceTimestamp: Date.now(),
     };
 
-    // Optimized: Load once, modify, save once
-    const [trades, positions] = await Promise.all([
-      getTrades(),
-      getPositions(),
-    ]);
+    // Save trade and position atomically
+    const trades = await getTrades();
     trades.push(trade);
-    positions.push(position);
-    await Promise.all([saveTrades(trades), savePositions(positions)]);
+    await Promise.all([saveTrades(trades), addPosition(position)]);
     await updatePerformance();
 
     // Clean up pending set for dry run
@@ -368,9 +364,7 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData, decisionId?
               peakPriceTimestamp: Date.now(),
             };
 
-            const positions = await getPositions();
-            positions.push(position);
-            await savePositions(positions);
+            await addPosition(position);
 
             logger.info(`Position created for ${token.symbol}`, {
               costSol: position.costSol,

@@ -2,6 +2,26 @@ import type { Trade, Position, Learning, Performance, SoldToken, DecisionRecord 
 
 const DATA_DIR = "data";
 
+// Simple mutex for file operations to prevent race conditions
+const fileLocks = new Map<string, Promise<void>>();
+
+type LockRelease = () => void;
+
+async function acquireLock(filename: string): Promise<LockRelease> {
+  while (fileLocks.has(filename)) {
+    await fileLocks.get(filename);
+  }
+
+  let resolve!: () => void;
+  const lock = new Promise<void>((r) => { resolve = r; });
+  fileLocks.set(filename, lock);
+
+  return () => {
+    fileLocks.delete(filename);
+    resolve();
+  };
+}
+
 function getPath(filename: string) {
   return `${DATA_DIR}/${filename}`;
 }
@@ -35,13 +55,57 @@ export async function saveTrades(trades: Trade[]): Promise<void> {
   await writeJSON("trades.json", trades);
 }
 
-// Positions
+// Positions with atomic read-modify-write to prevent race conditions
 export async function getPositions(): Promise<Position[]> {
   return readJSON<Position[]>("positions.json", []);
 }
 
 export async function savePositions(positions: Position[]): Promise<void> {
-  await writeJSON("positions.json", positions);
+  const releaseLock = await acquireLock("positions.json");
+  try {
+    // Read current positions again to ensure we don't overwrite concurrent additions
+    const currentPositions = await readJSON<Position[]>("positions.json", []);
+
+    // Merge positions: update existing and add new ones
+    const positionMap = new Map<string, Position>();
+
+    // Add all current positions first (to preserve any concurrent additions)
+    for (const pos of currentPositions) {
+      positionMap.set(pos.tokenAddress, pos);
+    }
+
+    // Update with the positions we're saving (overwrites existing)
+    for (const pos of positions) {
+      positionMap.set(pos.tokenAddress, pos);
+    }
+
+    // Save the merged list
+    await writeJSON("positions.json", Array.from(positionMap.values()));
+  } finally {
+    releaseLock();
+  }
+}
+
+export async function addPosition(position: Position): Promise<void> {
+  const releaseLock = await acquireLock("positions.json");
+  try {
+    const positions = await readJSON<Position[]>("positions.json", []);
+    positions.push(position);
+    await writeJSON("positions.json", positions);
+  } finally {
+    releaseLock();
+  }
+}
+
+export async function removePosition(tokenAddress: string): Promise<void> {
+  const releaseLock = await acquireLock("positions.json");
+  try {
+    const positions = await readJSON<Position[]>("positions.json", []);
+    const filtered = positions.filter(p => p.tokenAddress !== tokenAddress);
+    await writeJSON("positions.json", filtered);
+  } finally {
+    releaseLock();
+  }
 }
 
 // Learnings

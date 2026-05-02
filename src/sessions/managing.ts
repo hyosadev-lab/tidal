@@ -1,6 +1,7 @@
 import {
   getPositions,
   savePositions,
+  removePosition,
   getTrades,
   saveTrades,
   getLearnings,
@@ -58,23 +59,15 @@ async function monitorPositions() {
 
   logger.info(`Monitoring ${positions.length} positions`);
 
-  const updatedPositions: Position[] = [];
-
   for (const position of positions) {
-    const processedPosition = await processPosition(position);
-    if (processedPosition) {
-      updatedPositions.push(processedPosition);
-    }
-    // If processedPosition is null, it means the position was sold (and executeSellOrder handled saving)
-  }
-
-  // Save updated positions (those that were not sold)
-  if (updatedPositions.length > 0) {
-    await savePositions(updatedPositions);
+    await processPosition(position);
+    // Each position is handled individually via atomic operations
+    // If sold: removePosition() is called in executeSellOrder
+    // If held: position is updated in place via savePositions() merge logic
   }
 }
 
-async function processPosition(position: Position): Promise<Position | null> {
+async function processPosition(position: Position): Promise<void> {
   try {
     // 1. Fetch all token data in single call (price, kline, security, order flow)
     const details = await getTokenDetails(CHAIN, position.tokenAddress);
@@ -174,20 +167,17 @@ async function processPosition(position: Position): Promise<Position | null> {
         aiReasoning: decision.reasoning,
         decisionId: decisionRecord.id, // Pass decision ID for outcome update
       });
-      const isSold = !result.find(
-        (p) => p.tokenAddress === position.tokenAddress,
-      );
-      if (isSold) {
-        await savePositions(result);
+      // result is empty array if sold, so we can check length
+      if (result.length === 0) {
+        // Position was sold (removePosition already called)
         // Update decision outcome to success/failure based on trade result
         // (This will be handled in executeSellOrder after order confirmation)
-        return null; // Position sold
+        return; // Position sold
       }
       // If not sold (error), update decision outcome to failure
       await updateDecisionOutcome(decisionRecord.id, "failure", {
         exitReason: "execution_failed",
       });
-      return position;
     } else {
       // Position held - update decision outcome to executed
       await updateDecisionOutcome(decisionRecord.id, "executed", {
@@ -199,13 +189,19 @@ async function processPosition(position: Position): Promise<Position | null> {
       position.lastHoldDecisionId = decisionRecord.id;
       position.lastUpdated = Date.now();
 
-      return position;
+      // Update the position in storage (merge will update existing entry)
+      const positions = await getPositions();
+      const index = positions.findIndex(p => p.tokenAddress === position.tokenAddress);
+      if (index !== -1) {
+        positions[index] = position;
+        await savePositions(positions);
+      }
     }
   } catch (error) {
     logger.error(`Error processing position ${position.tokenSymbol}`, {
       error: String(error),
     });
-    return position; // Return unchanged position on error
+    // Position remains unchanged on error
   }
 }
 
@@ -232,11 +228,8 @@ async function executeSellOrder({
       `[DRY RUN] Sell ${position.tokenSymbol} - Exit Reason: ${exitReason}`,
     );
 
-    // Update position as sold (remove from list)
-    const positions = await getPositions();
-    const filtered = positions.filter(
-      (p) => p.tokenAddress !== position.tokenAddress,
-    );
+    // Remove position as sold (atomic operation)
+    await removePosition(position.tokenAddress);
 
     // Add to trades history
     const trade: Trade = {
@@ -308,8 +301,8 @@ async function executeSellOrder({
       logger.debug(`Updated HOLD decision ${position.lastHoldDecisionId} with outcome: ${holdOutcome}`);
     }
 
-    // Return filtered list for caller to save
-    return filtered;
+    // Return empty array to signal position was removed
+    return [];
   }
 
   try {
@@ -326,11 +319,8 @@ async function executeSellOrder({
     });
 
     // Wait for confirmation (polling logic)
-    // Remove position from list immediately
-    const positions = await getPositions();
-    const filtered = positions.filter(
-      (p) => p.tokenAddress !== position.tokenAddress,
-    );
+    // Remove position from list immediately (atomic operation)
+    await removePosition(position.tokenAddress);
 
     const trade: Trade = {
       id: crypto.randomUUID(),
@@ -374,15 +364,14 @@ async function executeSellOrder({
       symbol: position.tokenSymbol,
     });
 
-    // Return filtered list for caller to save
-    return filtered;
+    // Return empty array to signal position was removed
+    return [];
   } catch (error) {
     logger.error(`Failed to execute sell for ${position.tokenSymbol}`, {
       error: String(error),
     });
-    // Return original positions list (no change) to indicate failure
-    const positions = await getPositions();
-    return positions;
+    // Return empty array to indicate failure but position is still there
+    return [];
   }
 }
 
