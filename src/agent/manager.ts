@@ -142,8 +142,29 @@ function buildUserPrompt(
   tokenData: TokenData,
   learnings: Learning[]
 ): string {
-  // Use new pattern scoring system from learner.ts for SELL decisions
-  const relevantPatterns = getRelevantPatterns(learnings, "SELL");
+  // Use new pattern scoring system from learner.ts for SELL/HOLD decisions
+  // Include both SELL and HOLD patterns (exit timing, hold loss patterns, etc.)
+  const relevantPatterns = getRelevantPatterns(learnings, ["SELL", "HOLD"])
+    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+    .slice(0, 10);
+
+  // Separate patterns by type for better display
+  const holdLossPatterns = relevantPatterns.filter(p => p.type === "hold_loss");
+  const exitPatterns = relevantPatterns.filter(p => p.type === "exit" || p.type === "timing");
+
+  const holdLossText = holdLossPatterns.length > 0
+    ? holdLossPatterns.map(p => {
+        const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+        return `${scoreIcon} [HOLD LOSS WARNING] ${p.description} (${p.successRate}% loss rate, avg ${p.avgPnlPercent?.toFixed(1)}% loss)`;
+      }).join("\n")
+    : "None detected";
+
+  const exitPatternsText = exitPatterns.length > 0
+    ? exitPatterns.map(p => {
+        const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+        return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
+      }).join("\n")
+    : "None";
 
   const relevantLearnings = relevantPatterns
     .map(p => {
@@ -190,6 +211,12 @@ ${tokenData.volumeDeltas5m}
 
 ━━━ RISK ━━━
 Rug: ${tokenData.rugRatio} | WashTrading: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}
+
+━━━ EXIT PATTERNS ━━━
+${exitPatternsText}
+
+━━━ HOLD LOSS WARNINGS ━━━
+${holdLossText}
 
 ━━━ LEARNINGS ━━━
 ${relevantLearnings || "None"}

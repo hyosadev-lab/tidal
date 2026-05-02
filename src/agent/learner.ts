@@ -15,11 +15,13 @@ to improve future trading decisions.
 
 Focus on:
 1. ENTRY TIMING — When to buy, what conditions precede successful buys
-2. EXIT TIMING — When to sell, holding duration patterns
-3. RISK PATTERNS — When to skip, avoidance criteria
-4. HOLD PATTERNS — When to hold, momentum continuation signals
-5. ORDER FLOW — Smart money activity, buy/sell pressure patterns
-6. VOLUME PATTERNS — Volume spike confirmation, momentum signals
+2. EXIT TIMING — When to sell, holding duration patterns, take profit signals
+3. RISK PATTERNS — When to skip, avoidance criteria, tokens to avoid
+4. HOLD PATTERNS — When to hold (profitable), momentum continuation signals
+5. HOLD LOSS PATTERNS — When holds result in losses, exit early signals, stop loss triggers
+6. SKIP MISSED OPPORTUNITIES — Tokens that were skipped but went up, patterns to watch for
+7. ORDER FLOW — Smart money activity, buy/sell pressure patterns
+8. VOLUME PATTERNS — Volume spike confirmation, momentum signals
 
 Each decision includes:
 - Type: BUY, SELL, SKIP, or HOLD
@@ -33,7 +35,7 @@ Respond ONLY in valid JSON:
 {
   "patterns": [
     {
-      "type": "entry" | "exit" | "risk" | "filter" | "timing" | "volume",
+      "type": "entry" | "exit" | "risk" | "filter" | "timing" | "volume" | "hold_loss" | "missed_opportunity",
       "description": "concise, actionable pattern with specific thresholds",
       "successRate": 0-100,
       "avgPnlPercent": number,
@@ -279,7 +281,7 @@ Generate patterns for:
  */
 export function getRelevantPatterns(
   learnings: Learning[],
-  decisionType: "BUY" | "SELL" | "SKIP" | "HOLD"
+  decisionType: ("BUY" | "SELL" | "SKIP" | "HOLD")[]
 ): PatternAnalysis[] {
   const now = Date.now();
   const maxAgeDays = 7;
@@ -306,16 +308,19 @@ export function getRelevantPatterns(
       if ((pattern.successRate || 0) < 50) return false;
       if ((pattern.appliedCount || 0) < 2) return false;
 
-      // Type filter
-      if (decisionType === "BUY") {
-        return ["entry", "timing", "volume", "filter"].includes(pattern.type);
-      } else if (decisionType === "SELL") {
-        return ["exit", "timing", "risk"].includes(pattern.type);
-      } else if (decisionType === "SKIP") {
-        return ["filter", "risk"].includes(pattern.type);
-      } else if (decisionType === "HOLD") {
-        return ["timing"].includes(pattern.type);
+      if (decisionType.includes("BUY")) {
+        return ["entry", "timing", "volume"].includes(pattern.type)
       }
+      if (decisionType.includes("SKIP")) {
+        return ["risk", "filter", "missed_opportunity"].includes(pattern.type)
+      }
+      if (decisionType.includes("SELL")) {
+        return ["exit", "timing"].includes(pattern.type)
+      }
+      if (decisionType.includes("HOLD")) {
+        return ["timing", "hold_loss"].includes(pattern.type)
+      }
+
       return false;
     })
     .map(({ pattern, learningAge }) => {

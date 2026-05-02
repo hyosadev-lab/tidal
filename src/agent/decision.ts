@@ -131,7 +131,7 @@ function buildUserPrompt(
   learnings: Learning[]
 ): string {
   // Use new pattern scoring system from learner.ts
-  const relevantPatterns = getRelevantPatterns(learnings, "BUY");
+  const relevantPatterns = getRelevantPatterns(learnings, ["BUY", "SKIP"]);
 
   const relevantLearnings = relevantPatterns
     .map(p => {
@@ -149,6 +149,30 @@ function buildUserPrompt(
     ? topEntryPatterns.map(p => {
         const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
         return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg)`;
+      }).join("\n")
+    : "None";
+
+  // Get missed opportunity patterns (tokens skipped but went up)
+  const missedOpportunityPatterns = relevantPatterns
+    .filter(p => p.type === "missed_opportunity")
+    .slice(0, 3);
+
+  const missedOpportunityText = missedOpportunityPatterns.length > 0
+    ? missedOpportunityPatterns.map(p => {
+        const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+        return `${scoreIcon} [WARNING] ${p.description} (${p.successRate}% success, avg ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% gain missed)`;
+      }).join("\n")
+    : "None";
+
+  // Get filter patterns (quality criteria)
+  const filterPatterns = relevantPatterns
+    .filter(p => p.type === "filter")
+    .slice(0, 3);
+
+  const filterPatternsText = filterPatterns.length > 0
+    ? filterPatterns.map(p => {
+        const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+        return `${scoreIcon} [FILTER] ${p.description} (${p.successRate}% success)`;
       }).join("\n")
     : "None";
 
@@ -188,6 +212,12 @@ Rug: ${token.rugRatio.toFixed(3)} | Wash: ${token.isWashTrading} | Creator: ${to
 
 ━━━ TOP ENTRY PATTERNS ━━━
 ${topEntryPatternsText}
+
+━━━ MISSED OPPORTUNITY WARNINGS ━━━
+${missedOpportunityText}
+
+━━━ FILTER CRITERIA ━━━
+${filterPatternsText}
 
 ━━━ ALL LEARNINGS ━━━
 ${relevantLearnings || "None"}
