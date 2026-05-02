@@ -75,6 +75,12 @@ async function processPosition(position: Position): Promise<void> {
     const currentMarketCap = details.usdMarketCap;
     const priceChange1h = details.priceChange1h;
 
+    // Validate price data - skip update if price is invalid (0 or too low)
+    if (!currentPrice || currentPrice <= 0) {
+      logger.warn(`Invalid price for ${position.tokenSymbol}: ${currentPrice}, skipping update`);
+      return;
+    }
+
     // Update position PnL
     position.currentPrice = currentPrice;
     position.currentMarketCap = currentMarketCap;
@@ -87,6 +93,11 @@ async function processPosition(position: Position): Promise<void> {
 
     // costSol is the SOL amount spent at entry
     // prices are in USD, so calculate PnL based on USD value change
+    // Validate entryPrice to prevent division by zero
+    if (!position.entryPrice || position.entryPrice <= 0) {
+      logger.error(`Invalid entryPrice for ${position.tokenSymbol}: ${position.entryPrice}`);
+      return;
+    }
     const priceChangePercent = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
 
     // Apply same percentage change to our SOL investment
@@ -228,6 +239,13 @@ async function executeSellOrder({
       `[DRY RUN] Sell ${position.tokenSymbol} - Exit Reason: ${exitReason}`,
     );
 
+    // Validate current price before selling
+    if (!position.currentPrice || position.currentPrice <= 0) {
+      logger.error(`Cannot sell ${position.tokenSymbol}: currentPrice is invalid (${position.currentPrice})`);
+      // Return empty array to indicate sell failed
+      return [];
+    }
+
     // Remove position as sold (atomic operation)
     await removePosition(position.tokenAddress);
 
@@ -241,7 +259,7 @@ async function executeSellOrder({
       inputAmount: position.amountToken,
       inputAmountSol: position.costSol,
       outputAmount: "0",
-      priceAtTrade: position.currentPrice || 0,
+      priceAtTrade: position.currentPrice,
       marketCapAtTrade: position.currentMarketCap || 0,
       timestamp: Date.now(),
       orderId: "dry-run-" + crypto.randomUUID(),
@@ -250,7 +268,7 @@ async function executeSellOrder({
 
       entryPrice: position.entryPrice,
       entryMarketCap: position.entryMarketCap,
-      exitPrice: position.currentPrice || 0,
+      exitPrice: position.currentPrice,
       exitMarketCap: position.currentMarketCap || 0,
       pnlSol: position.unrealizedPnlSol,
       pnlPercent: position.unrealizedPnlPercent,
@@ -305,6 +323,13 @@ async function executeSellOrder({
     return [];
   }
 
+  // Validate current price before selling
+  if (!position.currentPrice || position.currentPrice <= 0) {
+    logger.error(`Cannot sell ${position.tokenSymbol}: currentPrice is invalid (${position.currentPrice})`);
+    // Return empty array to indicate sell failed
+    return [];
+  }
+
   try {
     const result = await executeSell({
       chain: CHAIN,
@@ -331,7 +356,7 @@ async function executeSellOrder({
       inputAmount: position.amountToken,
       inputAmountSol: position.costSol,
       outputAmount: "0",
-      priceAtTrade: position.currentPrice || 0,
+      priceAtTrade: position.currentPrice,
       marketCapAtTrade: position.currentMarketCap || 0,
       timestamp: Date.now(),
       orderId: result.order_id,
@@ -340,7 +365,7 @@ async function executeSellOrder({
 
       entryPrice: position.entryPrice,
       entryMarketCap: position.entryMarketCap,
-      exitPrice: position.currentPrice || 0,
+      exitPrice: position.currentPrice,
       exitMarketCap: position.currentMarketCap || 0,
       pnlSol: position.unrealizedPnlSol,
       pnlPercent: position.unrealizedPnlPercent,
