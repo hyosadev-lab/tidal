@@ -131,14 +131,7 @@ function buildUserPrompt(
   learnings: Learning[]
 ): string {
   // Use new pattern scoring system from learner.ts
-  const relevantPatterns = getRelevantPatterns(learnings, ["BUY", "SKIP"]);
-
-  const relevantLearnings = relevantPatterns
-    .map(p => {
-      const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
-      return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
-    })
-    .join("\n");
+  const relevantPatterns = getRelevantPatterns(learnings, ["BUY", "SKIP"])
 
   // Get top patterns for quick reference
   const topEntryPatterns = relevantPatterns
@@ -175,6 +168,14 @@ function buildUserPrompt(
         return `${scoreIcon} [FILTER] ${p.description} (${p.successRate}% success)`;
       }).join("\n")
     : "None";
+
+  const relevantLearnings = relevantPatterns
+    .map(p => {
+      const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
+      return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
+    })
+    .slice(0, 15)
+    .join("\n");
 
   // Pre-compute flags (adjusted for 5m timeframe)
   const isOverextended = token.priceChange1h > 50;
@@ -219,7 +220,7 @@ ${missedOpportunityText}
 ━━━ FILTER CRITERIA ━━━
 ${filterPatternsText}
 
-━━━ ALL LEARNINGS ━━━
+━━━ LEARNINGS (last 15) ━━━
 ${relevantLearnings || "None"}
 `;
 }

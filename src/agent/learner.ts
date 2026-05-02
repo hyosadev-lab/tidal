@@ -343,7 +343,6 @@ export function getRelevantPatterns(
       };
     })
     .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
-    .slice(0, 10);
 
   return relevantPatterns;
 }
@@ -368,7 +367,7 @@ export function scorePattern(
 
   // PnL: For SKIP/HOLD, use success rate as proxy
   let pnlScore: number;
-  if (pattern.avgPnlPercent === 0 && ["filter", "risk", "timing"].includes(pattern.type)) {
+  if (pattern.avgPnlPercent === 0 && ["risk", "filter", "missed_opportunity", "timing", "hold_loss"].includes(pattern.type)) {
     pnlScore = successScore; // Use success rate for non-PnL patterns
   } else {
     pnlScore = Math.min(100, Math.max(0, pattern.avgPnlPercent || 0));

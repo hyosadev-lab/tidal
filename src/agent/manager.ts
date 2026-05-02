@@ -145,8 +145,6 @@ function buildUserPrompt(
   // Use new pattern scoring system from learner.ts for SELL/HOLD decisions
   // Include both SELL and HOLD patterns (exit timing, hold loss patterns, etc.)
   const relevantPatterns = getRelevantPatterns(learnings, ["SELL", "HOLD"])
-    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
-    .slice(0, 10);
 
   // Separate patterns by type for better display
   const holdLossPatterns = relevantPatterns.filter(p => p.type === "hold_loss");
@@ -171,6 +169,7 @@ function buildUserPrompt(
       const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
       return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
     })
+    .slice(0, 15)
     .join("\n");
 
   const holdingMs = Date.now() - position.entryTimestamp;
@@ -218,7 +217,7 @@ ${exitPatternsText}
 ━━━ HOLD LOSS WARNINGS ━━━
 ${holdLossText}
 
-━━━ LEARNINGS ━━━
+━━━ LEARNINGS (last 15) ━━━
 ${relevantLearnings || "None"}
 
 ━━━ MARKET ━━━
