@@ -205,7 +205,6 @@ async function executeBuyOrder({
     logger.info(`[DRY RUN] Buy ${token.symbol} - ${AMOUNT_SOL} SOL`);
 
     // Calculate token amount
-    // token.price from kline data is in SOL
     const amountToken = (AMOUNT_SOL / token.price).toString();
 
     // Create mock trade and position

@@ -86,13 +86,13 @@ async function processPosition(position: Position): Promise<void> {
     }
 
     // costSol is the SOL amount spent at entry
-    // Calculate current SOL value using price ratio: costSol * (currentPrice / entryPrice)
-    const priceRatio = currentPrice / position.entryPrice;
-    const currentValueSol = position.costSol * priceRatio;
-    position.unrealizedPnlSol = currentValueSol - position.costSol;
+    // prices are in USD, so calculate PnL based on USD value change
+    const priceChangePercent = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
 
-    position.unrealizedPnlPercent =
-      ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+    // Apply same percentage change to our SOL investment
+    const currentValueSol = position.costSol * (1 + priceChangePercent / 100);
+    position.unrealizedPnlSol = currentValueSol - position.costSol;
+    position.unrealizedPnlPercent = priceChangePercent;
     position.lastUpdated = Date.now();
 
     // 2. AI Decision - use data from getTokenDetails (no redundant API calls)
