@@ -474,7 +474,7 @@ export async function analyzeSkippedTokens(): Promise<{
         totalComparisons++;
 
         // Categorize based on price movement between skips
-        if (changePercent > 50) {
+        if (changePercent > 25) {
           // Token went up significantly between skips - potential missed opportunity
           missedOpportunities++;
           missedOpportunityDetails.push({
