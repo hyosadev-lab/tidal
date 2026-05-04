@@ -190,7 +190,7 @@ function buildUserPrompt(
       const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
       return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
     })
-    .slice(0, 15)
+    .slice(0, 30)
     .join("\n");
 
   // Pre-compute flags (adjusted for 5m timeframe)
@@ -236,7 +236,7 @@ ${missedOpportunityText}
 ━━━ FILTER CRITERIA ━━━
 ${filterPatternsText}
 
-━━━ LEARNINGS (last 15) ━━━
+━━━ RELEVANT LEARNINGS ━━━
 ${relevantLearnings || "None"}
 `;
 }

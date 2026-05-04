@@ -7,6 +7,8 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openrouter/elephant-al
 const TEMPERATURE = parseFloat(process.env.TEMPERATURE || "0.3");
 const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || "5000", 10);
 
+const VALID_PATTERN_TYPES = ["entry", "exit", "risk", "filter", "timing", "volume", "hold", "hold_loss", "missed_opportunity"];
+
 const SYSTEM_PROMPT = `
 You are an expert trading strategy analyst for Solana memecoin "Trenches" trading.
 
@@ -14,10 +16,12 @@ Analyze ALL completed decisions (BUY, SELL, SKIP, HOLD) and extract actionable p
 to improve future trading decisions.
 
 CRITICAL RULES - DO NOT VIOLATE:
-- creator_close = BULLISH signal (creator sold = no dump risk) → should be BUY pattern
-- creator_hold = BEARISH signal (creator still holds = dump risk) → should be SKIP pattern
+- creator_close = BULLISH signal (creator sold = no dump risk) → favor ENTRY patterns
+- creator_hold = BEARISH signal (creator still holds = dump risk) → favor RISK/FILTER patterns
 - NEVER create risk/filter patterns that flag creator_close as negative
 - creator_close is a POSITIVE filter, not a risk flag
+- High rug ratio (50%+) with creator_close is ACCEPTABLE (creator can't dump, evaluate tradeoff)
+- High rug ratio (50%+) with creator_hold is RISK (creator can still dump)
 
 NET FLOW THRESHOLDS - TRENCHES SPECIFIC:
 - For trenches (MC $10K-$1M), use RELATIVE thresholds not absolute $1000
@@ -44,13 +48,13 @@ Each decision includes:
 - PnL: For BUY/SELL decisions
 
 IMPORTANT: Use ONLY these pattern types (do not create new types):
-entry, exit, risk, filter, timing, volume, hold_loss, missed_opportunity
+${VALID_PATTERN_TYPES.join(", ")}
 
 Respond ONLY in valid JSON:
 {
   "patterns": [
     {
-      "type": "entry" | "exit" | "risk" | "filter" | "timing" | "volume" | "hold_loss" | "missed_opportunity",
+      "type": ${VALID_PATTERN_TYPES.map(t => `"${t}"`).join(" | ")},
       "description": "concise, actionable pattern with specific thresholds",
       "successRate": 0-100,
       "avgPnlPercent": number,
@@ -94,9 +98,6 @@ export async function generateLearnings(): Promise<void> {
       logger.warn("AI returned no patterns");
       return;
     }
-
-    // Valid pattern types only
-    const VALID_PATTERN_TYPES = ["entry", "exit", "risk", "filter", "timing", "volume", "hold_loss", "missed_opportunity"];
 
     // Filter patterns by quality AND valid type
     const MIN_SUCCESS_RATE = 50;
@@ -285,11 +286,15 @@ Decisions:
 ${decisionDetails}
 
 Generate patterns for:
-1. ENTRY: When to BUY (conditions, signals, timing)
+1. ENTRY: When to BUY (conditions, signals, timing, volume confirmation)
 2. EXIT: When to SELL (take profit, stop loss signals)
-3. RISK: When to SKIP (avoidance criteria)
-4. HOLD: When to HOLD (momentum continuation)
-5. MISSED OPPORTUNITIES: When SKIP decisions resulted in missed gains (adjust skip criteria)
+3. RISK: When to SKIP (avoidance criteria, high rug ratio, wash trading)
+4. FILTER: Quality gates (creator status, liquidity, holder distribution)
+5. TIMING: Entry/exit timing patterns
+6. VOLUME: Volume spike confirmation, momentum signals
+7. HOLD: When to HOLD profitably (momentum continuation, profitable exit timing)
+8. HOLD LOSS: When holds result in losses, exit early signals
+9. MISSED OPPORTUNITIES: When SKIP decisions resulted in missed gains (adjust skip criteria)
 `;
 }
 
@@ -337,7 +342,7 @@ export function getRelevantPatterns(
         patternType.push("exit", "timing")
       }
       if (decisionType.includes("HOLD")) {
-        patternType.push("timing", "hold_loss")
+        patternType.push("timing", "hold", "hold_loss", "volume")
       }
 
       return patternType.includes(pattern.type)

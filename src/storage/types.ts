@@ -57,7 +57,7 @@ export interface Position {
 }
 
 export interface PatternAnalysis {
-  type: "entry" | "exit" | "risk" | "filter" | "timing" | "volume" | "hold_loss" | "missed_opportunity";
+  type: "entry" | "exit" | "risk" | "filter" | "timing" | "volume" | "hold" | "hold_loss" | "missed_opportunity";
   description: string;
   successRate: number;
   avgPnlPercent: number;
