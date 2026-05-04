@@ -207,3 +207,9 @@ export interface SoldToken {
   symbol: string;
   soldAt: number;
 }
+
+export interface LearningState {
+  decisionCounter: number;      // Total completed decisions since start
+  lastTriggerCount: number;     // Counter value when learning was last triggered
+  isLearning: boolean;          // Flag to prevent overlapping learning runs
+}

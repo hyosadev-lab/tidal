@@ -1,4 +1,4 @@
-import type { Trade, Position, Learning, Performance, SoldToken, DecisionRecord } from "./types";
+import type { Trade, Position, Learning, Performance, SoldToken, DecisionRecord, LearningState } from "./types";
 
 const DATA_DIR = "data";
 
@@ -282,11 +282,53 @@ export async function updateDecisionOutcome(
   const decisions = await getDecisions();
   const index = decisions.findIndex((d) => d.id === decisionId);
   if (index !== -1) {
+    const oldOutcome = decisions[index]!.outcome;
     decisions[index]!.outcome = outcome;
     if (outcomeDetails) {
       decisions[index]!.outcomeDetails = outcomeDetails;
     }
     await saveDecisions(decisions);
+
+    // Check if transitioning from pending to final state
+    if (oldOutcome === "pending" && outcome !== "pending") {
+      // Acquire lock for learning state
+      const releaseLock = await acquireLock(LEARNING_STATE_FILE);
+      try {
+        const state = await getLearningState();
+        state.decisionCounter++;
+
+        // Check if should trigger learning (30 new decisions)
+        if (!state.isLearning && (state.decisionCounter - state.lastTriggerCount >= 30)) {
+          state.isLearning = true;
+          await saveLearningState(state);
+          releaseLock();
+
+          // Trigger learning asynchronously
+          if (learningTriggerCallback) {
+            learningTriggerCallback()
+              .then(async () => {
+                // Use state from memory - no need to reload
+                state.lastTriggerCount = state.decisionCounter;
+                state.isLearning = false;
+                await saveLearningState(state);
+              })
+              .catch(async (err) => {
+                console.error("[DB] Learning generation failed:", err);
+                // Update lastTriggerCount to prevent repeated triggers
+                state.lastTriggerCount = state.decisionCounter;
+                state.isLearning = false;
+                await saveLearningState(state);
+              });
+          }
+        } else {
+          await saveLearningState(state);
+          releaseLock();
+        }
+      } catch (error) {
+        releaseLock();
+        throw error;
+      }
+    }
   }
 }
 
@@ -299,4 +341,26 @@ export async function cleanupOldDecisions(maxCount: number = 200): Promise<void>
     console.log(`[DB] Cleanup: removed ${removedCount} decisions (keeping ${maxCount})`);
     await saveDecisions(keepDecisions);
   }
+}
+
+// Learning state management
+const LEARNING_STATE_FILE = "learning_state.json";
+
+export async function getLearningState(): Promise<LearningState> {
+  return readJSON<LearningState>(LEARNING_STATE_FILE, {
+    decisionCounter: 0,
+    lastTriggerCount: 0,
+    isLearning: false,
+  });
+}
+
+export async function saveLearningState(state: LearningState): Promise<void> {
+  await writeJSON(LEARNING_STATE_FILE, state);
+}
+
+// Callback registration for learning trigger
+let learningTriggerCallback: (() => Promise<void>) | null = null;
+
+export function setLearningTriggerCallback(cb: () => Promise<void>) {
+  learningTriggerCallback = cb;
 }

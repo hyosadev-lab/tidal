@@ -67,16 +67,8 @@ export async function generateLearnings(): Promise<void> {
       (d) => d.outcome === "success" || d.outcome === "failure" || d.outcome === "skipped" || d.outcome === "executed",
     );
 
-    if (completedDecisions.length < 5) {
-      logger.info(`Not enough decisions for learning: ${completedDecisions.length}/5 required`);
-      return;
-    }
-
     // Get recent decisions (last 50 or last 7 days)
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const recentDecisions = completedDecisions
-      .filter(d => d.timestamp > sevenDaysAgo)
-      .slice(-50);
+    const recentDecisions = completedDecisions.slice(-50)
 
     logger.info(`Generating learnings from ${recentDecisions.length} decisions`);
 
@@ -126,6 +118,7 @@ export async function generateLearnings(): Promise<void> {
     const combinedLearnings = [...allLearnings, newLearning];
 
     // Keep only last 7 days of learnings
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const recentLearnings = combinedLearnings.filter(l => l.createdAt > sevenDaysAgo);
 
     await saveLearnings(recentLearnings);
