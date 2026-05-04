@@ -29,7 +29,8 @@ and volume delta. Price action is secondary.
 
 DECISION LOGIC:
 - BUY if: strong order flow, smart money accumulation, healthy risk metrics, creator_close (creator sold = no dump risk)
-- SKIP if: weak signals, high rug ratio, wash trading, creator_hold (creator still holds), or distribution detected
+- SKIP if: weak signals, wash trading, creator_hold (creator still holds), or distribution detected
+- RUG RATIO: High rug ratio (90%+) is WARNING not auto-skip. Evaluate tradeoff: creator_close = no dump risk, but whale concentration exists. Trenches often have high rug ratio but still pump.
 - NET FLOW: For trenches ($20K-$2M MC), focus on direction (positive/negative) not absolute amounts. Low net flow ($50-$500) can be valid.
 - Protect capital first. A missed trade is always better than a bad entry.
 
@@ -112,27 +113,32 @@ export async function getBuySkipDecision(
 }
 
 function getFallbackDecision(token: TokenData): AiDecision {
-  // Simple rule-based fallback logic
+  // Rule-based fallback - permissive for trenches trading
   let action: "BUY" | "SKIP" = "SKIP";
   let reasoning = "Not enough signals";
 
+  // Critical filters only - let high rug ratio pass if creator sold
+  // But wash trading is always skip
+  if (token.isWashTrading) {
+    return { action: "SKIP", confidence: 95, reasoning: "Wash trading detected", signals: ["wash_trading"] };
+  }
+
   if (
     token.smartDegenCount >= 3 &&
-    token.rugRatio < 0.2 &&
     token.creatorTokenStatus === "creator_close" &&
     token.liquidity > 50000 &&
-    token.top10HolderRate < 0.3 &&
-    !token.isWashTrading
+    token.top10HolderRate < 0.5
   ) {
     action = "BUY";
-    reasoning = "Strong signals: smart money, low rug ratio, dev sold, high liquidity";
+    const rugNote = token.rugRatio > 0.5 ? ` (high rug ${token.rugRatio.toFixed(2)} but creator sold)` : "";
+    reasoning = `Smart money detected${rugNote}, liquidity OK`;
   }
 
   return {
     action,
     confidence: 75,
     reasoning,
-    signals: ["smart_money", "low_risk"],
+    signals: ["smart_money"],
   };
 }
 
@@ -218,8 +224,8 @@ ${lastCandles5m}
 
 ${token.volumeDeltas5m}
 
-━━━ RISK (FAST FILTER) ━━━
-Rug: ${token.rugRatio.toFixed(3)} | Wash: ${token.isWashTrading} | Creator: ${token.creatorTokenStatus}
+━━━ RISK ━━━
+Rug: ${token.rugRatio.toFixed(3)} ${token.rugRatio > 0.7 ? "⚠️ HIGH" : token.rugRatio > 0.3 ? "🟡 MEDIUM" : "🟢 LOW"} ${token.creatorTokenStatus === "creator_close" ? "(creator sold → no dump risk)" : "(creator holds → watch)"} | Wash: ${token.isWashTrading} | Creator: ${token.creatorTokenStatus}
 
 ━━━ TOP ENTRY PATTERNS ━━━
 ${topEntryPatternsText}
