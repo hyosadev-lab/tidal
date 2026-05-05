@@ -210,7 +210,7 @@ Buy: $${tokenData.orderFlowSummary.buyVolume.toFixed(2)} | Sell: $${tokenData.or
 ━━━ SMART MONEY ━━━
 Net Flow: $${tokenData.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
 Buys: ${tokenData.orderFlowSummary.smartMoneyBuyCount} | Sells: ${tokenData.orderFlowSummary.smartMoneySellCount} | Ratio: ${smRatio}x
-Degens: ${tokenData.smartDegenCount} (entry: ${position.smartDegenEntryCount ?? "N/A"})
+Active Smart Degens: ${tokenData.activeSmartDegenCount} (entry: ${position.activeSmartDegenEntryCount ?? "N/A"})
 ${tokenData.topTradersSummary}
 
 ━━━ CANDLES 5M (last 12) ━━━

@@ -44,6 +44,7 @@ function mapToTokenData(item: any): TokenData {
     ctoFlag: item.cto_flag || false,
 
     // Enriched fields (will be filled later)
+    activeSmartDegenCount: 0, // Will be populated from traders data
     kline5mData: "",
     price: 0, // Will be populated from kline data
     priceChange1h: 0, // Will be populated from kline data

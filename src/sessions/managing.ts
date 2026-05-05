@@ -124,6 +124,7 @@ async function processPosition(position: Position): Promise<void> {
       volumeDeltas5m: details.volumeDeltas5m,
       holderCount: details.holderCount || 0,
       smartDegenCount: details.smartDegenCount || 0,
+      activeSmartDegenCount: details.activeSmartDegenCount || 0,
       renownedCount: details.renownedCount || 0,
       top10HolderRate: details.top10HolderRate || 0,
       creatorTokenStatus: details.creatorTokenStatus || "",

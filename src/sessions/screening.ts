@@ -131,6 +131,7 @@ async function processCandidate(token: TokenData): Promise<void> {
     token.topTradersSummary = details.topTradersSummary;
     token.volume1h = details.volume1h;
     token.volumeDeltas5m = details.volumeDeltas5m;
+    token.activeSmartDegenCount = details.activeSmartDegenCount;
 
     // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();
@@ -244,6 +245,7 @@ async function executeBuyOrder({
       lastUpdated: Date.now(),
       buyTradeId: trade.id,
       smartDegenEntryCount: token.smartDegenCount,
+      activeSmartDegenEntryCount: token.activeSmartDegenCount,
       peakPrice: token.price,
       peakPriceTimestamp: Date.now(),
     };
@@ -360,6 +362,7 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData, decisionId?
               lastUpdated: Date.now(),
               buyTradeId: trade.id,
               smartDegenEntryCount: token.smartDegenCount,
+              activeSmartDegenEntryCount: token.activeSmartDegenCount,
               peakPrice: token.price,
               peakPriceTimestamp: Date.now(),
             };

@@ -216,7 +216,7 @@ Buy Vol: $${token.orderFlowSummary.buyVolume.toFixed(0)} | Sell Vol: $${token.or
 ━━━ SMART MONEY (LEADING INDICATOR) ━━━
 Net Flow: $${token.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
 Buys: ${token.orderFlowSummary.smartMoneyBuyCount} | Sells: ${token.orderFlowSummary.smartMoneySellCount}
-Degens: ${token.smartDegenCount}
+Active Smart Degens: ${token.activeSmartDegenCount}
 ${token.topTradersSummary}
 
 ━━━ CANDLES 5M (last 12) ━━━

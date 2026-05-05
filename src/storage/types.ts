@@ -48,7 +48,8 @@ export interface Position {
   lastUpdated: number;
   buyTradeId: string;
   // Data saat entry untuk perbandingan
-  smartDegenEntryCount?: number;
+  smartDegenEntryCount?: number; // total smart wallets at entry (from tokenInfo)
+  activeSmartDegenEntryCount?: number; // active smart degens at entry (from traders list)
   // Trailing stop data
   peakPrice?: number;
   peakPriceTimestamp?: number;
@@ -187,7 +188,8 @@ export interface TokenData {
   renouncedMint: boolean;
   renownedCount: number;
   rugRatio: number;
-  smartDegenCount: number;
+  smartDegenCount: number; // total smart wallets on token
+  activeSmartDegenCount: number; // smart degens in top traders list
   symbol: string;
   top10HolderRate: number;
 

@@ -23,7 +23,8 @@ export interface TokenDetails {
   // Token Info fields (real-time data)
   liquidity: number;
   holderCount: number;
-  smartDegenCount: number;
+  smartDegenCount: number; // total smart wallets on token
+  activeSmartDegenCount: number; // smart degens in top traders list
   renownedCount: number;
   usdMarketCap: number;
   launchpadPlatform: string;
@@ -51,7 +52,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const tokenSecurity = await fetchTokenSecurity(chain, address);
 
     // Step 2: Fetch market data (kline & traders) sequential with rate limit
-    const tradersResult = await fetchTopTraders(chain, address, "smart_degen", 50);
+    const tradersResult = await fetchTopTraders(chain, address, 50);
     const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
 
     const traders = tradersResult?.list || [];
@@ -68,6 +69,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
 
     // Process Traders Summary
     const tradersSummary = formatTradersSummary(traders);
+    const activeSmartDegenCount = traders.filter((t: any) => t.tags?.includes("smart_degen")).length;
 
     return {
       kline5mData: kline5mSummary,
@@ -81,6 +83,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       liquidity: parseFloat(tokenInfo.liquidity) || 0,
       holderCount: tokenInfo.holder_count || 0,
       smartDegenCount: tokenInfo.wallet_tags_stat?.smart_wallets || 0,
+      activeSmartDegenCount,
       renownedCount: tokenInfo.wallet_tags_stat?.renowned_wallets || 0,
       usdMarketCap: parseFloat(tokenInfo.price) * parseFloat(tokenInfo.circulating_supply) || 0,
       launchpadPlatform: tokenInfo.launchpad_platform || "",
@@ -119,6 +122,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       liquidity: 0,
       holderCount: 0,
       smartDegenCount: 0,
+      activeSmartDegenCount: 0,
       renownedCount: 0,
       usdMarketCap: 0,
       launchpadPlatform: "",
@@ -233,7 +237,7 @@ function processKlineData(kline5mData: any[], realTimePrice: number) {
 }
 
 function formatTradersSummary(traders: any[]): string {
-  return traders.slice(0, 10).map((t: any) => {
+  return traders.filter(t => t.tags?.includes("smart_degen")).map((t: any) => {
     const walletName = t.name || t.address.slice(0, 6);
     const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
     const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
