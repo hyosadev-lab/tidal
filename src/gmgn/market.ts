@@ -231,7 +231,7 @@ function processKlineData(kline5mData: any[], realTimePrice: number) {
   ]);
 
   // Calculate volume deltas on 5m data (last 5 candles = 25 minutes)
-  const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 5);
+  const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 15);
 
   return { kline5mSummary, volume1h, priceChange1h, volumeDeltas5m };
 }
