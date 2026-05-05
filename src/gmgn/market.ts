@@ -52,7 +52,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const tokenSecurity = await fetchTokenSecurity(chain, address);
 
     // Step 2: Fetch market data (kline & traders) sequential with rate limit
-    const tradersResult = await fetchTopTraders(chain, address, 50);
+    const tradersResult = await fetchTopTraders(chain, address, 50, "smart_degen");
     const kline5mResult = await fetchKline(chain, address, "5m", from5m, now);
 
     const traders = tradersResult?.list || [];
@@ -231,7 +231,7 @@ function processKlineData(kline5mData: any[], realTimePrice: number) {
   ]);
 
   // Calculate volume deltas on 5m data (last 5 candles = 25 minutes)
-  const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 15);
+  const volumeDeltas5m = getVolumeDeltasFromKline(kline5mArray, 6);
 
   return { kline5mSummary, volume1h, priceChange1h, volumeDeltas5m };
 }
