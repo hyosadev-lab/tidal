@@ -47,6 +47,7 @@ export interface Position {
   unrealizedPnlPercent?: number;
   lastUpdated: number;
   buyTradeId: string;
+  buyDecisionId?: string; // Reference to BUY decision for outcome tracking
   // Data saat entry untuk perbandingan
   smartDegenEntryCount?: number; // total smart wallets at entry (from tokenInfo)
   activeSmartDegenEntryCount?: number; // active smart degens at entry (from traders list)

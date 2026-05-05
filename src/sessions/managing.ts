@@ -320,6 +320,16 @@ async function executeSellOrder({
       logger.debug(`Updated HOLD decision ${position.lastHoldDecisionId} with outcome: ${holdOutcome}`);
     }
 
+    // Update BUY decision with final PnL (for learning system)
+    if (position.buyDecisionId) {
+      await updateDecisionOutcome(position.buyDecisionId, "success", {
+        pnlSol: position.unrealizedPnlSol,
+        pnlPercent: position.unrealizedPnlPercent,
+        exitReason: exitReason,
+        holdingDurationMs: Date.now() - position.entryTimestamp,
+      });
+    }
+
     // Return empty array to signal position was removed
     return [];
   }
@@ -471,6 +481,16 @@ async function pollSellOrderConfirmation(
               holdOutcome: holdOutcome as any,
               pnlSol: position.unrealizedPnlSol,
               pnlPercent: position.unrealizedPnlPercent,
+              holdingDurationMs: Date.now() - position.entryTimestamp,
+            });
+          }
+
+          // Update BUY decision with final PnL (for learning system)
+          if (position.buyDecisionId) {
+            await updateDecisionOutcome(position.buyDecisionId, "success", {
+              pnlSol: position.unrealizedPnlSol,
+              pnlPercent: position.unrealizedPnlPercent,
+              exitReason: trade.exitReason,
               holdingDurationMs: Date.now() - position.entryTimestamp,
             });
           }

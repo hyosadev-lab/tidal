@@ -244,6 +244,7 @@ async function executeBuyOrder({
       currentMarketCap: token.usdMarketCap,
       lastUpdated: Date.now(),
       buyTradeId: trade.id,
+      buyDecisionId: decisionId, // Store BUY decision ID for outcome tracking
       smartDegenEntryCount: token.smartDegenCount,
       activeSmartDegenEntryCount: token.activeSmartDegenCount,
       peakPrice: token.price,
@@ -361,6 +362,7 @@ async function pollOrderConfirmation(trade: Trade, token: TokenData, decisionId?
               currentMarketCap: token.usdMarketCap,
               lastUpdated: Date.now(),
               buyTradeId: trade.id,
+              buyDecisionId: decisionId, // Store BUY decision ID for outcome tracking
               smartDegenEntryCount: token.smartDegenCount,
               activeSmartDegenEntryCount: token.activeSmartDegenCount,
               peakPrice: token.price,
