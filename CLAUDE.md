@@ -1,184 +1,175 @@
-# CLAUDE.md — Trenches Trading Agent
+# CLAUDE.md — Tidal
 
-Dokumen ini adalah panduan utama untuk AI coding agent (openclaude) dalam membangun dan memaintain **Trenches Trading Agent** — sistem trading otomatis 24/7 berbasis Bun + TypeScript yang menggunakan GMGN API untuk market data & eksekusi, serta OpenRouter sebagai decision engine.
+Autonomous Solana memecoin trading agent that monitors "Trenches" tokens ($20K–$2M market cap), makes AI-driven buy/sell decisions, and learns from every trade through an event-driven feedback loop.
 
 ---
 
-## Ringkasan Proyek
-
-Trading agent yang berjalan terus-menerus, memantau token-token di "Trenches" (market cap $10K–$1M+), membuat keputusan buy/sell berbasis AI, dan belajar dari setiap trade yang dilakukan melalui feedback loop berbasis file JSON.
-
-**Stack:**
+## Stack
 
 - **Runtime**: Bun (bukan Node.js)
 - **Bahasa**: TypeScript strict mode
-- **Data Storage**: File JSON lokal (`data/` directory)
-- **Market Data & Eksekusi**: `gmgn-cli` (sudah terinstall)
-- **AI Decision Engine**: OpenRouter API (OpenAI-compatible)
-- **Target**: Token Trenches Solana (pump.fun, letsbonk, dll) — market cap $10K–$1M+
+- **Data Storage**: File JSON lokal (`data/` directory) dengan mutex locking
+- **Market Data & Eksekusi**: `gmgn-cli@1.2.8` (subprocess)
+- **AI Decision Engine**: OpenRouter API — model: `google/gemini-2.5-flash-lite`
+- **Target**: Token Trenches Solana (Pump.fun, pump_agent) — market cap $20K–$2M+
 
 ---
 
 ## Struktur Direktori
 
 ```
-trading-agent/
-├── CLAUDE.md                  # File ini
+tidal/
+├── CLAUDE.md
+├── README.md
 ├── .env                       # API keys & config (JANGAN di-commit)
 ├── .env.example               # Template env vars
 ├── .gitignore
-├── package.json               # Bun project
+├── package.json
 ├── tsconfig.json
+├── bun.lock
 ├── src/
-│   ├── index.ts               # Entry point — jalankan kedua sesi paralel
+│   ├── index.ts               # Entry point — graceful shutdown + parallel sessions
 │   ├── agent/
 │   │   ├── decision.ts        # AI Screening: BUY/SKIP decision
 │   │   ├── manager.ts         # AI Managing: HOLD/SELL decision
-│   │   └── learner.ts         # Learning dari trade history
+│   │   └── learner.ts         # Event-driven learning (every 30 decisions)
 │   ├── sessions/
-│   │   ├── screening.ts       # Screening session loop
-│   │   └── managing.ts        # Managing session loop
+│   │   ├── screening.ts       # Token discovery loop
+│   │   └── managing.ts        # Position monitoring loop
 │   ├── gmgn/
-│   │   ├── client.ts          # Wrapper gmgn-cli calls
+│   │   ├── client.ts          # Wrapper gmgn-cli subprocess (rate limited)
 │   │   ├── trenches.ts        # Fetch trenches tokens
-│   │   ├── market.ts          # Market data (kline, rank, traders)
+│   │   ├── market.ts          # Market data (kline, token info, security, order flow)
 │   │   └── trade.ts           # Execute swap, query order
 │   ├── storage/
-│   │   ├── db.ts              # JSON file read/write helpers
-│   │   └── types.ts           # Semua TypeScript interfaces/types
+│   │   ├── db.ts              # JSON file read/write dengan mutex locking
+│   │   └── types.ts           # Semua TypeScript interfaces
 │   └── utils/
-│       ├── concurrency.ts     # Manage async function
+│       ├── concurrency.ts     # Delay utility
+│       ├── kline.ts           # Technical analysis (volume deltas, candlestick, CVD, volume profile)
+│       ├── kline.test.ts      # Tests untuk kline utils
 │       ├── logger.ts          # Structured logging
+│       ├── stats.ts           # Performance display CLI
 │       └── helpers.ts         # Auth utils, UUID, dll
 └── data/
     ├── trades.json            # History semua trades
     ├── positions.json         # Open positions saat ini
-    ├── watchlist.json         # Token yang sedang dipantau
-    ├── performance.json       # Metrics performa agent
-    └── learnings.json         # Pattern & insight dari trades lalu
+    ├── decisions.json         # Decision records dengan rich context
+    ├── learnings.json         # Pattern & insight dari decisions
+    ├── learning_state.json    # Learning trigger state
+    ├── performance.json       # Metrics performa
+    └── sold_tokens.json       # Cooldown tracking untuk token yang sudah dijual
 ```
 
 ---
 
-## Environment Variables (.env)
+## Environment Variables
 
 ```env
 # GMGN API
 GMGN_API_KEY=your_gmgn_api_key
-GMGN_PRIVATE_KEY=your_private_key_for_trade_signing   # Ed25519 atau RSA
+GMGN_PRIVATE_KEY=your_private_key_for_trade_signing
 GMGN_WALLET_ADDRESS=your_wallet_address
 GMGN_CHAIN=sol
 
 # OpenRouter
 OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=openrouter/elephant-alpha            # atau model lain yang cepat & murah
+OPENROUTER_MODEL=google/gemini-2.5-flash-lite
 
 # Trading Config
-MAX_OPEN_POSITIONS=5               # Maks posisi terbuka sekaligus
-TAKE_PROFIT_PERCENT=50             # Take profit di +50%
-STOP_LOSS_PERCENT=30               # Stop loss di -30%
-SCAN_INTERVAL_MINUTES=0.5          # Screening: scan trenches setiap 0.5 menit (30 detik)
-MANAGE_INTERVAL_MINUTES=0.1667     # Managing: monitor posisi terbuka setiap 0.1667 menit (10 detik)
+MAX_OPEN_POSITIONS=3               # Maks posisi terbuka sekaligus
+SCAN_INTERVAL_MINUTES=1            # Screening: scan trenches setiap 1 menit
+MANAGE_INTERVAL_MINUTES=0.5        # Managing: monitor posisi setiap 30 detik
 SLIPPAGE=0.15                      # 15% slippage untuk trenches
-AMOUNT_SOL=0.1                     # Jumlah SOL untuk setiap buy order
+AMOUNT_SOL=0.2                     # Jumlah SOL untuk setiap buy order
+SOLD_COOLDOWN_MINUTES=1            # Skip token yang baru dijual
 
 # GMGN Trenches Parameters
-GMGN_SORT_BY=                      # Sort field: smart_degen_count, renowned_count, volume_24h, volume_1h, swaps_24h, swaps_1h, rug_ratio, holder_count, usd_market_cap, created_timestamp
-GMGN_LIMIT=                        # Max tokens to return
+GMGN_SORT_BY=swaps_1h              # Sort: smart_degen_count, volume_24h, swaps_1h, dll
+GMGN_LIMIT=10                      # Max tokens to return
+GMGN_TYPE=completed                # Type: new_creation, near_completion, completed
+GMGN_LAUNCHPAD_PLATFORM=Pump.fun,pump_agent  # Launchpad filter
 
-# GMGN Trenches Filters (Server-side) - min & max untuk semua filter yang didukung
-GMGN_FILTER_PRESET=                # Filter preset: safe -> max_rug_ratio=0.3 + max_bundler_rate=0.3 + max_insider_ratio=0.3 | smart-money -> min_smart_degen_count=1 | strict -> max_rug_ratio=0.3 + max_bundler_rate=0.3 + max_insider_ratio=0.3 + min_smart_degen_count=1 + min_volume_24h=1000
+# GMGN Trenches Filters
+GMGN_FILTER_PRESET=                # safe | smart-money | strict
+GMGN_MIN_USD_MARKET_CAP=30000
+GMGN_MAX_CREATED=120m              # Max token age
+GMGN_MIN_SMART_DEGEN_COUNT=3
+GMGN_MIN_RENOWNED_COUNT=2
+GMGN_MAX_INSIDER_RATIO=0.10
+GMGN_MAX_CREATOR_BALANCE_RATE=0.11
+
+# GMGN Trenches Filters (Server-side) — min & max untuk semua filter
 GMGN_MIN_*=                        # Minimal *
 GMGN_MAX_*=                        # Maximal *
 
 # Agent
 DRY_RUN=true                       # true = simulasi, false = live trading
+TEMPERATURE=0.15                   # AI exploration level (0-1)
+MAX_TOKENS=2500                    # Max tokens untuk AI response
 LOG_LEVEL=info
 ```
 
 ---
 
-## GMGN CLI — Cara Penggunaan
+## GMGN CLI — Endpoints
 
-`gmgn-cli` adalah tool utama untuk semua interaksi dengan GMGN API. Semua calls dilakukan melalui CLI subprocess, bukan langsung HTTP.
-
-### Endpoints yang Digunakan
+Semua calls melalui `src/gmgn/client.ts` wrapper. Rate limited 100ms antar request.
 
 **1. Trenches — scan token baru**
-
 ```
 gmgn-cli market trenches --chain sol --type completed --filter-preset safe --min-smart-degen-count 1 --raw
 ```
 
-Response: `data.new_creation[]`, `data.pump[]`, `data.completed[]`
-
 **2. K-line data (candlestick)**
-
 ```
 gmgn-cli market kline --chain sol --address <token_address> --resolution 1m --from <timestamp> --to <timestamp> --raw
 ```
 
-- Resolution `1m`: 30 candles (30 menit terakhir)
-- Resolution `5m`: 12 candles (60 menit terakhir)
-
 **3. Token Top Traders (Smart Money)**
-
 ```
 gmgn-cli token traders --chain sol --address <token_address> --tag smart_degen --limit 10 --raw
 ```
 
-**4. Token Info** - Get basic token data
-
+**4. Token Info**
 ```
 gmgn-cli token info --chain sol --address <token_address> --raw
 ```
 
-Response includes: price, liquidity, holder_count, wallet_tags_stat, launchpad_platform, stat, dev
-
-**5. Token Security** - Get security metrics
-
+**5. Token Security**
 ```
 gmgn-cli token security --chain sol --address <token_address> --raw
 ```
 
-Response includes: rug_ratio, is_wash_trading, creator_token_status, bundler_trader_amount_rate, renounced_mint, etc.
-
 **6. Execute Swap (BUY/SELL)**
-
 ```
-gmgn-cli swap --chain sol --from <wallet_address> --input-token <input_token> --output-token <output_token> --amount <amount> --slippage <slippage>
+gmgn-cli swap --chain sol --from <wallet> --input-token <input> --output-token <output> --amount <amount> --slippage <slippage>
 ```
-
-- Buy: input-token = SOL address (`So11111111111111111111111111111111111111112`), output-token = token address
-- Sell: input-token = token address, output-token = SOL address, use --percent 100 untuk jual semua
 
 **7. Query Order Status**
-
 ```
 gmgn-cli order get --chain sol --order-id <order_id> --raw
 ```
 
-Status: `pending` → `processed` → `confirmed` | `failed` | `expired`
-
 ---
 
-## Data Storage Schema (JSON)
+## Data Storage Schema
 
 ### `data/trades.json`
 
 ```typescript
 interface Trade {
-  id: string; // UUID
+  id: string;                       // UUID
   tokenAddress: string;
   tokenSymbol: string;
   tokenName: string;
   action: "BUY" | "SELL";
-  inputAmount: string; // amount dalam minimum unit
-  inputAmountUsd: number;
+  inputAmount: string;              // amount dalam minimum unit
+  inputAmountSol: number;           // SOL amount
   outputAmount: string;
   priceAtTrade: number;
   marketCapAtTrade: number;
-  timestamp: number; // Unix ms
+  timestamp: number;                // Unix ms
   orderId: string;
   orderStatus: "pending" | "confirmed" | "failed" | "expired";
   txHash?: string;
@@ -186,11 +177,13 @@ interface Trade {
 
   // Diisi saat SELL
   entryPrice?: number;
+  entryMarketCap?: number;
   exitPrice?: number;
-  pnlUsd?: number;
+  exitMarketCap?: number;
+  pnlSol?: number;                 // PnL dalam SOL
   pnlPercent?: number;
   holdingDurationMs?: number;
-  exitReason?: "take_profit" | "stop_loss" | "ai_decision" | "manual";
+  exitReason?: string;             // "shutdown", "ai_decision", dll
 
   // AI context saat decision
   aiReasoning?: string;
@@ -208,16 +201,20 @@ interface Position {
   entryPrice: number;
   entryMarketCap: number;
   entryTimestamp: number;
-  amountToken: string; // jumlah token yang dipegang
-  costUsd: number; // total biaya dalam USD
-  currentPrice?: number; // update periodik
+  amountToken: string;              // jumlah token yang dipegang
+  costSol: number;                  // total biaya dalam SOL
+  currentPrice?: number;            // update periodik
   currentMarketCap?: number;
-  unrealizedPnlUsd?: number;
+  unrealizedPnlSol?: number;
   unrealizedPnlPercent?: number;
   lastUpdated: number;
   buyTradeId: string;
-  // Data saat entry untuk perbandingan
-  smartDegenEntryCount?: number; // jumlah smart degen saat entry
+  buyDecisionId?: string;           // Reference ke BUY decision
+  smartDegenEntryCount?: number;    // total smart wallets at entry
+  activeSmartDegenEntryCount?: number; // active smart degens at entry
+  peakPrice?: number;               // Trailing stop data
+  peakPriceTimestamp?: number;
+  lastHoldDecisionId?: string;      // Reference ke HOLD decision terakhir
 }
 ```
 
@@ -228,15 +225,20 @@ interface Learning {
   id: string;
   createdAt: number;
   basedOnTradeIds: string[];
-  insight: string; // AI-generated insight
-  pattern: {
-    type: "entry" | "exit" | "filter" | "risk";
-    description: string;
-    successRate?: number;
-    avgPnlPercent?: number;
-  };
-  appliedCount: number; // berapa kali pattern ini dipakai
-  successCount: number; // berapa kali berhasil
+  patterns: PatternAnalysis[];
+  insights: string;                 // AI-generated summary
+}
+
+interface PatternAnalysis {
+  type: "entry" | "exit" | "risk" | "filter" | "timing" | "volume" | "hold" | "hold_loss" | "missed_opportunity";
+  description: string;
+  successRate: number;
+  avgPnlPercent: number;
+  appliedCount: number;
+  successCount: number;
+  recencyWeight?: number;           // 0-1, berdasarkan usia pattern
+  confidence?: number;              // Weighted composite score
+  examples?: string[];              // Token addresses yang matched
 }
 ```
 
@@ -248,22 +250,87 @@ interface Performance {
   winningTrades: number;
   losingTrades: number;
   winRate: number;
-  totalPnlUsd: number;
+  totalPnlSol: number;
   avgWinPercent: number;
   avgLossPercent: number;
-  largestWinUsd: number;
-  largestLossUsd: number;
+  largestWinSol: number;
+  largestLossSol: number;
   avgHoldingHours: number;
   lastUpdated: number;
-  dailyStats: Record<
-    string,
-    {
-      // key: "YYYY-MM-DD"
-      pnl: number;
-      trades: number;
-      wins: number;
-    }
-  >;
+  dailyStats: Record<string, { pnl: number; trades: number; wins: number }>;
+}
+```
+
+### `data/decisions.json`
+
+```typescript
+interface DecisionRecord {
+  id: string;                       // UUID
+  tokenAddress: string;
+  tokenSymbol: string;
+  decisionType: "BUY" | "SELL" | "HOLD" | "SKIP";
+  timestamp: number;
+  confidence: number;               // 0-100
+  reasoning: string;
+  signals: string[];
+  outcome: "success" | "failure" | "pending" | "executed" | "skipped";
+  outcomeDetails?: DecisionOutcomeDetails;
+  aiReasoning?: string;
+  context?: DecisionContext;        // Rich context untuk learning
+}
+
+interface DecisionOutcomeDetails {
+  pnlSol?: number;
+  pnlPercent?: number;
+  exitReason?: string;
+  holdingDurationMs?: number;
+  orderId?: string;
+  orderStatus?: string;
+  txHash?: string;
+  error?: string;
+  linkedDecisionId?: string;        // Untuk HOLD→SELL linking
+  holdOutcome?: "profit" | "loss" | "breakeven" | "uncertain";
+}
+
+interface DecisionContext {
+  priceAtTrade?: number;
+  marketCapAtTrade?: number;
+  inputAmountSol?: number;
+  entryPrice?: number;
+  exitPrice?: number;
+  isDryRun?: boolean;
+  orderFlowIntensity?: "bullish" | "bearish" | "neutral";
+  volume1h?: number;
+  smartDegenCount?: number;
+  rugRatio?: number;
+  liquidity?: number;
+  cvdTrend?: "rising" | "falling" | "flat";
+  volumeAcceleration?: number;
+  hasCandleBreakout?: boolean;
+  hasUpperWickDominance?: boolean;
+  freshWalletRate?: number;
+  sniperCount?: number;
+  tokenAgeMins?: number;
+}
+```
+
+### `data/sold_tokens.json`
+
+```typescript
+interface SoldToken {
+  address: string;
+  symbol: string;
+  soldAt: number;
+}
+```
+
+### `data/learning_state.json`
+
+```typescript
+interface LearningState {
+  decisionCounter: number;          // Total completed decisions
+  lastTriggerCount: number;         // Counter saat learning terakhir di-trigger
+  isLearning: boolean;              // Flag untuk prevent overlapping runs
 }
 ```
 
@@ -271,320 +338,173 @@ interface Performance {
 
 ## Agent Decision Flow
 
-Terdapat dua sesi yang berjalan bersamaan dalam main loop:
+Dua sesi berjalan paralel dalam main loop:
 
 ---
 
 ### Sesi 1 — Screening
 
-Bertugas mencari token baru dan memutuskan **SKIP** atau **BUY**.
-
 ```
 setiap SCAN_INTERVAL_MS:
-  1. fetchTrenches() → ambil token yang sudah 'completed' menggunakan gmgn-cli
-     - Gunakan Trenches Parameters dan Trenches Filters (Server-side) dari environment variables (GMGN_*)
-  2. filterCandidates() → filter client-side tambahan setelah hasil CLI:
-     - Tolak jika sudah punya posisi terbuka di token ini
-     - Tolak jika posisi terbuka >= MAX_OPEN_POSITIONS
+  1. fetchTrenchesTokens() → ambil token dari gmgn-cli
+     - Gunakan GMGN_* env vars untuk filter server-side
+  2. filterCandidates() → client-side filter:
+     - Skip jika sudah punya posisi terbuka di token ini
+     - Skip jika sudah punya posisi di MAX_OPEN_POSITIONS
+     - Skip jika token baru saja dijual (SOLD_COOLDOWN_MS)
   3. untuk setiap candidate:
-     a. fetchTokenDetails() → kline 1m (30 candle), kline 5m (12 candle), top_traders smart_degen
-     b. aiDecision() → kirim context ke OpenRouter
-     c. jika SKIP → log dan lanjut
-     d. jika BUY → executeBuy() → simpan pending trade → start polling confirmation
-
-**Order Confirmation Flow:**
-- DRY RUN: Langsung confirmed → buat trade & position
-- Real Order: Pending → polling setiap 3 detik (max 60 detik) → confirmed → buat position
-- Jika order gagal/timeout → status diupdate, position tidak dibuat
+     a. getTokenDetails() → 4 API calls: kline 1m, token traders, token info, token security
+        → Hitung: order flow summary, volume deltas, candle patterns, CVD proxy, volume profile
+     b. getBuySkipDecision() → AI decision via OpenRouter
+     c. recordDecision() → simpan decision record dengan rich context
+     d. jika SKIP → update decision outcome, lanjut
+     e. jika BUY → executeBuyOrder() → polling confirmation
 ```
 
-**AI Context for Screening (BUY/SKIP):**
-
-System prompt:
-
+**AI System Prompt (Screening):**
 ```
-You are an expert crypto trader specializing in Solana memecoins "Trenches" — tokens with market cap $20K–$2M.
-Your task is to analyze token data and decide whether to BUY or SKIP.
-Answer ONLY in JSON format: { "action": "BUY"|"SKIP", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
-```
-
-User message:
-
-```
-TOKEN: ${token.symbol} (${token.address})
-Market Cap: $${token.usdMarketCap}
-Liquidity: $${token.liquidity}
-Volume 1h: $${token.volume1h} | Swaps 1h: ${token.swaps1h}
-Price Change 1h: ${token.priceChange1h}%
-Holder Count: {holderCount}
-Smart Degen Count: {smartDegenCount}
-Renowned Count: {renownedCount}
-Top 10 Holder Rate: {top10HolderRate}
-Creator Status: {creatorTokenStatus} | Creator Balance Rate: {creatorBalanceRate}
-Rug Ratio: {rugRatio} | Bundler Rate: {bundlerRate} | Insider Ratio: {insiderRatio}
-Is Wash Trading: {isWashTrading}
-Launchpad: {launchpadPlatform}
-Renounced Mint: {renouncedMint} | Renounced Freeze: {renouncedFreezeAccount}
-Has Social: {hasAtLeastOneSocial}
-CTO Flag: {ctoFlag}
-
-K-line 1m last (30 candles):
-{kline1mData}
-
-K-line 5m last (12 candles):
-{kline5mData}
-
-Top Smart Degen Traders (holding/activity):
-{topTradersSummary}
-
-RELEVANT LEARNINGS from previous trades:
-{relevantLearnings}
+You are an elite Solana memecoin trader with 70%+ win rate.
+DECISION LOGIC:
+- BUY if: strong order flow, smart money accumulation, healthy risk metrics, creator_close
+- SKIP if: weak signals, wash trading, creator_hold, distribution detected
+- RUG RATIO: High rug ratio (90%+) is WARNING not auto-skip. creator_close = no dump risk.
+- NET FLOW: Focus on direction (positive/negative) not absolute amounts for trenches.
 ```
 
-**Token Quality Gate (referensi dari GMGN SKILL.md):**
+**User Prompt Sections:**
+- PRICE & ORDER FLOW (intensity, net flow, buy/sell ratio)
+- SMART MONEY (net flow, buy/sell count, active smart degens, top traders)
+- ON-CHAIN FLOW (volume deltas 1m, CVD proxy, candle patterns, volume profile)
+- RISK (rug ratio, wash trading, creator status, sniper count, fresh wallet rate, insider hold, token age)
+- TOP ENTRY PATTERNS (dari learning system, scored by confidence)
+- MISSED OPPORTUNITY WARNINGS (tokens yang di-skip tapi naik)
+- FILTER CRITERIA (quality gate patterns)
 
-| Signal                 | 🟢 Pass         | 🟡 Watch  | 🔴 Skip                    |
-| ---------------------- | --------------- | --------- | ------------------------- |
-| `smart_degen_count`    | ≥ 3             | 1–2       | 0                         |
-| `rug_ratio`            | < 0.1           | 0.1–0.3   | > 0.3                     |
-| `creator_token_status` | `creator_close` | —         | `creator_hold`            |
-| `is_wash_trading`      | `false`         | —         | `true` → skip immediately |
-| `top_10_holder_rate`   | < 0.20          | 0.20–0.50 | > 0.50                    |
-| `liquidity`            | > $50k          | $10k–$50k | < $10k                    |
+**Token Quality Gate (client-side rules):**
 
-Quick disqualification: jika `rug_ratio > 0.3` OR `is_wash_trading = true` → skip tanpa analisis lebih lanjut.
+| Signal | Pass | Watch | Skip |
+|--------|------|-------|------|
+| `is_wash_trading` | false | — | true → skip immediately |
+| `smart_degen_count` | >= 3 | 1-2 | 0 |
+| `creator_token_status` | creator_close | — | creator_hold |
+| `rug_ratio` | < 0.3 | 0.3-0.7 | > 0.7 |
+| `liquidity` | > $50k | $10k-$50k | < $10k |
 
 ---
 
 ### Sesi 2 — Managing
 
-Bertugas memantau posisi yang sudah dibeli dan memutuskan **HOLD** atau **SELL**.
-
 ```
-setiap MANAGE_INTERVAL_MS (lebih sering dari Screening, misal 10 detik):
-  1. loadOpenPositions() → baca positions.json
+setiap MANAGE_INTERVAL_MS (30 detik):
+  1. getPositions() → baca positions.json
   2. untuk setiap posisi:
-     a. fetchCurrentPrice() → ambil harga terbaru via kline 1m
+     a. getTokenDetails() → ambil harga terbaru + market data
      b. updatePositionPnL() → hitung unrealized PnL
-     c. checkHardRules():
-        - jika unrealizedPnlPercent >= TAKE_PROFIT_PERCENT → executeSell("take_profit")
-        - jika unrealizedPnlPercent <= -STOP_LOSS_PERCENT → executeSell("stop_loss")
-     d. jika tidak trigger hard rules → aiManageDecision()
-        - kirim context posisi + market data ke OpenRouter
-        - jika SELL → executeSell("ai_decision")
-        - jika HOLD → update lastUpdated, lanjut
-  3. learnFromRecentTrades() → setiap 5 trade confirmed, generate insight baru
+     c. getManageDecision() → AI decision via OpenRouter
+        → Kirim: position data, market data, learnings, phase (EARLY/ACTIVE/LATE)
+     d. recordDecision() → simpan decision record
+     e. jika SELL → executeSellOrder() → remove position, polling confirmation
+     f. jika HOLD → update position, store decision ID
 ```
 
-**AI Context for Managing (HOLD/SELL):**
-
-System prompt:
-
+**AI System Prompt (Managing):**
 ```
-You are an expert crypto trader specializing in Solana memecoins "Trenches".
-Your task is to evaluate open positions and decide whether to HOLD or SELL.
-Answer ONLY in JSON format: { "action": "HOLD"|"SELL", "confidence": 0-100, "reasoning": "...", "signals": ["signal1", ...] }
+DECISION RULES (strict priority):
+
+SELL IMMEDIATELY:
+- PnL <= -25% → hard stop loss. No exceptions.
+- Rug/wash trading/insider dump detected at ANY PnL.
+- Smart money actively distributing at ANY PnL.
+- Token age > 30m with negative price trend and declining volume.
+
+SELL IF PROFITABLE + WEAKNESS:
+- PnL >= +15% AND any exit signal detected.
+- PnL >= +15% AND buy/sell ratio dropping below 1.0.
+- Unprofitable for >9 minutes with no recovery signs.
+
+HOLD:
+- PnL between -25% and +15% AND no exit signals.
+- PnL > +15% AND momentum intact.
+- PnL negative BUT showing recovery signs.
 ```
 
-User message:
+**Position Phases:**
+- EARLY (0-5m): Entry phase, monitor for immediate dump
+- ACTIVE (5-15m): Trading phase, track momentum
+- LATE (15m+): Mature position, watch for exit signals
 
-```
-POSITION: {symbol} ({address})
-Entry Price: ${entryPrice} | Entry Market Cap: ${entryMarketCap}
-Current Price: ${currentPrice} | Current Market Cap: ${currentMarketCap}
-Unrealized PnL: {unrealizedPnlPercent}% (${unrealizedPnlUsd})
-Holding Duration: {holdingDurationHuman}
-Cost: ${costUsd}
-
-Market Data Latest:
-Price Change 1h: {priceChange1h}%
-Smart Degen Count: {smartDegenCount} (at entry: {smartDegenEntryCount})
-Holder Count: {holderCount}
-Rug Ratio: {rugRatio}
-Creator Status: {creatorTokenStatus}
-Is Wash Trading: {isWashTrading}
-Liquidity: ${liquidity}
-
-K-line 1m last (30 candles):
-{kline1mData}
-
-K-line 5m last (12 candles):
-{kline5mData}
-
-Take Profit target: +{TAKE_PROFIT_PERCENT}%
-Stop Loss target: -{STOP_LOSS_PERCENT}%
-
-RELEVANT LEARNINGS from previous trades:
-{relevantLearnings}
-```
+**User Prompt Sections:**
+- Position info (phase, holding duration, PnL, entry vs current)
+- PRICE & ORDER FLOW
+- SMART MONEY (current vs entry smart degen count)
+- ON-CHAIN FLOW
+- RISK
+- EXIT PATTERNS (dari learning system)
+- HOLD LOSS WARNINGS (patterns yang sering rugi)
 
 ---
 
 ## Learning System
 
-Setiap kali 5 trade baru selesai (status confirmed), panggil `generateLearnings()`:
+Event-driven: trigger setiap 30 completed decisions.
 
-1. Ambil 20 trade terakhir dari `trades.json`
-2. Kirim ke OpenRouter dengan prompt berisi:
-   - Statistik: total trades, win rate, avg PnL
-   - Detail setiap trade: token, entry/exit price, PnL, holding duration, reasoning
-   - Permintaan analisis pattern entry/exit/risk/filter
-3. Parse response JSON dan simpan ke `learnings.json`
-4. Inject learnings yang relevan ke AI decision context berikutnya
+**Flow:**
+1. `decisionCounter` increment di `updateDecisionOutcome()`
+2. Saat counter mencapai kelipatan 30 → fire `learningTriggerCallback`
+3. `generateLearnings()`:
+   - Ambil 50 decisions terakhir
+   - Kirim ke OpenRouter dengan full context (decision type, signals, PnL, context)
+   - Parse response → filter patterns (min 50% success rate, min 2 applied count)
+   - Simpan ke `learnings.json`
+   - Cleanup: keep hanya 200 decisions terakhir, 7 days learning expiry
 
-**Fallback:** Jika OpenRouter gagal, generate insight berdasarkan statistik aktual:
+**Pattern Scoring:**
+- `scorePattern()` menghitung weighted composite score:
+  - Success rate: 35%
+  - PnL: 40%
+  - Recency: 25% (linear decay selama 7 hari)
+- `getRelevantPatterns()` filter + score patterns berdasarkan decision type
+- Patterns di-inject ke AI decision context berikutnya
 
-- Win rate tinggi (>60%) → "Current strategy is working, continue current approach"
-- Win rate rendah (<40%) → "Current strategy needs adjustment, review entry/exit criteria"
-- Holding duration terlalu lama (>24h) → "Consider shorter holds for faster capital rotation"
-- Holding duration terlalu pendek (<1h) → "Ensure not selling too early on small moves"
+**Pattern Types:**
+- `entry` — When to BUY
+- `exit` — When to SELL
+- `risk` — When to SKIP
+- `filter` — Quality gates
+- `timing` — Entry/exit timing
+- `volume` — Volume confirmation
+- `hold` — When to hold profitably
+- `hold_loss` — When holds result in losses
+- `missed_opportunity` — Tokens skipped but went up
 
-**Format Learning:**
-
-```typescript
-interface Learning {
-  id: string;
-  createdAt: number;
-  basedOnTradeIds: string[];
-  insight: string; // AI-generated insight
-  pattern: {
-    type: "entry" | "exit" | "filter" | "risk";
-    description: string;
-    successRate?: number;
-    avgPnlPercent?: number;
-  };
-  appliedCount: number; // berapa kali pattern ini dipakai
-  successCount: number; // berapa kali berhasil
-}
-```
-
----
-
-## Performance Tracking
-
-Agent melacak performa trading secara otomatis via `data/performance.json`.
-
-**Update otomatis terjadi saat:**
-1. BUY trade dikonfirmasi (screening.ts)
-2. SELL trade dikonfirmasi (managing.ts)
-
-**Fungsi `updatePerformance()` di `src/storage/db.ts`:**
-- Hitung ulang statistik dari semua `trades.json` (filter `orderStatus === "confirmed"`)
-- `totalTrades`: Jumlah semua trade confirmed (BUY + SELL)
-- `winningTrades`/`losingTrades`: Hanya SELL trades dengan `pnlUsd` terdefinisi
-- `winRate`: `winningTrades / (winningTrades + losingTrades)`
-- `totalPnlUsd`: Sum `pnlUsd` dari semua SELL trades
-- `avgHoldingHours`: Rata-rata durasi holding dari SELL trades
-- `dailyStats`: Agregasi per hari (trades, wins, pnl)
-
-**Lihat ringkasan performa:**
-```bash
-bun run stats  # lihat script di package.json
-```
-
-Atau langsung:
-```bash
-bun run src/utils/stats.ts
-```
+**Missed Opportunity Analysis:**
+- Bandingkan market cap antara consecutive SKIP decisions untuk token yang sama
+- >25% gain = missed opportunity
+- <-20% change = good skip
+- Results di-inject ke AI prompt sebagai warning
 
 ---
 
-## Cara Menjalankan gmgn-cli
+## Graceful Shutdown
 
-```typescript
-import { $ } from "bun";
-
-// Contoh call trenches
-async function fetchTrenches(chain: string) {
-  const timestamp = Math.floor(Date.now() / 1000);
-  const clientId = crypto.randomUUID();
-
-  const result =
-    await $`gmgn-cli trenches --chain ${chain} --timestamp ${timestamp} --client-id ${clientId}`.json();
-  return result.data;
-}
-
-// Contoh execute swap
-async function executeSwap(params: SwapParams) {
-  const timestamp = Math.floor(Date.now() / 1000);
-  const clientId = crypto.randomUUID();
-
-  // Untuk trade, butuh signature — generate dulu
-  const signature = await generateSignature(params, timestamp, clientId);
-
-  const result = await $`gmgn-cli swap \
-    --chain ${params.chain} \
-    --from ${params.fromAddress} \
-    --input-token ${params.inputToken} \
-    --output-token ${params.outputToken} \
-    --input-amount ${params.inputAmount} \
-    --slippage ${params.slippage} \
-    --timestamp ${timestamp} \
-    --client-id ${clientId} \
-    --signature ${signature}`.json();
-
-  return result.data;
-}
-```
-
-> **Catatan**: Sesuaikan exact CLI syntax dengan output `gmgn-cli --help`. Wrapper di `src/gmgn/client.ts` harus handle error dan retry logic.
-
----
-
-## OpenRouter Integration
-
-```typescript
-// src/agent/decision.ts
-const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-    "HTTP-Referer": "https://github.com/trading-agent",
-    "X-Title": "Trenches Trading Agent",
-  },
-  body: JSON.stringify({
-    model: process.env.OPENROUTER_MODEL,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: buildUserPrompt(tokenData, learnings) },
-    ],
-    response_format: { type: "json_object" },
-    temperature: 0.3, // rendah untuk konsistensi
-    max_tokens: 500,
-  }),
-});
-
-const data = await response.json();
-const decision = JSON.parse(data.choices[0].message.content);
-// decision: { action, confidence, reasoning, signals }
-```
-
-**Fallback Decision (jika OpenRouter gagal atau tidak dikonfigurasi):**
-
-```typescript
-// Rule-based fallback using available data
-1. Rug Ratio > 0.3 → SELL (high risk)
-2. Wash Trading detected → SELL (suspicious activity)
-3. Creator still holding → HOLD (watch for sell pressure)
-4. Liquidity < $10,000 → SELL (low liquidity)
-5. Default → HOLD with low confidence
-```
+SIGINT/SIGTERM → `gracefulShutdown()`:
+1. Guard `isShuttingDown` mencegah double execution
+2. Load semua open positions
+3. Execute sell untuk setiap posisi (exitReason: "shutdown")
+4. DRY RUN: langsung removed + trade logged
+5. Live: sell order submitted, background polling
 
 ---
 
 ## Coding Guidelines
 
 ### General
-
-- Semua file TypeScript dengan strict mode (`"strict": true` di tsconfig)
-- Gunakan `async/await`, bukan callbacks atau raw `.then()`
+- TypeScript strict mode (`"strict": true`)
+- `async/await`, bukan callbacks
 - Handle semua errors dengan try/catch — jangan biarkan agent crash
 - Log setiap action penting dengan timestamp
-- Gunakan `Bun.file()` untuk file I/O, bukan `fs`
 
 ### JSON Storage
-
 ```typescript
 // Read
 const data = (await Bun.file("data/trades.json").json()) as Trade[];
@@ -592,34 +512,15 @@ const data = (await Bun.file("data/trades.json").json()) as Trade[];
 // Write (selalu overwrite dengan array lengkap)
 await Bun.write("data/trades.json", JSON.stringify(data, null, 2));
 ```
-
-Selalu buat file JSON kosong `[]` atau `{}` jika belum ada (first run).
+- Selalu buat file JSON kosong `[]` atau `{}` jika belum ada
+- Gunakan mutex locking di `db.ts` untuk concurrent access safety
 
 ### Error Handling
-
-- Jika GMGN API gagal → log error, skip token, lanjut ke berikutnya. Jangan stop loop.
-- Jika OpenRouter gagal → gunakan fallback rule-based decision (SKIP jika tidak yakin)
-- Jika trade gagal → catat di trades.json dengan status "failed", jangan retry otomatis
-- Jika order pending > 60 detik → mark sebagai "expired" (polling timeout)
-- Jika order confirmed → buat position otomatis via polling function
-
-### Order Confirmation Flow
-
-**DRY RUN Mode:**
-
-- Simulasikan semua trades tanpa eksekusi nyata
-- Order langsung "confirmed" → buat trade & position segera
-- Catat di trades.json dengan `isDryRun: true`
-
-**Real Order Mode:**
-
-1. Execute buy → dapatkan `order_id` dari GMGN
-2. Simpan trade dengan status "pending"
-3. Start polling function (background):
-   - Cek order status setiap 3 detik
-   - Timeout setelah 60 detik
-   - Jika "confirmed": update trade status, buat position, save ke positions.json
-   - Jika "failed" atau "expired": update trade status, tidak buat position
+- GMGN API gagal → log error, skip token, lanjut
+- OpenRouter gagal → gunakan fallback rule-based decision
+- Trade gagal → catat di trades.json dengan status "failed"
+- Order pending > 60 detik → mark "expired"
+- Order confirmed → buat position otomatis via polling
 
 ---
 
@@ -632,53 +533,21 @@ bun install
 # Jalankan agent
 bun run src/index.ts
 
-# Jalankan dengan watch mode (development)
-bun --watch run src/index.ts
+# Development (watch mode)
+bun run dev
 
-# Jalankan dengan dry run
-DRY_RUN=true bun run src/index.ts
+# Dry run (simulasi)
+bun run dry-run
 
 # Build untuk production
-bun build src/index.ts --outfile dist/agent.js --target bun
+bun run build
+
+# Lihat performa
+bun run stats
+
+# Jalankan tests
+bun test
 ```
-
----
-
-## package.json Scripts
-
-```json
-{
-  "scripts": {
-    "start": "bun run src/index.ts",
-    "dev": "bun --watch run src/index.ts",
-    "dry-run": "DRY_RUN=true bun run src/index.ts",
-    "build": "bun build src/index.ts --outfile dist/agent.js --target bun",
-    "stats": "bun run src/utils/stats.ts"
-  }
-}
-```
-
----
-
-## Urutan Implementasi (untuk AI Agent)
-
-Implementasi dalam urutan ini, satu per satu:
-
-1. **Setup project** — `package.json`, `tsconfig.json`, `.env.example`, `.gitignore`
-2. **Types** — `src/storage/types.ts` — semua interfaces
-3. **Storage helpers** — `src/storage/db.ts` — read/write JSON + update performance metrics
-4. **Logger** — `src/utils/logger.ts`
-5. **GMGN client** — `src/gmgn/client.ts` — wrapper gmgn-cli subprocess
-6. **Trenches fetcher** — `src/gmgn/trenches.ts`
-7. **Market data** — `src/gmgn/market.ts`
-8. **Trade executor** — `src/gmgn/trade.ts`
-9. **AI Decision — Screening** — `src/agent/decision.ts` → logika BUY/SKIP
-10. **AI Decision — Managing** — `src/agent/manager.ts` → logika HOLD/SELL
-11. **Learning system** — `src/agent/learner.ts`
-12. **Stats utility** — `src/utils/stats.ts` → tampilkan ringkasan performa
-13. **Screening session** — `src/sessions/screening.ts` → loop scan + filter + buy
-14. **Managing session** — `src/sessions/managing.ts` → loop monitor + TP/SL + sell
-15. **Main loop** — `src/index.ts` → jalankan kedua sesi secara paralel
 
 ---
 
@@ -686,13 +555,14 @@ Implementasi dalam urutan ini, satu per satu:
 
 - OpenRouter Docs: https://openrouter.ai/docs
 - Bun Docs: https://bun.sh/docs
+- gmgn-cli: via `gmgn-cli --help`
 
 ---
 
-## Peringatan Penting
+## Peringatan
 
-> ⚠️ **RISIKO TINGGI**: Token trenches sangat volatile. Selalu mulai dengan `DRY_RUN=true` dan test strategi minimal 100 trade simulasi sebelum live.
+> RISIKO TINGGI: Token trenches sangat volatile. Selalu mulai dengan `DRY_RUN=true`.
 >
-> ⚠️ **KEAMANAN**: Jangan pernah commit `.env` atau file yang berisi private key ke git. Pastikan `.gitignore` mencakup `.env` dan `data/`.
+> KEAMANAN: Jangan pernah commit `.env` atau private key ke git.
 >
-> ⚠️ **DANA**: Set `MAX_POSITION_USD` ke nilai kecil saat pertama kali live (misal $5–$10 per posisi) sampai agent terbukti stabil.
+> DANA: Mulai dengan AMOUNT_SOL kecil ($5-$10 per posisi) sampai agent terbukti stabil.
