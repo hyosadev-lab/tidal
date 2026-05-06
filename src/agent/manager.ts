@@ -188,7 +188,8 @@ POSITION: ${position.tokenSymbol} | Phase: ${phase} | Holding: ${holdingMin}m
 PnL: ${position.unrealizedPnlPercent?.toFixed(2)}% (${position.unrealizedPnlSol?.toFixed(4)} SOL)
 Entry: $${position.entryPrice.toFixed(8)} → Now: $${position.currentPrice?.toFixed(8)}
 
-━━━ ORDER FLOW ━━━
+━━━ PRICE & ORDER FLOW ━━━
+Price: $${tokenData.price.toFixed(8)}
 Intensity: ${(tokenData.orderFlowSummary?.intensity || "neutral").toUpperCase()}
 Net Flow: $${tokenData.orderFlowSummary.netFlowUsd.toFixed(2)}
 Buy/Sell Ratio: ${tokenData.orderFlowSummary.buySellRatio.toFixed(2)}x
@@ -202,8 +203,11 @@ ${tokenData.topTradersSummary}
 
 ━━━ ON-CHAIN FLOW ━━━
 ${tokenData.volumeDeltas1m}
+
 ${tokenData.cvdProxy}
+
 ${tokenData.candlePatterns}
+
 ${tokenData.volumeProfile}
 
 ━━━ RISK ━━━

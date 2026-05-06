@@ -152,7 +152,7 @@ function buildUserPrompt(
   // Get top patterns for quick reference
   const topEntryPatterns = relevantPatterns
     .filter(p => p.type === "entry" || p.type === "timing" || p.type === "volume")
-    .slice(0, 3);
+    .slice(0, 10);
 
   const topEntryPatternsText = topEntryPatterns.length > 0
     ? topEntryPatterns.map(p => {
@@ -164,7 +164,7 @@ function buildUserPrompt(
   // Get missed opportunity patterns (tokens skipped but went up)
   const missedOpportunityPatterns = relevantPatterns
     .filter(p => p.type === "missed_opportunity")
-    .slice(0, 3);
+    .slice(0, 10);
 
   const missedOpportunityText = missedOpportunityPatterns.length > 0
     ? missedOpportunityPatterns.map(p => {
@@ -176,7 +176,7 @@ function buildUserPrompt(
   // Get filter patterns (quality criteria)
   const filterPatterns = relevantPatterns
     .filter(p => p.type === "filter" || p.type === "risk")
-    .slice(0, 3);
+    .slice(0, 10);
 
   const filterPatternsText = filterPatterns.length > 0
     ? filterPatterns.map(p => {
@@ -202,8 +202,12 @@ Active Smart Degens: ${token.activeSmartDegenCount}
 ${token.topTradersSummary}
 
 ━━━ ON-CHAIN FLOW (1m, 30 candles) ━━━
+${token.volumeDeltas1m}
+
 ${token.cvdProxy}
+
 ${token.candlePatterns}
+
 ${token.volumeProfile}
 
 ━━━ RISK ━━━

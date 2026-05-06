@@ -63,7 +63,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const tokenSecurity = await fetchTokenSecurity(chain, address);
 
     // Step 2: Fetch market data (kline & traders) sequential with rate limit
-    const tradersResult = await fetchTopTraders(chain, address, 50, "smart_degen");
+    const tradersResult = await fetchTopTraders(chain, address, 100);
     const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
 
     const traders = tradersResult?.list || [];
@@ -113,7 +113,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
       price: currentPrice,
       priceChange1h: priceChange1h,
       volume1h: volume1h,
-      volumeDeltas1m: volumeDeltas1m,
+      volumeDeltas1m,
       candlePatterns,
       cvdProxy,
       volumeProfile,
@@ -285,7 +285,7 @@ function processKlineData(kline1mData: any[], realTimePrice: number) {
   ]);
 
   // Calculate volume deltas on 1m data (last 6 candles)
-  const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 6);
+  const volumeDeltas1m = getVolumeDeltasFromKline(kline1mArray, 15);
 
   return { kline1mSummary, volume1h, priceChange1h, volumeDeltas1m };
 }

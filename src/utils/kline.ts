@@ -1,11 +1,13 @@
 /**
+ * Get volume deltas from kline array
+ * Accepts raw kline array from GMGN API directly
  * Calculate volume deltas for last N candles
  * Returns formatted string: "Volume Deltas: +100%, -25%, +50%"
  * Klines format: [open, high, low, close, volume]
  */
-export function calculateVolumeDeltas(
+export function getVolumeDeltasFromKline(
   klines: number[][],
-  limit: number,
+  limit: number = 5,
 ): string {
   if (klines.length < 2) {
     return "Volume Deltas: N/A (insufficient data)";
@@ -39,18 +41,7 @@ export function calculateVolumeDeltas(
     deltas.push(`${sign}${deltaPercent.toFixed(1)}%`);
   }
 
-  return `Volume Deltas (${deltas.length} changes): ${deltas.join(", ")}`;
-}
-
-/**
- * Get volume deltas from kline array
- * Accepts raw kline array from GMGN API directly
- */
-export function getVolumeDeltasFromKline(
-  klines: number[][],
-  limit: number = 5,
-): string {
-  return calculateVolumeDeltas(klines, limit);
+  return `Volume Deltas (${deltas.length} changes): ${deltas.slice(0, -1).join(", ")}${deltas.length > 1 ? ", " : ""}${deltas[deltas.length - 1]} ← latest`;
 }
 
 /**
