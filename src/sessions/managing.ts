@@ -246,7 +246,7 @@ async function processPosition(position: Position): Promise<void> {
   }
 }
 
-async function executeSellOrder({
+export async function executeSellOrder({
   position,
   exitReason,
   aiReasoning,

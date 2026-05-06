@@ -1,7 +1,7 @@
 import { startScreeningSession } from "./sessions/screening";
-import { startManagingSession } from "./sessions/managing";
+import { startManagingSession, executeSellOrder } from "./sessions/managing";
 import { generateLearnings } from "./agent/learner";
-import { setLearningTriggerCallback } from "./storage/db";
+import { setLearningTriggerCallback, getPositions } from "./storage/db";
 import { logger } from "./utils/logger";
 
 // Validate environment variables
@@ -15,10 +15,50 @@ function validateEnv() {
   }
 }
 
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  logger.info(`Received ${signal}. Closing all open positions...`);
+
+  const positions = await getPositions();
+
+  if (positions.length === 0) {
+    logger.info("No open positions to close.");
+    process.exit(0);
+    return;
+  }
+
+  logger.info(`Closing ${positions.length} positions...`);
+
+  for (const position of positions) {
+    try {
+      logger.info(`Selling ${position.tokenSymbol} (${position.tokenAddress})...`);
+      await executeSellOrder({
+        position,
+        exitReason: "shutdown",
+        aiReasoning: `Emergency sell on ${signal} signal`,
+        signalsUsed: ["graceful_shutdown"],
+      });
+    } catch (error) {
+      logger.error(`Failed to sell ${position.tokenSymbol}: ${String(error)}`);
+    }
+  }
+
+  logger.info("All positions closed. Shutting down.");
+  process.exit(0);
+}
+
 async function main() {
   logger.info("Starting Trenches Trading Agent...");
 
   validateEnv();
+
+  // Register graceful shutdown handlers
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
   // Register event-based learning trigger (every 30 completed decisions)
   setLearningTriggerCallback(generateLearnings);
