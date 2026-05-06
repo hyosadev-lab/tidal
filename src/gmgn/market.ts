@@ -94,7 +94,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
 
     // Process Traders Summary
     const tradersSummary = formatTradersSummary(traders);
-    const activeSmartDegenCount = traders.filter((t: any) => t.tags?.includes("smart_degen")).length;
+    const activeSmartDegenCount = traders.filter((t: any) => t.tags?.includes("smart_degen") || t.tags?.includes("kol")).length;
 
     // Extract additional holder quality fields from already-fetched data
     const sniperCount = parseInt(tokenSecurity.sniper_count) || 0;
@@ -291,7 +291,7 @@ function processKlineData(kline1mData: any[], realTimePrice: number) {
 }
 
 function formatTradersSummary(traders: any[]): string {
-  return traders.filter(t => t.tags?.includes("smart_degen")).map((t: any) => {
+  return traders.filter(t => t.tags?.includes("smart_degen") || t.tags?.includes("kol")).map((t: any) => {
     const walletName = t.name || t.address.slice(0, 6);
     const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
     const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
