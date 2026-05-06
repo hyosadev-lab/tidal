@@ -161,7 +161,7 @@ function buildUserPrompt(
 
   // Separate patterns by type for better display
   const holdLossPatterns = relevantPatterns.filter(p => p.type === "hold_loss");
-  const exitPatterns = relevantPatterns.filter(p => p.type === "exit" || p.type === "timing");
+  const exitPatterns = relevantPatterns.filter(p => p.type === "exit" || p.type === "timing" || p.type === "hold" || p.type === "volume");
 
   const holdLossText = holdLossPatterns.length > 0
     ? holdLossPatterns.map(p => {
@@ -177,27 +177,11 @@ function buildUserPrompt(
       }).join("\n")
     : "None";
 
-  const relevantLearnings = relevantPatterns
-    .map(p => {
-      const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
-      return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
-    })
-    .slice(0, 30)
-    .join("\n");
-
   const holdingMs = Date.now() - position.entryTimestamp;
   const holdingMin = Math.floor(holdingMs / 60000);
   const phase = holdingMin < 5 ? "EARLY (0-5m)"
     : holdingMin < 15 ? "ACTIVE (5-15m)"
     : "LATE (15m+)";
-
-  const smRatio = tokenData.orderFlowSummary.smartMoneyBuyCount > 0
-    ? (tokenData.orderFlowSummary.smartMoneyBuyCount /
-       Math.max(tokenData.orderFlowSummary.smartMoneySellCount, 1)).toFixed(1)
-    : "0";
-
-  // Last 15 candles 1m (30 total)
-  const lastCandles1m = (tokenData.kline1mData?.trim() || "").split("\n").slice(-15).join("\n");
 
   return `
 POSITION: ${position.tokenSymbol} | Phase: ${phase} | Holding: ${holdingMin}m
@@ -212,23 +196,19 @@ Buy: $${tokenData.orderFlowSummary.buyVolume.toFixed(2)} | Sell: $${tokenData.or
 
 ━━━ SMART MONEY ━━━
 Net Flow: $${tokenData.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
-Buys: ${tokenData.orderFlowSummary.smartMoneyBuyCount} | Sells: ${tokenData.orderFlowSummary.smartMoneySellCount} | Ratio: ${smRatio}x
+Buys: ${tokenData.orderFlowSummary.smartMoneyBuyCount} | Sells: ${tokenData.orderFlowSummary.smartMoneySellCount}
 Active Smart Degens: ${tokenData.activeSmartDegenCount} (entry: ${position.activeSmartDegenEntryCount ?? "N/A"})
 ${tokenData.topTradersSummary}
 
-━━━ CANDLES 1M (last 15 of 30) ━━━
-${lastCandles1m}
-
+━━━ ON-CHAIN FLOW ━━━
 ${tokenData.volumeDeltas1m}
-
-━━━ ON-CHAIN FLOW ANALYSIS ━━━
 ${tokenData.cvdProxy}
 ${tokenData.candlePatterns}
 ${tokenData.volumeProfile}
 
 ━━━ RISK ━━━
-Rug: ${tokenData.rugRatio.toFixed(3)} | WashTrading: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}
-Sniper Count: ${tokenData.sniperCount} | Fresh Wallets: ${((tokenData.freshWalletRate ?? 0) * 100).toFixed(1)}% | Insider Hold: ${((tokenData.insiderHoldRate ?? 0) * 100).toFixed(1)}%
+Rug: ${tokenData.rugRatio.toFixed(3)} ${tokenData.rugRatio > 0.7 ? "⚠️ HIGH" : tokenData.rugRatio > 0.3 ? "🟡 MEDIUM" : "🟢 LOW"} | Wash: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}
+Sniper: ${tokenData.sniperCount} | Fresh: ${((tokenData.freshWalletRate ?? 0) * 100).toFixed(1)}% | Insider: ${((tokenData.insiderHoldRate ?? 0) * 100).toFixed(1)}%
 Token Age: ${Math.floor((tokenData.tokenAgeSecs ?? 0) / 60)}m
 
 ━━━ EXIT PATTERNS ━━━
@@ -236,12 +216,6 @@ ${exitPatternsText}
 
 ━━━ HOLD LOSS WARNINGS ━━━
 ${holdLossText}
-
-━━━ RELEVANT LEARNINGS ━━━
-${relevantLearnings || "None"}
-
-━━━ MARKET ━━━
-1h Change: ${tokenData.priceChange1h.toFixed(2)}%
 
 Analyze order flow. SELL if distribution detected. HOLD if momentum intact.`;
 }

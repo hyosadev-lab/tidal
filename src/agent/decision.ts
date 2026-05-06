@@ -151,7 +151,7 @@ function buildUserPrompt(
 
   // Get top patterns for quick reference
   const topEntryPatterns = relevantPatterns
-    .filter(p => p.type === "entry" || p.type === "timing")
+    .filter(p => p.type === "entry" || p.type === "timing" || p.type === "volume")
     .slice(0, 3);
 
   const topEntryPatternsText = topEntryPatterns.length > 0
@@ -175,7 +175,7 @@ function buildUserPrompt(
 
   // Get filter patterns (quality criteria)
   const filterPatterns = relevantPatterns
-    .filter(p => p.type === "filter")
+    .filter(p => p.type === "filter" || p.type === "risk")
     .slice(0, 3);
 
   const filterPatternsText = filterPatterns.length > 0
@@ -185,46 +185,23 @@ function buildUserPrompt(
       }).join("\n")
     : "None";
 
-  const relevantLearnings = relevantPatterns
-    .map(p => {
-      const scoreIcon = (p.confidence || 0) > 70 ? "🟢" : (p.confidence || 0) > 40 ? "🟡" : "🔴";
-      return `${scoreIcon} [${p.type.toUpperCase()}] ${p.description} (${p.successRate}% success, ${p.avgPnlPercent > 0 ? "+" : ""}${p.avgPnlPercent?.toFixed(1)}% avg PnL)`;
-    })
-    .slice(0, 30)
-    .join("\n");
-
-  // Pre-compute flags (adjusted for 5m timeframe)
-  const isOverextended = token.priceChange1h > 50;
-  const isDip = token.priceChange1h < -20;
-
-  const lastCandles1m = (token.kline1mData?.trim() || "").split("\n").slice(-15).join("\n");
-
   return `
 TOKEN: ${token.symbol} (${token.address})
 
-━━━ PRICE & VOLUME (1h metrics) ━━━
+━━━ PRICE & ORDER FLOW ━━━
 Price: $${token.price.toFixed(8)}
-1h Change: ${token.priceChange1h.toFixed(2)}%${isOverextended ? " ⚠ OVEREXTENDED" : isDip ? " ▼ DIP" : ""}
-1h Volume: $${token.volume1h.toFixed(0)}
-
-━━━ ORDER FLOW (CORE SIGNAL) ━━━
 Intensity: ${(token.orderFlowSummary?.intensity || "neutral").toUpperCase()}
 Net Flow: $${token.orderFlowSummary.netFlowUsd.toFixed(2)}
 Buy/Sell Ratio: ${token.orderFlowSummary.buySellRatio.toFixed(2)}x
 Buy Vol: $${token.orderFlowSummary.buyVolume.toFixed(0)} | Sell Vol: $${token.orderFlowSummary.sellVolume.toFixed(0)}
 
-━━━ SMART MONEY (LEADING INDICATOR) ━━━
+━━━ SMART MONEY ━━━
 Net Flow: $${token.orderFlowSummary.smartMoneyNetFlow.toFixed(2)}
 Buys: ${token.orderFlowSummary.smartMoneyBuyCount} | Sells: ${token.orderFlowSummary.smartMoneySellCount}
 Active Smart Degens: ${token.activeSmartDegenCount}
 ${token.topTradersSummary}
 
-━━━ CANDLES 1M (last 15 of 30) ━━━
-${lastCandles1m}
-
-${token.volumeDeltas1m}
-
-━━━ ON-CHAIN FLOW ANALYSIS ━━━
+━━━ ON-CHAIN FLOW (1m, 30 candles) ━━━
 ${token.cvdProxy}
 ${token.candlePatterns}
 ${token.volumeProfile}
@@ -248,8 +225,5 @@ ${missedOpportunityText}
 
 ━━━ FILTER CRITERIA ━━━
 ${filterPatternsText}
-
-━━━ RELEVANT LEARNINGS ━━━
-${relevantLearnings || "None"}
 `;
 }
