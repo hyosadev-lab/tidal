@@ -45,13 +45,22 @@ function mapToTokenData(item: any): TokenData {
 
     // Enriched fields (will be filled later)
     activeSmartDegenCount: 0, // Will be populated from traders data
-    kline5mData: "",
+    kline1mData: "",
     price: 0, // Will be populated from kline data
     priceChange1h: 0, // Will be populated from kline data
     topTradersSummary: "",
     usdMarketCap: 0,
     volume1h: 0, // Will be populated from kline data
-    volumeDeltas5m: "", // Will be populated from kline data
+    volumeDeltas1m: "", // Will be populated from kline data
+    candlePatterns: "",
+    cvdProxy: "",
+    volumeProfile: "",
+    sniperCount: 0,
+    freshWalletRate: 0,
+    privateVaultHoldRate: 0,
+    devTeamHoldRate: 0,
+    insiderHoldRate: 0,
+    tokenAgeSecs: 0,
     orderFlowSummary: {
       buySellRatio: 0,
       buyVolume: 0,

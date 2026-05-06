@@ -197,7 +197,7 @@ function buildUserPrompt(
   const isOverextended = token.priceChange1h > 50;
   const isDip = token.priceChange1h < -20;
 
-  const lastCandles5m = token.kline5mData.trim().split("\n").slice(-12).join("\n");
+  const lastCandles1m = (token.kline1mData?.trim() || "").split("\n").slice(-15).join("\n");
 
   return `
 TOKEN: ${token.symbol} (${token.address})
@@ -208,7 +208,7 @@ Price: $${token.price.toFixed(8)}
 1h Volume: $${token.volume1h.toFixed(0)}
 
 ━━━ ORDER FLOW (CORE SIGNAL) ━━━
-Intensity: ${token.orderFlowSummary.intensity.toUpperCase()}
+Intensity: ${(token.orderFlowSummary?.intensity || "neutral").toUpperCase()}
 Net Flow: $${token.orderFlowSummary.netFlowUsd.toFixed(2)}
 Buy/Sell Ratio: ${token.orderFlowSummary.buySellRatio.toFixed(2)}x
 Buy Vol: $${token.orderFlowSummary.buyVolume.toFixed(0)} | Sell Vol: $${token.orderFlowSummary.sellVolume.toFixed(0)}
@@ -219,13 +219,26 @@ Buys: ${token.orderFlowSummary.smartMoneyBuyCount} | Sells: ${token.orderFlowSum
 Active Smart Degens: ${token.activeSmartDegenCount}
 ${token.topTradersSummary}
 
-━━━ CANDLES 5M (last 12) ━━━
-${lastCandles5m}
+━━━ CANDLES 1M (last 15 of 30) ━━━
+${lastCandles1m}
 
-${token.volumeDeltas5m}
+${token.volumeDeltas1m}
+
+━━━ ON-CHAIN FLOW ANALYSIS ━━━
+${token.cvdProxy}
+${token.candlePatterns}
+${token.volumeProfile}
 
 ━━━ RISK ━━━
 Rug: ${token.rugRatio.toFixed(3)} ${token.rugRatio > 0.7 ? "⚠️ HIGH" : token.rugRatio > 0.3 ? "🟡 MEDIUM" : "🟢 LOW"} ${token.creatorTokenStatus === "creator_close" ? "(creator sold → no dump risk)" : "(creator holds → watch)"} | Wash: ${token.isWashTrading} | Creator: ${token.creatorTokenStatus}
+
+━━━ HOLDER QUALITY ━━━
+Fresh Wallets: ${((token.freshWalletRate ?? 0) * 100).toFixed(1)}% ${(token.freshWalletRate ?? 0) > 0.4 ? "⚠ HIGH (bot/FOMO risk)" : ""}
+Private Vault Hold: ${((token.privateVaultHoldRate ?? 0) * 100).toFixed(1)}%
+Insider Hold Rate: ${((token.insiderHoldRate ?? 0) * 100).toFixed(1)}%
+Dev Team Hold: ${((token.devTeamHoldRate ?? 0) * 100).toFixed(1)}%
+Sniper Count: ${token.sniperCount}
+Token Age: ${Math.floor(token.tokenAgeSecs / 60)}m
 
 ━━━ TOP ENTRY PATTERNS ━━━
 ${topEntryPatternsText}

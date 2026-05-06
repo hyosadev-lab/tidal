@@ -18,6 +18,19 @@ import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
 import { delay } from "../utils/concurrency";
 
+function extractCvdTrend(cvdProxy: string): "rising" | "falling" | "flat" {
+  if (!cvdProxy) return "flat";
+  if (cvdProxy.includes("Trend: Rising")) return "rising";
+  if (cvdProxy.includes("Trend: Falling")) return "falling";
+  return "flat";
+}
+
+function extractVolumeAcceleration(volumeProfile: string): number {
+  if (!volumeProfile) return 0;
+  const match = volumeProfile.match(/([+-]?\d+\.?\d*)%.*first half/);
+  return match ? parseFloat(match[1]) : 0;
+}
+
 const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
@@ -123,15 +136,24 @@ async function processCandidate(token: TokenData): Promise<void> {
   try {
     // Fetch detailed data (kline, top traders, price, order flow)
     const details = await getTokenDetails(CHAIN, token.address);
-    token.kline5mData = details.kline5mData;
+    token.kline1mData = details.kline1mData;
     token.orderFlowSummary = details.orderFlowSummary;
     token.price = details.price;
     token.usdMarketCap = details.usdMarketCap;
     token.priceChange1h = details.priceChange1h;
     token.topTradersSummary = details.topTradersSummary;
     token.volume1h = details.volume1h;
-    token.volumeDeltas5m = details.volumeDeltas5m;
+    token.volumeDeltas1m = details.volumeDeltas1m;
     token.activeSmartDegenCount = details.activeSmartDegenCount;
+    token.candlePatterns = details.candlePatterns;
+    token.cvdProxy = details.cvdProxy;
+    token.volumeProfile = details.volumeProfile;
+    token.sniperCount = details.sniperCount;
+    token.freshWalletRate = details.freshWalletRate;
+    token.privateVaultHoldRate = details.privateVaultHoldRate;
+    token.devTeamHoldRate = details.devTeamHoldRate;
+    token.insiderHoldRate = details.insiderHoldRate;
+    token.tokenAgeSecs = details.tokenAgeSecs;
 
     // Get learnings (cached atau minimal read)
     const learnings = await getLearnings();
@@ -161,6 +183,13 @@ async function processCandidate(token: TokenData): Promise<void> {
         smartDegenCount: token.smartDegenCount,
         rugRatio: token.rugRatio,
         liquidity: token.liquidity,
+        cvdTrend: extractCvdTrend(token.cvdProxy),
+        volumeAcceleration: extractVolumeAcceleration(token.volumeProfile),
+        hasCandleBreakout: token.candlePatterns?.includes("YES") ?? false,
+        hasUpperWickDominance: (token.candlePatterns?.match(/(\d+)\/10 last candles/)?.[1] ?? "0") >= "5",
+        freshWalletRate: token.freshWalletRate,
+        sniperCount: token.sniperCount,
+        tokenAgeMins: Math.floor((token.tokenAgeSecs ?? 0) / 60),
       },
     });
 

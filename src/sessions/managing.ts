@@ -17,6 +17,19 @@ import type { Position, Trade, TokenData } from "../storage/types";
 import { logger } from "../utils/logger";
 import { delay } from "../utils/concurrency";
 
+function extractCvdTrend(cvdProxy: string): "rising" | "falling" | "flat" {
+  if (!cvdProxy) return "flat";
+  if (cvdProxy.includes("Trend: Rising")) return "rising";
+  if (cvdProxy.includes("Trend: Falling")) return "falling";
+  return "flat";
+}
+
+function extractVolumeAcceleration(volumeProfile: string): number {
+  if (!volumeProfile) return 0;
+  const match = volumeProfile.match(/([+-]?\d+\.?\d*)%.*first half/);
+  return match ? parseFloat(match[1]) : 0;
+}
+
 const CHAIN = process.env.GMGN_CHAIN || "sol";
 const WALLET_ADDRESS = process.env.GMGN_WALLET_ADDRESS || "";
 const SLIPPAGE = parseFloat(process.env.SLIPPAGE || "0.15");
@@ -115,13 +128,22 @@ async function processPosition(position: Position): Promise<void> {
       price: currentPrice,
       priceChange1h: priceChange1h,
       usdMarketCap: currentMarketCap,
-      kline5mData: details.kline5mData,
+      kline1mData: details.kline1mData,
       topTradersSummary: details.topTradersSummary,
       orderFlowSummary: details.orderFlowSummary,
       // Data from token details (all in one call)
       liquidity: details.liquidity || 0,
       volume1h: details.volume1h,
-      volumeDeltas5m: details.volumeDeltas5m,
+      volumeDeltas1m: details.volumeDeltas1m,
+      candlePatterns: details.candlePatterns,
+      cvdProxy: details.cvdProxy,
+      volumeProfile: details.volumeProfile,
+      sniperCount: details.sniperCount || 0,
+      freshWalletRate: details.freshWalletRate || 0,
+      privateVaultHoldRate: details.privateVaultHoldRate || 0,
+      devTeamHoldRate: details.devTeamHoldRate || 0,
+      insiderHoldRate: details.insiderHoldRate || 0,
+      tokenAgeSecs: details.tokenAgeSecs || 0,
       holderCount: details.holderCount || 0,
       smartDegenCount: details.smartDegenCount || 0,
       activeSmartDegenCount: details.activeSmartDegenCount || 0,
@@ -164,6 +186,13 @@ async function processPosition(position: Position): Promise<void> {
         liquidity: details.liquidity,
         entryPrice: position.entryPrice,
         exitPrice: currentPrice,
+        cvdTrend: extractCvdTrend(details.cvdProxy),
+        volumeAcceleration: extractVolumeAcceleration(details.volumeProfile),
+        hasCandleBreakout: details.candlePatterns?.includes("YES") ?? false,
+        hasUpperWickDominance: (details.candlePatterns?.match(/(\d+)\/10 last candles/)?.[1] ?? "0") >= "5",
+        freshWalletRate: details.freshWalletRate,
+        sniperCount: details.sniperCount,
+        tokenAgeMins: Math.floor((details.tokenAgeSecs ?? 0) / 60),
       },
     });
 

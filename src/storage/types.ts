@@ -1,4 +1,6 @@
 // Data Storage Schema (JSON)
+import type { OrderFlowSummary } from "../gmgn/market";
+export type { OrderFlowSummary };
 
 export interface Trade {
   id: string; // UUID
@@ -120,6 +122,15 @@ export interface DecisionContext {
   smartDegenCount?: number;
   rugRatio?: number;
   liquidity?: number;
+  // On-chain flow context for learning
+  cvdTrend?: "rising" | "falling" | "flat";
+  volumeAcceleration?: number;
+  hasCandleBreakout?: boolean;
+  hasUpperWickDominance?: boolean;
+  // Additional quality context
+  freshWalletRate?: number;
+  sniperCount?: number;
+  tokenAgeMins?: number;
 }
 
 export interface DecisionRecord {
@@ -160,17 +171,6 @@ export interface Performance {
   >;
 }
 
-export interface OrderFlowSummary {
-  buyVolume: number;
-  sellVolume: number;
-  netFlowUsd: number;
-  buySellRatio: number;
-  intensity: "bullish" | "bearish" | "neutral";
-  smartMoneyNetFlow: number;
-  smartMoneyBuyCount: number;
-  smartMoneySellCount: number;
-}
-
 export interface TokenData {
   // Core Fields from gmgn-cli trenches
   address: string;
@@ -195,14 +195,25 @@ export interface TokenData {
   top10HolderRate: number;
 
   // Enriched Fields from gmgn-cli market kline and gmgn-cli token traders
-  kline5mData: string;
+  kline1mData: string;
   price: number;
   priceChange1h: number;
   topTradersSummary: string;
   usdMarketCap: number;
   volume1h: number;
-  volumeDeltas5m: string;
+  volumeDeltas1m: string;
   orderFlowSummary: OrderFlowSummary;
+  // On-chain flow derived signals
+  candlePatterns: string;
+  cvdProxy: string;
+  volumeProfile: string;
+  // Additional holder quality fields
+  sniperCount: number;
+  freshWalletRate: number;
+  privateVaultHoldRate: number;
+  devTeamHoldRate: number;
+  insiderHoldRate: number;
+  tokenAgeSecs: number;
 }
 
 export interface SoldToken {

@@ -196,8 +196,8 @@ function buildUserPrompt(
        Math.max(tokenData.orderFlowSummary.smartMoneySellCount, 1)).toFixed(1)
     : "0";
 
-  // Last 12 candles 5m (1 hour of data)
-  const lastCandles5m = tokenData.kline5mData.trim().split("\n").slice(-12).join("\n");
+  // Last 15 candles 1m (30 total)
+  const lastCandles1m = (tokenData.kline1mData?.trim() || "").split("\n").slice(-15).join("\n");
 
   return `
 POSITION: ${position.tokenSymbol} | Phase: ${phase} | Holding: ${holdingMin}m
@@ -205,7 +205,7 @@ PnL: ${position.unrealizedPnlPercent?.toFixed(2)}% (${position.unrealizedPnlSol?
 Entry: $${position.entryPrice.toFixed(8)} → Now: $${position.currentPrice?.toFixed(8)}
 
 ━━━ ORDER FLOW ━━━
-Intensity: ${tokenData.orderFlowSummary.intensity.toUpperCase()}
+Intensity: ${(tokenData.orderFlowSummary?.intensity || "neutral").toUpperCase()}
 Net Flow: $${tokenData.orderFlowSummary.netFlowUsd.toFixed(2)}
 Buy/Sell Ratio: ${tokenData.orderFlowSummary.buySellRatio.toFixed(2)}x
 Buy: $${tokenData.orderFlowSummary.buyVolume.toFixed(2)} | Sell: $${tokenData.orderFlowSummary.sellVolume.toFixed(2)}
@@ -216,13 +216,20 @@ Buys: ${tokenData.orderFlowSummary.smartMoneyBuyCount} | Sells: ${tokenData.orde
 Active Smart Degens: ${tokenData.activeSmartDegenCount} (entry: ${position.activeSmartDegenEntryCount ?? "N/A"})
 ${tokenData.topTradersSummary}
 
-━━━ CANDLES 5M (last 12) ━━━
-${lastCandles5m}
+━━━ CANDLES 1M (last 15 of 30) ━━━
+${lastCandles1m}
 
-${tokenData.volumeDeltas5m}
+${tokenData.volumeDeltas1m}
+
+━━━ ON-CHAIN FLOW ANALYSIS ━━━
+${tokenData.cvdProxy}
+${tokenData.candlePatterns}
+${tokenData.volumeProfile}
 
 ━━━ RISK ━━━
-Rug: ${tokenData.rugRatio} | WashTrading: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}
+Rug: ${tokenData.rugRatio.toFixed(3)} | WashTrading: ${tokenData.isWashTrading} | Creator: ${tokenData.creatorTokenStatus}
+Sniper Count: ${tokenData.sniperCount} | Fresh Wallets: ${((tokenData.freshWalletRate ?? 0) * 100).toFixed(1)}% | Insider Hold: ${((tokenData.insiderHoldRate ?? 0) * 100).toFixed(1)}%
+Token Age: ${Math.floor((tokenData.tokenAgeSecs ?? 0) / 60)}m
 
 ━━━ EXIT PATTERNS ━━━
 ${exitPatternsText}

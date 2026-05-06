@@ -1,5 +1,4 @@
 import { executeSwap, queryOrder } from "./client";
-import { logger } from "../utils/logger";
 
 const SOL_ADDRESS = "So11111111111111111111111111111111111111112";
 

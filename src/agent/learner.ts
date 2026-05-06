@@ -227,7 +227,7 @@ ${outcome.pnlPercent !== undefined ? `PnL: ${outcome.pnlPercent.toFixed(2)}%` : 
 ${outcome.holdingDurationMs ? `Hold: ${(outcome.holdingDurationMs / 60000).toFixed(1)}m` : ""}
 Signals: ${d.signals?.join(", ") || "None"}
 Reasoning: ${d.reasoning || "N/A"}
-Context: OrderFlow=${context.orderFlowIntensity || "N/A"}, SmartDegen=${context.smartDegenCount || "N/A"}, RugRatio=${context.rugRatio || "N/A"}
+Context: OrderFlow=${context.orderFlowIntensity || "N/A"}, SmartDegen=${context.smartDegenCount || "N/A"}, RugRatio=${context.rugRatio || "N/A"}, CVD=${context.cvdTrend || "N/A"}, VolAccel=${context.volumeAcceleration !== undefined ? context.volumeAcceleration.toFixed(0) + "%" : "N/A"}, Breakout=${context.hasCandleBreakout ?? "N/A"}, UpperWick=${context.hasUpperWickDominance ?? "N/A"}, Snipers=${context.sniperCount ?? "N/A"}, TokenAge=${context.tokenAgeMins !== undefined ? context.tokenAgeMins + "m" : "N/A"}
 `;
   }).join("\n---\n");
 
