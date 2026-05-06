@@ -28,7 +28,6 @@ async function gracefulShutdown(signal: string) {
   if (positions.length === 0) {
     logger.info("No open positions to close.");
     process.exit(0);
-    return;
   }
 
   logger.info(`Closing ${positions.length} positions...`);
