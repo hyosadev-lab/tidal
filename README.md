@@ -18,25 +18,13 @@ Autonomous Solana memecoin trading agent for the "Trenches" ($20K-$2M market cap
 - **Graceful shutdown** — auto-closes all positions on SIGINT/SIGTERM
 - **Dry-run mode** — simulate all trades without real execution
 
----
-
-## Performance (Dry-Run)
-
-| Metric | Value |
-|--------|-------|
-| Win Rate | 80% (8W / 2L) |
-| Total PnL | +0.084 SOL |
-| Decisions Analyzed | 621+ |
-| Completed Trades | 10 |
-
-> Simulation results. Live trading not yet enabled.
 
 ---
 
 ## Prerequisites
 
 - [Bun](https://bun.sh) 1.3+
-- [gmgn-cli](https://www.npmjs.com/package/gmgn-cli) — `bun add gmgn-cli`
+- [gmgn-cli](https://www.npmjs.com/package/gmgn-cli) — `bun install -g gmgn-cli`
 - GMGN API key + wallet (for market data and trade execution)
 - OpenRouter API key (for AI decisions)
 
@@ -72,19 +60,18 @@ Key environment variables (see `.env.example` for full list):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DRY_RUN` | `true` | Simulation mode — no real trades |
-| `AMOUNT_SOL` | `0.2` | SOL per buy order |
-| `MAX_OPEN_POSITIONS` | `3` | Max concurrent positions |
+| `AMOUNT_SOL` | `0.1` | SOL per buy order |
+| `MAX_OPEN_POSITIONS` | `1` | Max concurrent positions |
 | `SCAN_INTERVAL_MINUTES` | `1` | Token discovery frequency |
-| `MANAGE_INTERVAL_MINUTES` | `0.5` | Position monitoring frequency |
+| `MANAGE_INTERVAL_MINUTES` | `0.25` | Position monitoring frequency |
 | `SLIPPAGE` | `0.15` | Slippage tolerance (15%) |
 | `TEMPERATURE` | `0.15` | AI exploration level (0-1) |
-| `SOLD_COOLDOWN_MINUTES` | `1` | Cooldown after selling a token |
+| `SOLD_COOLDOWN_MINUTES` | `3` | Cooldown after selling a token |
 
 ### Token Filters
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GMGN_SORT_BY` | `swaps_1h` | Sort tokens by metric |
 | `GMGN_TYPE` | `completed` | Token lifecycle stage |
 | `GMGN_MIN_SMART_DEGEN_COUNT` | `3` | Minimum smart money wallets |
 | `GMGN_MIN_RENOWNED_COUNT` | `2` | Minimum renowned traders |
