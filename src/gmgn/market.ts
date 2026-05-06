@@ -63,14 +63,14 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
     const tokenSecurity = await fetchTokenSecurity(chain, address);
 
     // Step 2: Fetch market data (kline & traders) sequential with rate limit
-    const tradersResult = await fetchTopTraders(chain, address, 100);
+    const tradersResult = await fetchTopTraders(chain, address, 100, "smart_degen");
     const kline1mResult = await fetchKline(chain, address, "1m", from1m, now);
 
     const traders = tradersResult?.list || [];
     const kline1mData = kline1mResult?.list || [];
 
-    // Calculate Order Flow (reuse traders data)
-    const orderFlowSummary = calculateOrderFlow(traders);
+    // Calculate Order Flow from kline data (recent activity, not all-time)
+    const orderFlowSummary = calculateOrderFlowFromKline(kline1mData, traders);
 
     // Get REAL-TIME price from token info (more accurate than kline)
     const currentPrice = parseFloat(tokenInfo.price) || 0;
@@ -94,7 +94,7 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
 
     // Process Traders Summary
     const tradersSummary = formatTradersSummary(traders);
-    const activeSmartDegenCount = traders.filter((t: any) => t.tags?.includes("smart_degen") || t.tags?.includes("kol")).length;
+    const activeSmartDegenCount = traders.filter((t: any) => t.tags?.includes("smart_degen")).length;
 
     // Extract additional holder quality fields from already-fetched data
     const sniperCount = parseInt(tokenSecurity.sniper_count) || 0;
@@ -195,29 +195,55 @@ export async function getTokenDetails(chain: string, address: string): Promise<T
   }
 }
 
-function calculateOrderFlow(traders: any[]): OrderFlowSummary {
+function calculateOrderFlowFromKline(klines: any[], traders: any[]): OrderFlowSummary {
   let totalBuyVolume = 0;
   let totalSellVolume = 0;
+
+  // Derive buy/sell volume from recent kline candles (last 30 min)
+  // Each candle: { open, high, low, close, volume }
+  for (const candle of klines) {
+    const open = parseFloat(candle.open) || 0;
+    const high = parseFloat(candle.high) || 0;
+    const low = parseFloat(candle.low) || 0;
+    const close = parseFloat(candle.close) || 0;
+    const volume = parseFloat(candle.volume) || 0;
+
+    if (volume === 0 || high === low) {
+      // No range → split evenly
+      totalBuyVolume += volume / 2;
+      totalSellVolume += volume / 2;
+      continue;
+    }
+
+    if (close >= open) {
+      // Bullish candle: buy volume proportional to close position in range
+      const buyRatio = (close - low) / (high - low);
+      totalBuyVolume += volume * buyRatio;
+      totalSellVolume += volume * (1 - buyRatio);
+    } else {
+      // Bearish candle: sell volume proportional to close position in range
+      const sellRatio = (high - close) / (high - low);
+      totalSellVolume += volume * sellRatio;
+      totalBuyVolume += volume * (1 - sellRatio);
+    }
+  }
+
+  // Smart money metrics from trader data (still useful for wallet-level signals)
   let smartMoneyNetFlow = 0;
   let smartMoneyBuyCount = 0;
   let smartMoneySellCount = 0;
 
   traders.forEach((t: any) => {
-    const isSmartDegen = t.tags?.includes("smart_degen") || t.tags?.includes("kol") || false;
-    const netflow = parseFloat(t.netflow_usd) || 0;
+    const isSmartDegen = t.tags?.includes("smart_degen") || false;
+    if (!isSmartDegen) return;
 
+    const netflow = parseFloat(t.netflow_usd) || 0;
     if (netflow > 0) {
-      totalBuyVolume += netflow;
-      if (isSmartDegen) {
-        smartMoneyBuyCount++;
-        smartMoneyNetFlow += netflow;
-      }
+      smartMoneyBuyCount++;
+      smartMoneyNetFlow += netflow;
     } else if (netflow < 0) {
-      totalSellVolume += Math.abs(netflow);
-      if (isSmartDegen) {
-        smartMoneySellCount++;
-        smartMoneyNetFlow += netflow;
-      }
+      smartMoneySellCount++;
+      smartMoneyNetFlow += netflow;
     }
   });
 
@@ -291,7 +317,7 @@ function processKlineData(kline1mData: any[], realTimePrice: number) {
 }
 
 function formatTradersSummary(traders: any[]): string {
-  return traders.filter(t => t.tags?.includes("smart_degen") || t.tags?.includes("kol")).map((t: any) => {
+  return traders.filter(t => t.tags?.includes("smart_degen")).map((t: any) => {
     const walletName = t.name || t.address.slice(0, 6);
     const value = t.usd_value ? t.usd_value.toFixed(2) : "0";
     const side = t.netflow_usd > 0 ? "BUY" : (t.netflow_usd < 0 ? "SELL" : "HOLD");
