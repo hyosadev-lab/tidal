@@ -203,7 +203,7 @@ function calculateOrderFlow(traders: any[]): OrderFlowSummary {
   let smartMoneySellCount = 0;
 
   traders.forEach((t: any) => {
-    const isSmartDegen = t.tags?.includes("smart_degen") || false;
+    const isSmartDegen = t.tags?.includes("smart_degen") || t.tags?.includes("kol") || false;
     const netflow = parseFloat(t.netflow_usd) || 0;
 
     if (netflow > 0) {

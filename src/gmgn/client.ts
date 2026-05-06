@@ -202,7 +202,7 @@ export async function fetchKline(chain: string, address: string, resolution: str
 export async function fetchTopTraders(chain: string, address: string, limit: number = 10, tag: string = "") {
   // Use 'token traders' command from gmgn-token skill
   // Note: gmgn-token's 'token traders' uses --tag to filter by wallet type
-  const args = ["token", "traders", "--chain", chain, "--address", address, "--limit", limit.toString(), "--raw", "--order-by", "buy_volume_cur"];
+  const args = ["token", "traders", "--chain", chain, "--address", address, "--limit", limit.toString(), "--raw", "--order-by", "amount_percentage"];
   if (tag) args.push("--tag", tag)
 
   return executeGmgnCommand<any>(args);
