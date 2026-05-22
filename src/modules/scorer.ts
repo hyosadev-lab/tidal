@@ -65,10 +65,10 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
 
   // ── Compute signals ───────────────────────────────────────────────────────
 
-  const currentPrice = info.price.price;
+  const currentPrice = parseFloat(info.price.price);
   const migrationPrice = info.migration_market_cap > 0 && token.usd_market_cap > 0
-    ? info.price.price * (info.migration_market_cap / token.usd_market_cap)
-    : info.price.price;
+    ? currentPrice * (info.migration_market_cap / token.usd_market_cap)
+    : currentPrice;
 
   const dip = scoreDipRecovery(
     candles,
@@ -159,7 +159,7 @@ export function buildEntryPrompt(enriched: EnrichedToken): string {
   const config = getConfig();
   const minutesSinceGrad = Math.round((nowUnix() - token.open_timestamp) / 60);
   const priceChangeSinceGrad = migrationPrice > 0
-    ? ((info.price.price - migrationPrice) / migrationPrice * 100).toFixed(1)
+    ? ((parseFloat(info.price.price) - migrationPrice) / migrationPrice * 100).toFixed(1)
     : 'N/A';
 
   return `
