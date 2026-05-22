@@ -270,7 +270,7 @@ export class GmgnClient {
 
   async getGraduatedTokens(filters?: Record<string, number | string>): Promise<TrenchesToken[]> {
     const body = this.buildTrenchesBody(filters);
-    const data = await this.normalRequest('POST', '/v1/trenches', {}, body) as any;
+    const data = await this.normalRequest('POST', '/v1/trenches', { chain: CHAIN }, body) as any;
     return (data?.completed ?? []) as TrenchesToken[];
   }
 

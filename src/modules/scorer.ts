@@ -1,0 +1,213 @@
+import { getGmgnClient, type TrenchesToken, type TokenInfo, type KlineCandle, type HolderWallet } from '../services/gmgn-client.ts';
+import { getConfig } from '../config.ts';
+import { logger } from '../utils/logger.ts';
+import { insertSignalScores } from '../db/queries.ts';
+import { scoreDipRecovery, type DipRecoverySignal } from '../strategies/dip-recovery.ts';
+import { scoreMomentum, type MomentumSignal } from '../strategies/momentum.ts';
+import { scoreSmartMoney, type SmartMoneySignal } from '../strategies/smart-money.ts';
+import { nowUnix } from '../utils/math.ts';
+import { sleep } from '../utils/retry.ts';
+
+export interface AllSignalScores {
+  composite: number;
+  dip: DipRecoverySignal;
+  momentum: MomentumSignal;
+  smartMoney: SmartMoneySignal;
+}
+
+export interface EnrichedToken {
+  token: TrenchesToken;
+  info: TokenInfo;
+  candles: KlineCandle[];
+  smartHolders: HolderWallet[];
+  migrationPrice: number;
+  scores: AllSignalScores;
+}
+
+/**
+ * Fetch enrichment data and compute all signal scores for a token candidate.
+ * Returns null if enrichment fails or score is below threshold.
+ */
+export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToken | null> {
+  const config = getConfig();
+  const client = getGmgnClient();
+
+  // ── Fetch enrichment data ─────────────────────────────────────────────────
+
+  let info: TokenInfo;
+  try {
+    info = await client.getTokenInfo(token.address);
+    await sleep(500); // rate limit buffer
+  } catch (err) {
+    logger.error('enrichment_failed', { mint: token.address, endpoint: 'token_info', error: String(err) });
+    return null;
+  }
+
+  let candles: KlineCandle[];
+  try {
+    const from = token.open_timestamp;
+    const to = nowUnix();
+    candles = await client.getTokenKline(token.address, config.klineResolution, from, to);
+    await sleep(500);
+  } catch (err) {
+    logger.error('enrichment_failed', { mint: token.address, endpoint: 'token_kline', error: String(err) });
+    return null;
+  }
+
+  let smartHolders: HolderWallet[];
+  try {
+    smartHolders = await client.getSmartMoneyHolders(token.address, 20);
+    await sleep(500);
+  } catch (err) {
+    logger.warn('enrichment_failed', { mint: token.address, endpoint: 'smart_money_holders', error: String(err) });
+    smartHolders = []; // degrade gracefully
+  }
+
+  // ── Compute signals ───────────────────────────────────────────────────────
+
+  const currentPrice = info.price.price;
+  const migrationPrice = info.migration_market_cap > 0 && token.usd_market_cap > 0
+    ? info.price.price * (info.migration_market_cap / token.usd_market_cap)
+    : info.price.price;
+
+  const dip = scoreDipRecovery(
+    candles,
+    currentPrice,
+    config.klineResolution,
+    config.lowZoneMinMinutes,
+    config.lowZoneMaxMinutes,
+    config.recoveryVolumeLookbackMinutes
+  );
+
+  const momentum = scoreMomentum(
+    candles,
+    info.price.swaps_1h ?? token.swaps_1h,
+    token.price_change_percent5m,
+    token.price_change_percent1h
+  );
+
+  const smartMoney = scoreSmartMoney(smartHolders);
+
+  // ── Composite score ───────────────────────────────────────────────────────
+
+  const composite =
+    dip.score * 0.35 +
+    momentum.score * 0.35 +
+    smartMoney.score * 0.30;
+
+  const scores: AllSignalScores = { composite, dip, momentum, smartMoney };
+
+  // ── Persist scores ────────────────────────────────────────────────────────
+
+  insertSignalScores({
+    mintAddress: token.address,
+    dipScore: dip.score,
+    momentumScore: momentum.score,
+    smartMoneyScore: smartMoney.score,
+    compositeScore: composite,
+    dipDetails: {
+      athPrice: dip.athPrice,
+      dipFromAthPct: dip.dipFromAthPct,
+      lowZoneCandles: dip.lowZoneCandles,
+      volumeRecoveryPct: dip.volumeRecoveryPct,
+    },
+    momentumDetails: {
+      volumeTrend: momentum.volumeTrend,
+      swaps1h: momentum.swaps1h,
+      organicGrowth: momentum.organicGrowth,
+      priceChange5m: momentum.priceChange5m,
+      priceChange1h: momentum.priceChange1h,
+    },
+    smartMoneyDetails: {
+      smartWalletCount: smartMoney.smartWalletCount,
+      totalSmartHoldingPct: smartMoney.totalSmartHoldingPct,
+      recentEntry: smartMoney.recentEntry,
+      smartWalletsStillHolding: smartMoney.smartWalletsStillHolding,
+    },
+  });
+
+  logger.info('token_scored', {
+    mint: token.address,
+    symbol: token.symbol,
+    composite: composite.toFixed(1),
+    dip: dip.score.toFixed(1),
+    momentum: momentum.score.toFixed(1),
+    smart_money: smartMoney.score.toFixed(1),
+    threshold: config.minScoreToBuy,
+  });
+
+  // ── Gate: below threshold → skip ─────────────────────────────────────────
+
+  if (composite < config.minScoreToBuy) {
+    logger.warn('token_skipped', {
+      mint: token.address,
+      symbol: token.symbol,
+      reason: 'below_score_threshold',
+      composite: composite.toFixed(1),
+    });
+    return null;
+  }
+
+  return { token, info, candles, smartHolders, migrationPrice, scores };
+}
+
+/**
+ * Build the AI entry evaluation prompt.
+ */
+export function buildEntryPrompt(enriched: EnrichedToken): string {
+  const { token, info, scores, migrationPrice } = enriched;
+  const config = getConfig();
+  const minutesSinceGrad = Math.round((nowUnix() - token.open_timestamp) / 60);
+  const priceChangeSinceGrad = migrationPrice > 0
+    ? ((info.price.price - migrationPrice) / migrationPrice * 100).toFixed(1)
+    : 'N/A';
+
+  return `
+Token: ${token.symbol} / ${token.name}
+Mint: ${token.address}
+Platform: ${token.launchpad_platform}
+Graduated: ${minutesSinceGrad} minutes ago
+Current Price: $${info.price.price}
+Market Cap: $${token.usd_market_cap}
+Liquidity: $${token.liquidity}
+Holders: ${token.holder_count}
+
+--- SECURITY ---
+Renounced Mint: YES ✅
+Renounced Freeze: YES ✅
+Rug Ratio: ${token.rug_ratio} (limit: ${config.maxRugRatio})
+Top 10 Holders: ${(token.top_10_holder_rate * 100).toFixed(1)}% of supply
+Dev Status: ${token.creator_token_status}
+Wash Trading: None ✅
+
+--- SIGNAL SCORES ---
+Composite: ${scores.composite.toFixed(1)}/100 (threshold: ${config.minScoreToBuy})
+Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
+  → ATH since graduation: $${scores.dip.athPrice}
+  → Dip from ATH: ${scores.dip.dipFromAthPct.toFixed(1)}%
+  → Time in low zone: ${scores.dip.lowZoneCandles} candles
+  → Volume recovery: +${scores.dip.volumeRecoveryPct.toFixed(0)}% vs low zone avg
+Momentum Score: ${scores.momentum.score.toFixed(1)}/100
+  → Volume trend: ${scores.momentum.volumeTrend.toFixed(2)}x overall avg
+  → Swaps 1h: ${scores.momentum.swaps1h}
+  → Organic growth: ${scores.momentum.organicGrowth}
+  → Price change 5m: ${scores.momentum.priceChange5m.toFixed(1)}% | 1h: ${scores.momentum.priceChange1h.toFixed(1)}%
+Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
+  → Smart wallets holding: ${scores.smartMoney.smartWalletCount}
+  → Combined supply held: ${(scores.smartMoney.totalSmartHoldingPct * 100).toFixed(1)}%
+  → Recent entry (<30min): ${scores.smartMoney.recentEntry}
+  → Still holding: ${scores.smartMoney.smartWalletsStillHolding}
+
+--- PRICE ACTION ---
+Price at graduation: $${migrationPrice.toFixed(8)}
+Change since graduation: ${priceChangeSinceGrad}%
+5m price change: ${token.price_change_percent5m.toFixed(1)}%
+1h price change: ${token.price_change_percent1h.toFixed(1)}%
+1h volume: $${token.volume_1h.toFixed(0)}
+1h swaps: ${token.swaps_1h}
+Smart money wallets (GMGN-tagged): ${info.wallet_tags_stat.smart_wallets}
+KOL wallets: ${info.wallet_tags_stat.renowned_wallets}
+
+Buy 0.1 SOL of this token? Respond in JSON only.
+  `.trim();
+}
