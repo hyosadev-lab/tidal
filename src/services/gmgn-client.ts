@@ -137,13 +137,7 @@ export interface TrenchesToken {
   rug_ratio: number;
   creator_token_status: string;     // 'creator_hold' | 'creator_close'
   is_wash_trading: boolean;
-  renounced_mint: number;           // 1 = renounced (safe)
-  renounced_freeze_account: number; // 1 = renounced (safe)
-  volume_1h: number;
-  swaps_1h: number;
-  price: number;
-  price_change_percent1h: number;
-  price_change_percent5m: number;
+  owner_renounced: string;          // "yes" | "no"
 }
 
 export interface TokenInfo {

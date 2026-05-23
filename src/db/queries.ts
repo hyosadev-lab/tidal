@@ -301,7 +301,6 @@ export function closePosition(params: {
 
 export function upsertDailyStats(date: string, pnlUsd: number, solTraded: number, won: boolean): void {
   const db = getDb();
-
   db.prepare(`
     INSERT INTO daily_stats (date, trades_total, trades_won, trades_lost, pnl_usd, sol_traded)
     VALUES (?, 1, ?, ?, ?, ?)
@@ -323,7 +322,6 @@ export function upsertDailyStats(date: string, pnlUsd: number, solTraded: number
     solTraded
   );
 
-  // Recompute win_rate and avg_pnl_per_trade
   db.prepare(`
     UPDATE daily_stats
     SET win_rate = CAST(trades_won AS REAL) / trades_total,
@@ -347,7 +345,6 @@ export function getBestAndWorstTrades(date: string): {
   dateStart.setHours(0, 0, 0, 0);
   const dateEnd = new Date(date);
   dateEnd.setHours(23, 59, 59, 999);
-
   const startUnix = Math.floor(dateStart.getTime() / 1000);
   const endUnix = Math.floor(dateEnd.getTime() / 1000);
 

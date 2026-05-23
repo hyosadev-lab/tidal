@@ -5,7 +5,7 @@ import { insertSignalScores } from '../db/queries.ts';
 import { scoreDipRecovery, type DipRecoverySignal } from '../strategies/dip-recovery.ts';
 import { scoreMomentum, type MomentumSignal } from '../strategies/momentum.ts';
 import { scoreSmartMoney, type SmartMoneySignal } from '../strategies/smart-money.ts';
-import { nowUnix } from '../utils/math.ts';
+import { nowUnix, SOL_ADDRESS } from '../utils/math.ts';
 import { sleep } from '../utils/retry.ts';
 
 export interface AllSignalScores {
@@ -34,9 +34,13 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
 
   // ── Fetch enrichment data ─────────────────────────────────────────────────
 
-  let info: TokenInfo;
+  let info: TokenInfo & { migration_market_cap_quote?: string; };
   try {
     info = await client.getTokenInfo(token.address);
+    if (info.migration_market_cap_quote === "SOL") {
+      const solInfo = await client.getTokenInfo(SOL_ADDRESS);
+      info.migration_market_cap = info.migration_market_cap * parseFloat(solInfo.price.price)
+    }
     await sleep(500); // rate limit buffer
   } catch (err) {
     logger.error('enrichment_failed', { mint: token.address, endpoint: 'token_info', error: String(err) });
@@ -66,6 +70,8 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   // ── Compute signals ───────────────────────────────────────────────────────
 
   const currentPrice = parseFloat(info.price.price);
+  const price5m = parseFloat(info.price.price_5m);
+  const price1h = parseFloat(info.price.price_1h);
   const migrationPrice = info.migration_market_cap > 0 && token.usd_market_cap > 0
     ? currentPrice * (info.migration_market_cap / token.usd_market_cap)
     : currentPrice;
@@ -81,9 +87,9 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
 
   const momentum = scoreMomentum(
     candles,
-    info.price.swaps_1h ?? token.swaps_1h,
-    token.price_change_percent5m,
-    token.price_change_percent1h
+    info.price.swaps_1h,
+    ((currentPrice - price5m) / price5m) * 100,
+    ((currentPrice - price1h) / price1h) * 100,
   );
 
   const smartMoney = scoreSmartMoney(smartHolders);
@@ -154,10 +160,11 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
 /**
  * Build the AI entry evaluation prompt.
  */
-export function buildEntryPrompt(enriched: EnrichedToken): string {
-  const { token, info, scores, migrationPrice } = enriched;
+export function buildEntryPrompt({ token, info, scores, migrationPrice }: EnrichedToken): string {
   const config = getConfig();
-  const minutesSinceGrad = Math.round((nowUnix() - token.open_timestamp) / 60);
+
+  const nowUnixSecond = (nowUnix() / 1000)
+  const minutesSinceGrad = Math.round((nowUnixSecond - token.open_timestamp) / 60);
   const priceChangeSinceGrad = migrationPrice > 0
     ? ((parseFloat(info.price.price) - migrationPrice) / migrationPrice * 100).toFixed(1)
     : 'N/A';
@@ -169,16 +176,15 @@ Platform: ${token.launchpad_platform}
 Graduated: ${minutesSinceGrad} minutes ago
 Current Price: $${info.price.price}
 Market Cap: $${token.usd_market_cap}
-Liquidity: $${token.liquidity}
+Liquidity: $${info.liquidity}
 Holders: ${token.holder_count}
 
 --- SECURITY ---
-Renounced Mint: YES ✅
-Renounced Freeze: YES ✅
-Rug Ratio: ${token.rug_ratio} (limit: ${config.maxRugRatio})
+Owner Renounced: ${token.owner_renounced === "yes" ? "YES 🚫" : token.owner_renounced === "no" ? "NO ✅" : "-"}
+Rug Ratio: ${token.rug_ratio}
 Top 10 Holders: ${(token.top_10_holder_rate * 100).toFixed(1)}% of supply
-Dev Status: ${token.creator_token_status}
-Wash Trading: None ✅
+Dev Status: ${token.creator_token_status} ${token.creator_token_status !== "creator_close" ? "🚫" : "✅"}
+Wash Trading: ${token.is_wash_trading ? "YES 🚫" : "NO ✅"}
 
 --- SIGNAL SCORES ---
 Composite: ${scores.composite.toFixed(1)}/100 (threshold: ${config.minScoreToBuy})
@@ -201,11 +207,11 @@ Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
 --- PRICE ACTION ---
 Price at graduation: $${migrationPrice.toFixed(8)}
 Change since graduation: ${priceChangeSinceGrad}%
-5m price change: ${token.price_change_percent5m.toFixed(1)}%
-1h price change: ${token.price_change_percent1h.toFixed(1)}%
-1h volume: $${token.volume_1h.toFixed(0)}
-1h swaps: ${token.swaps_1h}
-Smart money wallets (GMGN-tagged): ${info.wallet_tags_stat.smart_wallets}
+5m price change: ${scores.momentum.priceChange5m.toFixed(1)}%
+1h price change: ${scores.momentum.priceChange1h.toFixed(1)}%
+1h volume: $${info.price.volume_1h}
+1h swaps: ${info.price.swaps_1h}
+Smart money wallets: ${info.wallet_tags_stat.smart_wallets}
 KOL wallets: ${info.wallet_tags_stat.renowned_wallets}
 
 Buy 0.1 SOL of this token? Respond in JSON only.

@@ -64,12 +64,12 @@ export async function scanGraduatedTokens(): Promise<TrenchesToken[]> {
 }
 
 function passesClientFilter(token: TrenchesToken): boolean {
-  if (token.renounced_mint !== 1) {
-    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'mint_not_renounced' });
+  if (token.owner_renounced === "no") {
+    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'owner_not_renounced' });
     return false;
   }
-  if (token.renounced_freeze_account !== 1) {
-    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'freeze_not_renounced' });
+  if (token.creator_token_status === "creator_hold") {
+    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'creator_hold' });
     return false;
   }
   if (token.is_wash_trading) {

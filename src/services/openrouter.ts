@@ -34,7 +34,7 @@ async function callOpenRouter(
         },
         body: JSON.stringify({
           model: config.openrouterModel,
-          max_tokens: 512,
+          max_tokens: 4096,
           temperature: 0.1,
           response_format: { type: 'json_object' },
           messages: [
@@ -103,12 +103,6 @@ export async function evaluateEntry(userPrompt: string): Promise<EntryDecision> 
       reasoning: parsed.reasoning ?? 'No reasoning provided',
       red_flags: Array.isArray(parsed.red_flags) ? parsed.red_flags : [],
     };
-
-    logger.info('ai_entry_decision', {
-      action: decision.action,
-      confidence: decision.confidence,
-      red_flags: decision.red_flags,
-    });
 
     return { ...decision, _raw: rawOut.raw } as any;
   } catch (err) {
