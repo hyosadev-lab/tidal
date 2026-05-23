@@ -3,26 +3,6 @@ import { nowUnix } from '../utils/math.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface TokenCandidate {
-  id: number;
-  mint_address: string;
-  symbol: string | null;
-  name: string | null;
-  launchpad_platform: string | null;
-  graduated_at: number | null;
-  first_seen_at: number;
-  liquidity_usd: number | null;
-  holder_count: number | null;
-  top_10_holder_rate: number | null;
-  smart_degen_count: number | null;
-  renowned_count: number | null;
-  rug_ratio: number | null;
-  creator_token_status: string | null;
-  is_wash_trading: number | null;
-  usd_market_cap: number | null;
-  status: string;
-}
-
 export interface Position {
   id: number;
   mint_address: string;
@@ -58,66 +38,28 @@ export interface Trade {
   status: string;
 }
 
-// ─── Token Candidates ────────────────────────────────────────────────────────
+// ─── Dedup ───────────────────────────────────────────────────────────────────
 
-export function tokenExists(mintAddress: string): boolean {
+/**
+ * Returns true if token should be skipped:
+ * - Already has an open position (currently holding)
+ * - Already has a closed position (already traded, no re-entry)
+ * - Already has a pending/confirmed buy trade (being processed)
+ */
+export function shouldSkipToken(mintAddress: string): boolean {
   const db = getDb();
-  const row = db
-    .prepare('SELECT 1 FROM token_candidates WHERE mint_address = ?')
+
+  const position = db
+    .prepare('SELECT 1 FROM positions WHERE mint_address = ?')
     .get(mintAddress);
-  return !!row;
-}
+  if (position) return true;
 
-export function insertTokenCandidate(params: {
-  mintAddress: string;
-  symbol?: string;
-  name?: string;
-  launchpadPlatform?: string;
-  graduatedAt?: number;
-  liquidityUsd?: number;
-  holderCount?: number;
-  top10HolderRate?: number;
-  smartDegenCount?: number;
-  renownedCount?: number;
-  rugRatio?: number;
-  creatorTokenStatus?: string;
-  isWashTrading?: boolean;
-  usdMarketCap?: number;
-}): void {
-  const db = getDb();
-  db.prepare(`
-    INSERT OR IGNORE INTO token_candidates (
-      mint_address, symbol, name, launchpad_platform, graduated_at,
-      liquidity_usd, holder_count, top_10_holder_rate, smart_degen_count,
-      renowned_count, rug_ratio, creator_token_status, is_wash_trading, usd_market_cap
-    ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-    )
-  `).run(
-    params.mintAddress,
-    params.symbol ?? null,
-    params.name ?? null,
-    params.launchpadPlatform ?? null,
-    params.graduatedAt ?? null,
-    params.liquidityUsd ?? null,
-    params.holderCount ?? null,
-    params.top10HolderRate ?? null,
-    params.smartDegenCount ?? null,
-    params.renownedCount ?? null,
-    params.rugRatio ?? null,
-    params.creatorTokenStatus ?? null,
-    params.isWashTrading != null ? (params.isWashTrading ? 1 : 0) : null,
-    params.usdMarketCap ?? null
-  );
-}
+  const trade = db
+    .prepare("SELECT 1 FROM trades WHERE mint_address = ? AND side = 'BUY' AND status IN ('pending', 'confirmed')")
+    .get(mintAddress);
+  if (trade) return true;
 
-export function updateTokenStatus(
-  mintAddress: string,
-  status: 'pending' | 'bought' | 'skipped' | 'error'
-): void {
-  getDb()
-    .prepare('UPDATE token_candidates SET status = ? WHERE mint_address = ?')
-    .run(status, mintAddress);
+  return false;
 }
 
 // ─── Signal Scores ───────────────────────────────────────────────────────────
@@ -301,6 +243,7 @@ export function closePosition(params: {
 
 export function upsertDailyStats(date: string, pnlUsd: number, solTraded: number, won: boolean): void {
   const db = getDb();
+
   db.prepare(`
     INSERT INTO daily_stats (date, trades_total, trades_won, trades_lost, pnl_usd, sol_traded)
     VALUES (?, 1, ?, ?, ?, ?)
@@ -349,17 +292,17 @@ export function getBestAndWorstTrades(date: string): {
   const endUnix = Math.floor(dateEnd.getTime() / 1000);
 
   const best = db.prepare(`
-    SELECT p.symbol, p.pnl_usd, p.pnl_pct, p.exit_reason
-    FROM positions p
-    WHERE p.status = 'closed' AND p.closed_at BETWEEN ? AND ?
-    ORDER BY p.pnl_usd DESC LIMIT 1
+    SELECT symbol, pnl_usd, pnl_pct, exit_reason
+    FROM positions
+    WHERE status = 'closed' AND closed_at BETWEEN ? AND ?
+    ORDER BY pnl_usd DESC LIMIT 1
   `).get(startUnix, endUnix) as any;
 
   const worst = db.prepare(`
-    SELECT p.symbol, p.pnl_usd, p.pnl_pct, p.exit_reason
-    FROM positions p
-    WHERE p.status = 'closed' AND p.closed_at BETWEEN ? AND ?
-    ORDER BY p.pnl_usd ASC LIMIT 1
+    SELECT symbol, pnl_usd, pnl_pct, exit_reason
+    FROM positions
+    WHERE status = 'closed' AND closed_at BETWEEN ? AND ?
+    ORDER BY pnl_usd ASC LIMIT 1
   `).get(startUnix, endUnix) as any;
 
   return {

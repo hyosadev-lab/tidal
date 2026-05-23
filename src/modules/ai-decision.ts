@@ -51,7 +51,7 @@ export function buildPositionSnapshot(
     buyVolume1h,
     sellVolume1h,
     buySellRatio1h,
-    liquidity: info.liquidity ?? 0,
+    liquidity: parseFloat(info.liquidity),
     holderCount: info.stat?.holder_count ?? 0,
     smartWalletCount: info.wallet_tags_stat?.smart_wallets ?? 0,
     renownedWalletCount: info.wallet_tags_stat?.renowned_wallets ?? 0,

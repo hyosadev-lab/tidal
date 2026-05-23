@@ -1,5 +1,5 @@
 import { getGmgnClient, type TrenchesToken } from '../services/gmgn-client.ts';
-import { tokenExists, insertTokenCandidate } from '../db/queries.ts';
+import { shouldSkipToken } from '../db/queries.ts';
 import { logger } from '../utils/logger.ts';
 
 export type { TrenchesToken };
@@ -20,29 +20,11 @@ export async function scanGraduatedTokens(): Promise<TrenchesToken[]> {
   let skippedClientFilter = 0;
 
   for (const token of tokens) {
-    // Dedup check
-    if (tokenExists(token.address)) {
+    // Dedup: skip if already in positions or active trades
+    if (shouldSkipToken(token.address)) {
       skippedDedup++;
       continue;
     }
-
-    // Always insert to DB to avoid re-evaluating
-    insertTokenCandidate({
-      mintAddress: token.address,
-      symbol: token.symbol,
-      name: token.name,
-      launchpadPlatform: token.launchpad_platform,
-      graduatedAt: token.open_timestamp,
-      liquidityUsd: token.liquidity,
-      holderCount: token.holder_count,
-      top10HolderRate: token.top_10_holder_rate,
-      smartDegenCount: token.smart_degen_count,
-      renownedCount: token.renowned_count,
-      rugRatio: token.rug_ratio,
-      creatorTokenStatus: token.creator_token_status,
-      isWashTrading: token.is_wash_trading,
-      usdMarketCap: token.usd_market_cap,
-    });
 
     // Client-side filter
     if (!passesClientFilter(token)) {
@@ -64,11 +46,11 @@ export async function scanGraduatedTokens(): Promise<TrenchesToken[]> {
 }
 
 function passesClientFilter(token: TrenchesToken): boolean {
-  if (token.owner_renounced === "no") {
+  if (token.owner_renounced === 'no') {
     logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'owner_not_renounced' });
     return false;
   }
-  if (token.creator_token_status === "creator_hold") {
+  if (token.creator_token_status === 'creator_hold') {
     logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'creator_hold' });
     return false;
   }

@@ -20,26 +20,6 @@ export function getDb(): Database.Database {
 
 function runMigrations(db: Database.Database): void {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS token_candidates (
-      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-      mint_address         TEXT NOT NULL UNIQUE,
-      symbol               TEXT,
-      name                 TEXT,
-      launchpad_platform   TEXT,
-      graduated_at         INTEGER,
-      first_seen_at        INTEGER DEFAULT (unixepoch()),
-      liquidity_usd        REAL,
-      holder_count         INTEGER,
-      top_10_holder_rate   REAL,
-      smart_degen_count    INTEGER,
-      renowned_count       INTEGER,
-      rug_ratio            REAL,
-      creator_token_status TEXT,
-      is_wash_trading      INTEGER,
-      usd_market_cap       REAL,
-      status               TEXT DEFAULT 'pending'
-    );
-
     CREATE TABLE IF NOT EXISTS signal_scores (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
       mint_address          TEXT NOT NULL,
@@ -50,8 +30,7 @@ function runMigrations(db: Database.Database): void {
       composite_score       REAL,
       dip_details           TEXT,
       momentum_details      TEXT,
-      smart_money_details   TEXT,
-      FOREIGN KEY (mint_address) REFERENCES token_candidates(mint_address)
+      smart_money_details   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS ai_decisions (
@@ -63,8 +42,7 @@ function runMigrations(db: Database.Database): void {
       confidence     REAL,
       reasoning      TEXT,
       red_flags      TEXT,
-      raw_response   TEXT,
-      FOREIGN KEY (mint_address) REFERENCES token_candidates(mint_address)
+      raw_response   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS trades (
@@ -78,30 +56,28 @@ function runMigrations(db: Database.Database): void {
       order_id             TEXT UNIQUE,
       strategy_order_id    TEXT,
       tx_hash              TEXT,
-      status               TEXT DEFAULT 'pending',
-      FOREIGN KEY (mint_address) REFERENCES token_candidates(mint_address)
+      status               TEXT DEFAULT 'pending'
     );
 
     CREATE TABLE IF NOT EXISTS positions (
-      id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-      mint_address            TEXT NOT NULL UNIQUE,
-      symbol                  TEXT,
-      opened_at               INTEGER DEFAULT (unixepoch()),
-      closed_at               INTEGER,
-      entry_price_usd         REAL,
-      exit_price_usd          REAL,
-      sol_invested            REAL,
-      token_amount            TEXT,
-      sol_returned            REAL,
-      pnl_usd                 REAL,
-      pnl_pct                 REAL,
-      exit_reason             TEXT,
-      exit_handler            TEXT,
-      strategy_order_id       TEXT,
-      entry_holder_count      INTEGER,
+      id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+      mint_address             TEXT NOT NULL UNIQUE,
+      symbol                   TEXT,
+      opened_at                INTEGER DEFAULT (unixepoch()),
+      closed_at                INTEGER,
+      entry_price_usd          REAL,
+      exit_price_usd           REAL,
+      sol_invested             REAL,
+      token_amount             TEXT,
+      sol_returned             REAL,
+      pnl_usd                  REAL,
+      pnl_pct                  REAL,
+      exit_reason              TEXT,
+      exit_handler             TEXT,
+      strategy_order_id        TEXT,
+      entry_holder_count       INTEGER,
       entry_smart_wallet_count INTEGER,
-      status                  TEXT DEFAULT 'open',
-      FOREIGN KEY (mint_address) REFERENCES token_candidates(mint_address)
+      status                   TEXT DEFAULT 'open'
     );
 
     CREATE TABLE IF NOT EXISTS daily_stats (

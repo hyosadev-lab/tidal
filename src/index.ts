@@ -6,7 +6,7 @@ import { enrichAndScore, buildEntryPrompt } from './modules/scorer.ts';
 import { evaluateEntry } from './services/openrouter.ts';
 import { canOpenPosition, executeBuy } from './modules/executor.ts';
 import { checkOpenPositions, printDailySummary } from './modules/position-manager.ts';
-import { insertAiDecision, updateTokenStatus } from './db/queries.ts';
+import { insertAiDecision } from './db/queries.ts';
 import { mkdirSync } from 'fs';
 import { sleep } from './utils/retry.ts';
 
@@ -44,10 +44,8 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  // Schedule daily summary at midnight
   scheduleDailySummary();
 
-  // Run both loops concurrently
   await Promise.all([
     scanLoop(),
     positionLoop(),
@@ -85,24 +83,16 @@ async function positionLoop(): Promise<void> {
 async function scanCycle(): Promise<void> {
   const config = getConfig();
 
-  // 1. Scan
   const candidates = await scanGraduatedTokens();
 
-  // 2. Evaluate max 2 per cycle (rate limit budget)
-  // const toEvaluate = candidates.slice(0, 2);
-  const toEvaluate = candidates
-
-  for (const token of toEvaluate) {
+  for (const token of candidates) {
     logger.info('evaluating_candidate', { mint: token.address, symbol: token.symbol });
 
-    // 3. Enrich + score
+    // Enrich + score
     const enriched = await enrichAndScore(token);
-    if (!enriched) {
-      updateTokenStatus(token.address, 'skipped');
-      continue;
-    }
+    if (!enriched) continue;
 
-    // 4. AI entry decision
+    // AI entry decision
     const prompt = buildEntryPrompt(enriched);
     const decision = await evaluateEntry(prompt);
 
@@ -124,23 +114,16 @@ async function scanCycle(): Promise<void> {
       red_flags: decision.red_flags,
     });
 
-    if (decision.action !== 'BUY' || decision.confidence < config.aiConfidenceThreshold) {
-      updateTokenStatus(token.address, 'skipped');
-      continue;
-    }
+    if (decision.action !== 'BUY' || decision.confidence < config.aiConfidenceThreshold) continue;
 
-    // 5. Position gate
+    // Position gate
     if (!canOpenPosition()) {
       logger.warn('buy_skipped_position_full', { mint: token.address, symbol: token.symbol });
-      updateTokenStatus(token.address, 'skipped');
       continue;
     }
 
-    // 6. Execute buy
-    const bought = await executeBuy(enriched);
-    if (!bought) {
-      updateTokenStatus(token.address, 'error');
-    }
+    // Execute buy
+    await executeBuy(enriched);
   }
 }
 
@@ -152,7 +135,6 @@ function scheduleDailySummary(): void {
 
   setTimeout(() => {
     printDailySummary();
-    // Re-schedule for next midnight
     setInterval(() => printDailySummary(), 24 * 60 * 60 * 1000);
   }, msUntilMidnight);
 }

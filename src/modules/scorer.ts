@@ -25,24 +25,20 @@ export interface EnrichedToken {
   scores: AllSignalScores;
 }
 
-/**
- * Fetch enrichment data and compute all signal scores for a token candidate.
- * Returns null if enrichment fails or score is below threshold.
- */
 export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToken | null> {
   const config = getConfig();
   const client = getGmgnClient();
 
   // ── Fetch enrichment data ─────────────────────────────────────────────────
 
-  let info: TokenInfo & { migration_market_cap_quote?: string; };
+  let info: TokenInfo & { migration_market_cap_quote?: string };
   try {
     info = await client.getTokenInfo(token.address);
-    if (info.migration_market_cap_quote === "SOL") {
-      const solPrice = await getSolPriceUsd()
-      info.migration_market_cap = info.migration_market_cap * solPrice
+    if (info.migration_market_cap_quote === 'SOL') {
+      const solPrice = await getSolPriceUsd();
+      info.migration_market_cap = info.migration_market_cap * solPrice;
     }
-    await sleep(500); // rate limit buffer
+    await sleep(500);
   } catch (err) {
     logger.error('enrichment_failed', { mint: token.address, endpoint: 'token_info', error: String(err) });
     return null;
@@ -65,7 +61,7 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
     await sleep(500);
   } catch (err) {
     logger.warn('enrichment_failed', { mint: token.address, endpoint: 'smart_money_holders', error: String(err) });
-    smartHolders = []; // degrade gracefully
+    smartHolders = [];
   }
 
   // ── Compute signals ───────────────────────────────────────────────────────
@@ -89,8 +85,8 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   const momentum = scoreMomentum(
     candles,
     info.price.swaps_1h,
-    ((currentPrice - price5m) / price5m) * 100,
-    ((currentPrice - price1h) / price1h) * 100,
+    price5m > 0 ? ((currentPrice - price5m) / price5m) * 100 : 0,
+    price1h > 0 ? ((currentPrice - price1h) / price1h) * 100 : 0,
   );
 
   const smartMoney = scoreSmartMoney(smartHolders);
@@ -158,16 +154,14 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   return { token, info, candles, smartHolders, migrationPrice, scores };
 }
 
-/**
- * Build the AI entry evaluation prompt.
- */
 export function buildEntryPrompt({ token, info, scores, migrationPrice }: EnrichedToken): string {
   const config = getConfig();
 
-  const nowUnixSecond = (nowUnix() / 1000)
+  const nowUnixSecond = nowUnix() / 1000;
   const minutesSinceGrad = Math.round((nowUnixSecond - token.open_timestamp) / 60);
+  const currentPrice = parseFloat(info.price.price);
   const priceChangeSinceGrad = migrationPrice > 0
-    ? ((parseFloat(info.price.price) - migrationPrice) / migrationPrice * 100).toFixed(1)
+    ? ((currentPrice - migrationPrice) / migrationPrice * 100).toFixed(1)
     : 'N/A';
 
   return `
@@ -181,11 +175,11 @@ Liquidity: $${info.liquidity}
 Holders: ${token.holder_count}
 
 --- SECURITY ---
-Owner Renounced: ${token.owner_renounced === "yes" ? "YES 🚫" : token.owner_renounced === "no" ? "NO ✅" : "-"}
+Owner Renounced: ${token.owner_renounced === 'yes' ? 'YES 🚫' : token.owner_renounced === 'no' ? 'NO ✅' : '-'}
 Rug Ratio: ${token.rug_ratio}
 Top 10 Holders: ${(token.top_10_holder_rate * 100).toFixed(1)}% of supply
-Dev Status: ${token.creator_token_status} ${token.creator_token_status !== "creator_close" ? "🚫" : "✅"}
-Wash Trading: ${token.is_wash_trading ? "YES 🚫" : "NO ✅"}
+Dev Status: ${token.creator_token_status} ${token.creator_token_status !== 'creator_close' ? '🚫' : '✅'}
+Wash Trading: ${token.is_wash_trading ? 'YES 🚫' : 'NO ✅'}
 
 --- SIGNAL SCORES ---
 Composite: ${scores.composite.toFixed(1)}/100 (threshold: ${config.minScoreToBuy})

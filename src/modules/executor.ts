@@ -1,7 +1,7 @@
 import { getGmgnClient, type SwapParams, type StrategyConditionOrder, type SwapResponse } from '../services/gmgn-client.ts';
 import { getConfig } from '../config.ts';
 import { logger } from '../utils/logger.ts';
-import { insertTrade, updateTradeStatus, insertPosition, updateTokenStatus, countOpenPositions } from '../db/queries.ts';
+import { insertTrade, updateTradeStatus, insertPosition, countOpenPositions } from '../db/queries.ts';
 import { type EnrichedToken } from './scorer.ts';
 import { SOL_ADDRESS, solToLamports, lamportsToSol, solscanTx } from '../utils/math.ts';
 import { sleep, withRetry } from '../utils/retry.ts';
@@ -92,8 +92,6 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
       entrySmartWalletCount: info.wallet_tags_stat?.smart_wallets,
     });
 
-    updateTokenStatus(token.address, 'bought');
-
     logger.info('buy_simulated', {
       mint: token.address,
       symbol: token.symbol,
@@ -132,7 +130,6 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     });
   } catch (err) {
     logger.error('buy_failed', { mint: token.address, symbol: token.symbol, error: String(err) });
-    updateTokenStatus(token.address, 'error');
     return false;
   }
 
@@ -163,7 +160,6 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
   if (!confirmed) {
     logger.error('buy_not_confirmed', { mint: token.address, order_id: swapResponse.order_id });
     updateTradeStatus(swapResponse.order_id, 'failed');
-    updateTokenStatus(token.address, 'error');
     return false;
   }
 
@@ -188,8 +184,6 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     entryHolderCount: info.stat?.holder_count,
     entrySmartWalletCount: info.wallet_tags_stat?.smart_wallets,
   });
-
-  updateTokenStatus(token.address, 'bought');
 
   logger.info('buy_confirmed', {
     mint: token.address,

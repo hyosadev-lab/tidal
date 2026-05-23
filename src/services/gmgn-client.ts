@@ -180,7 +180,7 @@ export interface TokenInfo {
     swaps_24h:       number;
     hot_level:       number;
   };
-  liquidity: number;
+  liquidity: string;
   migration_market_cap: number;
   wallet_tags_stat: {
     smart_wallets: number;
