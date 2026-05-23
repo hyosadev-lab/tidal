@@ -5,8 +5,9 @@ import { insertSignalScores } from '../db/queries.ts';
 import { scoreDipRecovery, type DipRecoverySignal } from '../strategies/dip-recovery.ts';
 import { scoreMomentum, type MomentumSignal } from '../strategies/momentum.ts';
 import { scoreSmartMoney, type SmartMoneySignal } from '../strategies/smart-money.ts';
-import { nowUnix, SOL_ADDRESS } from '../utils/math.ts';
+import { nowUnix } from '../utils/math.ts';
 import { sleep } from '../utils/retry.ts';
+import { getSolPriceUsd } from '../services/coingecko.ts';
 
 export interface AllSignalScores {
   composite: number;
@@ -38,8 +39,8 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   try {
     info = await client.getTokenInfo(token.address);
     if (info.migration_market_cap_quote === "SOL") {
-      const solInfo = await client.getTokenInfo(SOL_ADDRESS);
-      info.migration_market_cap = info.migration_market_cap * parseFloat(solInfo.price.price)
+      const solPrice = await getSolPriceUsd()
+      info.migration_market_cap = info.migration_market_cap * solPrice
     }
     await sleep(500); // rate limit buffer
   } catch (err) {

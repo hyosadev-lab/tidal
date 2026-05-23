@@ -15,28 +15,7 @@ import { evaluatePosition } from '../services/openrouter.ts';
 import { executeSell } from './executor.ts';
 import { computePnlPct, minutesSince, formatUsd, formatPct } from '../utils/math.ts';
 import { logDailySummary } from '../utils/logger.ts';
-
-// SOL price cache — refreshed every 5 minutes
-let cachedSolPriceUsd = 150; // fallback default
-let solPriceLastFetched = 0;
-const SOL_PRICE_TTL_MS = 5 * 60 * 1000;
-
-async function getSolPriceUsd(): Promise<number> {
-  if (Date.now() - solPriceLastFetched < SOL_PRICE_TTL_MS) {
-    return cachedSolPriceUsd;
-  }
-  try {
-    const res = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
-    );
-    const data = await res.json() as any;
-    cachedSolPriceUsd = data?.solana?.usd ?? cachedSolPriceUsd;
-    solPriceLastFetched = Date.now();
-  } catch {
-    // use cached value silently
-  }
-  return cachedSolPriceUsd;
-}
+import { getSolPriceUsd } from '../services/coingecko.ts';
 
 /**
  * Determine if this position needs AI evaluation based on exit config.
@@ -140,7 +119,6 @@ async function handlePositionClose(params: {
  * Main position manager loop — called every POSITION_CHECK_INTERVAL_SEC.
  */
 export async function checkOpenPositions(): Promise<void> {
-  const config = getConfig();
   const positions = getOpenPositions();
 
   if (positions.length === 0) return;
