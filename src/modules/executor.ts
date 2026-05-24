@@ -208,18 +208,41 @@ export async function executeSell(params: {
   tokenAmount: string;
   strategyOrderId: string | null;
   reason: string;
+  entryPriceUsd: number;
+  solInvested: number;
+  currentPriceUsd?: number;  // optional: if provided, skip token_info fetch in DRY_RUN
 }): Promise<{ success: boolean; priceUsd?: number; solReceived?: number }> {
   const config = getConfig();
   const client = getGmgnClient();
 
   // ── DRY RUN ───────────────────────────────────────────────────────────────
   if (config.dryRun) {
+    let exitPriceUsd = params.currentPriceUsd ?? params.entryPriceUsd; // use provided price or fallback to break even
+    let solReceived = params.solInvested;
+
+    // Only fetch if currentPriceUsd was not provided
+    if (!params.currentPriceUsd) {
+      try {
+        const info = await client.getTokenInfo(params.mintAddress);
+        exitPriceUsd = parseFloat(info.price.price);
+      } catch {
+        // fetch failed — fallback to break even
+      }
+    }
+
+    if (params.entryPriceUsd > 0 && exitPriceUsd > 0) {
+      solReceived = params.solInvested * (exitPriceUsd / params.entryPriceUsd);
+    }
+
     logger.info('sell_simulated', {
       mint: params.mintAddress,
       symbol: params.symbol,
       reason: params.reason,
+      exit_price_usd: exitPriceUsd,
+      sol_received: solReceived,
     });
-    return { success: true, priceUsd: 0, solReceived: 0 };
+
+    return { success: true, priceUsd: exitPriceUsd, solReceived };
   }
 
   // ── Cancel condition orders first ──────────────────────────────────────────

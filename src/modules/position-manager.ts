@@ -172,6 +172,8 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
       tokenAmount: position.token_amount,
       strategyOrderId: position.strategy_order_id,
       reason: 'TIME_LIMIT',
+      entryPriceUsd: position.entry_price_usd,
+      solInvested: position.sol_invested,
     });
 
     if (result.success) {
@@ -232,6 +234,9 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
       tokenAmount: position.token_amount,
       strategyOrderId: position.strategy_order_id,
       reason: 'AI_SELL',
+      entryPriceUsd: position.entry_price_usd,
+      solInvested: position.sol_invested,
+      currentPriceUsd: snap.price,  // already fetched via getTokenInfo above
     });
 
     if (result.success) {
