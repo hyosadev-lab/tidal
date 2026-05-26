@@ -82,11 +82,14 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
     config.recoveryVolumeLookbackMinutes
   );
 
+  const priceChange1h = price1h > 0 ? ((currentPrice - price1h) / price1h) * 100 : 0;
+
   const momentum = scoreMomentum(
     candles,
     info.price.swaps_1h,
-    price5m > 0 ? ((currentPrice - price5m) / price5m) * 100 : 0,
-    price1h > 0 ? ((currentPrice - price1h) / price1h) * 100 : 0,
+    parseFloat(info.price.buy_volume_1h),
+    parseFloat(info.price.sell_volume_1h),
+    priceChange1h,
   );
 
   const smartMoney = scoreSmartMoney(smartHolders);
@@ -115,10 +118,10 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
       volumeRecoveryPct: dip.volumeRecoveryPct,
     },
     momentumDetails: {
-      volumeTrend: momentum.volumeTrend,
+      buyPressureRatio: momentum.buyPressureRatio,
       swaps1h: momentum.swaps1h,
       organicGrowth: momentum.organicGrowth,
-      priceChange5m: momentum.priceChange5m,
+      volumeAcceleration: momentum.volumeAcceleration,
       priceChange1h: momentum.priceChange1h,
     },
     smartMoneyDetails: {
@@ -189,10 +192,11 @@ Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
   → Time in low zone: ${scores.dip.lowZoneCandles} candles
   → Volume recovery: +${scores.dip.volumeRecoveryPct.toFixed(0)}% vs low zone avg
 Momentum Score: ${scores.momentum.score.toFixed(1)}/100
-  → Volume trend: ${scores.momentum.volumeTrend.toFixed(2)}x overall avg
+  → Buy pressure ratio 1h: ${scores.momentum.buyPressureRatio.toFixed(2)} (>0.55 = buyer dominant)
   → Swaps 1h: ${scores.momentum.swaps1h}
-  → Organic growth: ${scores.momentum.organicGrowth}
-  → Price change 5m: ${scores.momentum.priceChange5m.toFixed(1)}% | 1h: ${scores.momentum.priceChange1h.toFixed(1)}%
+  → Organic growth: ${scores.momentum.organicGrowth} (false if 1h pump >200% or extreme candle spike)
+  → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
+  → Price change 1h: ${scores.momentum.priceChange1h.toFixed(1)}%
 Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
   → Smart wallets holding: ${scores.smartMoney.smartWalletCount}
   → Combined supply held: ${(scores.smartMoney.totalSmartHoldingPct * 100).toFixed(1)}%
@@ -202,9 +206,10 @@ Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
 --- PRICE ACTION ---
 Price at graduation: $${migrationPrice.toFixed(8)}
 Change since graduation: ${priceChangeSinceGrad}%
-5m price change: ${scores.momentum.priceChange5m.toFixed(1)}%
 1h price change: ${scores.momentum.priceChange1h.toFixed(1)}%
 1h volume: $${info.price.volume_1h}
+1h buy volume: $${info.price.buy_volume_1h}
+1h sell volume: $${info.price.sell_volume_1h}
 1h swaps: ${info.price.swaps_1h}
 Smart money wallets: ${info.wallet_tags_stat.smart_wallets}
 KOL wallets: ${info.wallet_tags_stat.renowned_wallets}

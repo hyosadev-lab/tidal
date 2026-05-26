@@ -38,10 +38,10 @@ export interface Config {
   maxHoldDurationMinutes: number;
 
   // Token Filters — Server-side
-  minLiquidityUsd: number;
+  minLiquidityUsd: number | null;
   minHolderCount: number;
-  maxTop10HolderRate: number;
-  maxRugRatio: number;
+  maxTop10HolderRate: number | null;
+  maxRugRatio: number | null;
   minTokenAge: string;
   maxTokenAge: string;
   minMarketcap: number | null;
@@ -167,12 +167,12 @@ export function getConfig(): Config {
     maxHoldDurationMinutes: requireInt('MAX_HOLD_DURATION_MINUTES'),
 
     // Token Filters
-    minLiquidityUsd: requireFloat('MIN_LIQUIDITY_USD'),
-    minHolderCount: requireInt('MIN_HOLDER_COUNT'),
-    maxTop10HolderRate: requireFloat('MAX_TOP_10_HOLDER_RATE'),
-    maxRugRatio: requireFloat('MAX_RUG_RATIO'),
-    minTokenAge: process.env['MIN_TOKEN_AGE'] ?? '5m',
-    maxTokenAge: process.env['MAX_TOKEN_AGE'] ?? '1440m',
+    minLiquidityUsd: optionalFloat('MIN_LIQUIDITY_USD'),
+    minHolderCount: parseInt(process.env['MIN_HOLDER_COUNT'] ?? '0', 10),
+    maxTop10HolderRate: optionalFloat('MAX_TOP_10_HOLDER_RATE'),
+    maxRugRatio: optionalFloat('MAX_RUG_RATIO'),
+    minTokenAge: process.env['MIN_TOKEN_AGE'] ?? '',
+    maxTokenAge: process.env['MAX_TOKEN_AGE'] ?? '',
     minMarketcap: optionalFloat('MIN_MARKETCAP'),
     maxMarketcap: optionalFloat('MAX_MARKETCAP'),
     minSmartDegenCount: parseInt(process.env['MIN_SMART_DEGEN_COUNT'] ?? '0', 10),

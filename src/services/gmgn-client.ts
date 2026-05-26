@@ -345,15 +345,14 @@ export class GmgnClient {
 
   private buildTrenchesBody(filters?: Record<string, number | string>): Record<string, unknown> {
     const config = getConfig();
-    const serverFilters: Record<string, unknown> = {
-      min_liquidity: config.minLiquidityUsd,
-      min_holder_count: config.minHolderCount,
-      max_top_holder_rate: config.maxTop10HolderRate,
-      max_rug_ratio: config.maxRugRatio,
-      min_created: config.minTokenAge,
-      max_created: config.maxTokenAge,
-    };
+    const serverFilters: Record<string, unknown> = {};
 
+    if (config.minLiquidityUsd != null) serverFilters['min_liquidity'] = config.minLiquidityUsd;
+    if (config.minHolderCount > 0) serverFilters['min_holder_count'] = config.minHolderCount;
+    if (config.maxTop10HolderRate != null) serverFilters['max_top_holder_rate'] = config.maxTop10HolderRate;
+    if (config.maxRugRatio != null) serverFilters['max_rug_ratio'] = config.maxRugRatio;
+    if (config.minTokenAge != '') serverFilters['min_created'] = config.minTokenAge;
+    if (config.maxTokenAge != '') serverFilters['max_created'] = config.maxTokenAge;
     if (config.minMarketcap != null) serverFilters['min_marketcap'] = config.minMarketcap;
     if (config.maxMarketcap != null) serverFilters['max_marketcap'] = config.maxMarketcap;
     if (config.minSmartDegenCount > 0) serverFilters['min_smart_degen_count'] = config.minSmartDegenCount;
