@@ -30,14 +30,43 @@ export function scoreDipRecovery(
     ? ((athPrice - currentPrice) / athPrice) * 100
     : 0;
 
+  // ── Scoring ──────────────────────────────────────────────────────────────
+
+  // Gate 1: token not in sweet spot dip range → low zone & volume not relevant
+  if (dipFromAthPct < 40) {
+    // Token at or near ATH, or shallow dip — not a dip buy opportunity
+    return { score: 0, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
+  }
+
+  if (dipFromAthPct > 70) {
+    // Too deep — might be dead/rug, low zone & volume recovery not relevant
+    return { score: 15, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
+  }
+
+  // Sweet spot: dipFromAthPct 40–70%
+  // Now low zone and volume recovery are meaningful
+  let score = 40;
+
   // 3. Low zone: candles within ±20% of current price
+  //    Valid only in sweet spot — current price is already significantly below ATH
   const lowZoneCandleList = candles.filter((c) => {
     const close = parseFloat(c.close);
     return Math.abs(close - currentPrice) / currentPrice <= 0.20;
   });
   const lowZoneCandles = lowZoneCandleList.length;
 
+  const lowZoneMinCandles = toCandles(lowZoneMinMinutes, resolution);
+  const lowZoneMaxCandles = toCandles(lowZoneMaxMinutes, resolution);
+
+  if (lowZoneCandles >= lowZoneMinCandles && lowZoneCandles <= lowZoneMaxCandles) {
+    score += 30;  // healthy consolidation at bottom
+  } else if (lowZoneCandles > lowZoneMaxCandles) {
+    score += 5;   // too long at bottom — might be dead
+  }
+  // lowZoneCandles < lowZoneMinCandles → +0 pts (just started dropping, not consolidated yet)
+
   // 4. Recovery volume: recent N candles vs low zone average
+  //    Valid only in sweet spot — meaningful only when consolidation exists
   const recoveryLookback = toCandles(recoveryVolumeLookbackMinutes, resolution);
   const recentCandles = candles.slice(-Math.max(recoveryLookback, 1));
   const recentAvgVolume = avg(recentCandles.map((c) => parseFloat(c.volume)));
@@ -49,31 +78,6 @@ export function scoreDipRecovery(
     ? ((recentAvgVolume - lowZoneAvgVolume) / lowZoneAvgVolume) * 100
     : 0;
 
-  // ── Scoring ──────────────────────────────────────────────────────────────
-  let score = 0;
-
-  // Dip from ATH
-  if (dipFromAthPct >= 40 && dipFromAthPct <= 70) {
-    score += 40;
-  } else if (dipFromAthPct > 70) {
-    score += 15;
-  } else {
-    score += 10;
-  }
-
-  // Duration in low zone
-  const lowZoneMinCandles = toCandles(lowZoneMinMinutes, resolution);
-  const lowZoneMaxCandles = toCandles(lowZoneMaxMinutes, resolution);
-
-  if (lowZoneCandles >= lowZoneMinCandles && lowZoneCandles <= lowZoneMaxCandles) {
-    score += 30;
-  } else if (lowZoneCandles > lowZoneMaxCandles) {
-    score += 5;
-  } else {
-    score += 5;
-  }
-
-  // Recovery volume
   if (volumeRecoveryPct > 50) {
     score += 30;
   } else if (volumeRecoveryPct >= 20) {

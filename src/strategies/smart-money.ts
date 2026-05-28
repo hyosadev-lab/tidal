@@ -42,18 +42,18 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
 
   // Smart wallet count
   if (smartWalletCount > 5) {
-    score += 70;
+    score += 60;
   } else if (smartWalletCount >= 3) {
-    score += 50;
+    score += 40;
   } else if (smartWalletCount >= 1) {
-    score += 25;
+    score += 15;
   }
 
   // Recent entry bonus
-  if (recentEntry) score += 20;
+  if (recentEntry) score += 25;
 
   // Still holding bonus
-  if (smartWalletsStillHolding >= 2) score += 10;
+  if (smartWalletsStillHolding >= 2) score += 15;
 
   return {
     score: Math.min(score, 100),
