@@ -33,7 +33,7 @@ export function scoreDipRecovery(
   // ── Scoring ──────────────────────────────────────────────────────────────
 
   // Gate 1: token not in sweet spot dip range → low zone & volume not relevant
-  if (dipFromAthPct < 55) {
+  if (dipFromAthPct < 60) {
     // Token at or near ATH, or shallow dip — not a dip buy opportunity
     return { score: 0, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
@@ -43,7 +43,7 @@ export function scoreDipRecovery(
     return { score: 15, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
-  // Sweet spot: dipFromAthPct 40–70%
+  // Sweet spot: dipFromAthPct 60–70%
   // Now low zone and volume recovery are meaningful
   let score = 40;
 
