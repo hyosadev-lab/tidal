@@ -21,6 +21,7 @@ export interface Position {
   strategy_order_id: string | null;
   entry_holder_count: number | null;
   entry_smart_wallet_count: number | null;
+  peak_price_usd: number | null;
   status: string;
 }
 
@@ -180,8 +181,9 @@ export function insertPosition(params: {
   getDb().prepare(`
     INSERT INTO positions (
       mint_address, symbol, entry_price_usd, sol_invested, token_amount,
-      strategy_order_id, entry_holder_count, entry_smart_wallet_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      strategy_order_id, entry_holder_count, entry_smart_wallet_count,
+      peak_price_usd
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.mintAddress,
     params.symbol ?? null,
@@ -190,8 +192,17 @@ export function insertPosition(params: {
     params.tokenAmount,
     params.strategyOrderId ?? null,
     params.entryHolderCount ?? null,
-    params.entrySmartWalletCount ?? null
+    params.entrySmartWalletCount ?? null,
+    params.entryPriceUsd  // peak starts at entry price
   );
+}
+
+export function updatePeakPrice(mintAddress: string, peakPriceUsd: number): void {
+  getDb().prepare(`
+    UPDATE positions SET peak_price_usd = ?
+    WHERE mint_address = ? AND status = 'open'
+      AND (peak_price_usd IS NULL OR peak_price_usd < ?)
+  `).run(peakPriceUsd, mintAddress, peakPriceUsd);
 }
 
 export function getOpenPositions(): Position[] {
@@ -310,3 +321,31 @@ export function getBestAndWorstTrades(date: string): {
     worst: worst ? { symbol: worst.symbol, pnlUsd: worst.pnl_usd, pnlPct: worst.pnl_pct, exitReason: worst.exit_reason } : null,
   };
 }
+
+// ─── Force close stuck positions ─────────────────────────────────────────────
+
+/**
+ * Force close a position that is stuck in 'open' status.
+ * Used when condition order fired on-chain but DB was not updated.
+ */
+export function forceCloseStuckPosition(mintAddress: string): void {
+  const db = getDb();
+  const position = db
+    .prepare("SELECT * FROM positions WHERE mint_address = ? AND status = 'open'")
+    .get(mintAddress) as Position | undefined;
+
+  if (!position) return;
+
+  db.prepare(`
+    UPDATE positions
+    SET status = 'closed',
+        closed_at = ?,
+        exit_reason = 'FORCE_CLOSE',
+        exit_handler = 'manual'
+    WHERE mint_address = ? AND status = 'open'
+  `).run(nowUnix(), mintAddress);
+
+  logger.info('position_force_closed', { mint: mintAddress });
+}
+
+import { logger } from '../utils/logger.ts';

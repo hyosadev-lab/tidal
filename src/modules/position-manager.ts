@@ -8,6 +8,7 @@ import {
   upsertDailyStats,
   getBestAndWorstTrades,
   getDailyStats,
+  updatePeakPrice,
   type Position,
 } from '../db/queries.ts';
 import { buildPositionSnapshot, buildPositionPrompt } from './ai-decision.ts';
@@ -37,41 +38,44 @@ function needsAiEvaluation(position: Position): boolean {
 }
 
 /**
- * Check if condition order has fired (position closed on-chain).
- * Only relevant for live mode where strategy_order_id exists.
+ * Mirror GMGN condition orders client-side.
+ *
+ * Since GMGN does not return strategy_order_id in swap response,
+ * we cannot poll condition order status via API.
+ * Instead we track price movement and mirror the same logic:
+ *   - loss_stop:        close if price drops >= STOP_LOSS_PCT from entry
+ *   - profit_stop_trace: close if price drops >= TRAILING_DRAWDOWN_PCT from peak,
+ *                        but only after price has risen >= TRAILING_ACTIVATE_PCT from entry
  */
-async function checkConditionOrderFired(position: Position): Promise<{
-  fired: boolean;
-  priceUsd?: number;
-  solReceived?: number;
-}> {
+function checkConditionOrderMirror(
+  position: Position,
+  currentPrice: number
+): { triggered: boolean; reason: string } {
   const config = getConfig();
 
-  if (config.dryRun || !position.strategy_order_id) {
-    return { fired: false };
-  }
-
-  const client = getGmgnClient();
-  try {
-    const status = await client.queryOrder(position.strategy_order_id);
-    if (status.status === 'confirmed' || status.status === 'successful') {
-      const report = status.report;
-      return {
-        fired: true,
-        priceUsd: report ? parseFloat(report.price_usd) : undefined,
-        solReceived: report
-          ? Number(report.output_amount) / Math.pow(10, report.output_token_decimals)
-          : undefined,
-      };
+  // Mirror loss_stop
+  if (config.stopLossPct) {
+    const slThreshold = position.entry_price_usd * (1 - config.stopLossPct / 100);
+    if (currentPrice <= slThreshold) {
+      return { triggered: true, reason: 'STOP_LOSS' };
     }
-  } catch (err) {
-    logger.warn('condition_order_check_failed', {
-      mint: position.mint_address,
-      error: String(err),
-    });
   }
 
-  return { fired: false };
+  // Mirror profit_stop_trace
+  if (config.trailingActivatePct && config.trailingDrawdownPct) {
+    const peakPrice = position.peak_price_usd ?? position.entry_price_usd;
+    const activateThreshold = position.entry_price_usd * (1 + config.trailingActivatePct / 100);
+
+    // Only check trailing if peak has reached activation threshold
+    if (peakPrice >= activateThreshold) {
+      const trailingThreshold = peakPrice * (1 - config.trailingDrawdownPct / 100);
+      if (currentPrice <= trailingThreshold) {
+        return { triggered: true, reason: 'TRAILING_STOP' };
+      }
+    }
+  }
+
+  return { triggered: false, reason: '' };
 }
 
 /**
@@ -141,23 +145,55 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
   const config = getConfig();
   const client = getGmgnClient();
 
-  // 1. Check if condition order already fired (live mode only)
-  const conditionFired = await checkConditionOrderFired(position);
-  if (conditionFired.fired) {
-    const exitPriceUsd = conditionFired.priceUsd ?? position.entry_price_usd;
-    const solReceived = conditionFired.solReceived ?? position.sol_invested;
+  // 1. Fetch current token info — needed for all checks below
+  let info;
+  try {
+    info = await client.getTokenInfo(position.mint_address);
+  } catch (err) {
+    logger.warn('position_info_fetch_failed', { mint: position.mint_address, error: String(err) });
+    return;
+  }
+
+  const currentPrice = parseFloat(info.price.price);
+
+  // 2. Update peak price in DB if current price is higher
+  if (currentPrice > (position.peak_price_usd ?? position.entry_price_usd)) {
+    updatePeakPrice(position.mint_address, currentPrice);
+    // Update local reference for condition mirror check below
+    position.peak_price_usd = currentPrice;
+  }
+
+  // 3. Mirror condition orders (loss_stop + profit_stop_trace)
+  //    This keeps DB in sync with what GMGN condition orders would do on-chain
+  const mirror = checkConditionOrderMirror(position, currentPrice);
+  if (mirror.triggered) {
+    logger.info('condition_order_mirror_triggered', {
+      mint: position.mint_address,
+      symbol: position.symbol,
+      reason: mirror.reason,
+      current_price: currentPrice,
+      entry_price: position.entry_price_usd,
+      peak_price: position.peak_price_usd,
+    });
+
+    // In live mode: condition order already fired on-chain, just sync DB
+    // In dry run: simulate the exit
+    const solReceived = config.dryRun
+      ? position.sol_invested * (currentPrice / position.entry_price_usd)
+      : position.sol_invested * (currentPrice / position.entry_price_usd); // approximation
+
     await handlePositionClose({
       position,
-      exitPriceUsd,
+      exitPriceUsd: currentPrice,
       solReceived,
-      exitReason: 'CONDITION_ORDER',
+      exitReason: mirror.reason,
       exitHandler: 'condition_order',
       solPriceUsd,
     });
     return;
   }
 
-  // 2. Check time limit (always active)
+  // 4. Check time limit (always active)
   const holdMinutes = minutesSince(position.opened_at);
   if (holdMinutes >= config.maxHoldDurationMinutes) {
     logger.info('time_limit_reached', {
@@ -174,13 +210,12 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
       reason: 'TIME_LIMIT',
       entryPriceUsd: position.entry_price_usd,
       solInvested: position.sol_invested,
+      currentPriceUsd: currentPrice,
     });
 
     if (result.success) {
-      // Fetch current price as fallback if sell didn't return price
-      const priceUsd = result.priceUsd ?? position.entry_price_usd;
+      const priceUsd = result.priceUsd ?? currentPrice;
       const solReceived = result.solReceived ?? position.sol_invested;
-
       await handlePositionClose({
         position,
         exitPriceUsd: priceUsd,
@@ -193,17 +228,8 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
     return;
   }
 
-  // 3. AI evaluation (if needed based on exit config)
+  // 5. AI evaluation (only if at least one side not covered by condition orders)
   if (!needsAiEvaluation(position)) return;
-
-  // Fetch current token info
-  let info;
-  try {
-    info = await client.getTokenInfo(position.mint_address);
-  } catch (err) {
-    logger.warn('position_info_fetch_failed', { mint: position.mint_address, error: String(err) });
-    return;
-  }
 
   const snap = buildPositionSnapshot(position, info, solPriceUsd);
   const prompt = buildPositionPrompt(position, snap);
@@ -236,7 +262,7 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
       reason: 'AI_SELL',
       entryPriceUsd: position.entry_price_usd,
       solInvested: position.sol_invested,
-      currentPriceUsd: snap.price,  // already fetched via getTokenInfo above
+      currentPriceUsd: snap.price,
     });
 
     if (result.success) {

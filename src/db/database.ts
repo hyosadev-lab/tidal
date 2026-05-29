@@ -77,6 +77,7 @@ function runMigrations(db: Database.Database): void {
       strategy_order_id        TEXT,
       entry_holder_count       INTEGER,
       entry_smart_wallet_count INTEGER,
+      peak_price_usd           REAL,
       status                   TEXT DEFAULT 'open'
     );
 
