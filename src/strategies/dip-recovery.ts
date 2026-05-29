@@ -1,5 +1,5 @@
 import { type KlineCandle } from '../services/gmgn-client.ts';
-import { type KlineResolution, toCandles } from '../config.ts';
+import { getConfig, type KlineResolution, toCandles } from '../config.ts';
 import { avg } from '../utils/math.ts';
 
 export interface DipRecoverySignal {
@@ -22,6 +22,8 @@ export function scoreDipRecovery(
     return { score: 0, athPrice: 0, dipFromAthPct: 0, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
+  const config = getConfig();
+
   // 1. ATH from all candles since graduation
   const athPrice = Math.max(...candles.map((c) => parseFloat(c.high)));
 
@@ -33,12 +35,12 @@ export function scoreDipRecovery(
   // ── Scoring ──────────────────────────────────────────────────────────────
 
   // Gate 1: token not in sweet spot dip range → low zone & volume not relevant
-  if (dipFromAthPct < 60) {
+  if (dipFromAthPct < config.minDipFromAthPct) {
     // Token at or near ATH, or shallow dip — not a dip buy opportunity
     return { score: 0, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
-  if (dipFromAthPct > 70) {
+  if (dipFromAthPct > config.maxDipFromAthPct) {
     // Too deep — might be dead/rug, low zone & volume recovery not relevant
     return { score: 15, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
