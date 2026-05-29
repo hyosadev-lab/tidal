@@ -50,6 +50,7 @@ export interface Config {
   minRenownedCount: number;
   maxInsiderRatio: number | null;
   maxCreatorBalanceRate: number | null;
+  minTotalFee: number | null;
 
   // Kline Signal Parameters
   klineResolution: KlineResolution;
@@ -179,6 +180,7 @@ export function getConfig(): Config {
     minRenownedCount: parseInt(process.env['MIN_RENOWNED_COUNT'] ?? '0', 10),
     maxInsiderRatio: optionalFloat('MAX_INSIDER_RATIO'),
     maxCreatorBalanceRate: optionalFloat('MAX_CREATOR_BALANCE_RATE'),
+    minTotalFee: optionalFloat('MIN_TOTAL_FEE'),
 
     // Kline
     klineResolution: parseKlineResolution(process.env['KLINE_RESOLUTION'] ?? '5m'),

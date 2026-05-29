@@ -359,6 +359,7 @@ export class GmgnClient {
     if (config.minRenownedCount > 0) serverFilters['min_renowned_count'] = config.minRenownedCount;
     if (config.maxInsiderRatio != null) serverFilters['max_insider_ratio'] = config.maxInsiderRatio;
     if (config.maxCreatorBalanceRate != null) serverFilters['max_creator_balance_rate'] = config.maxCreatorBalanceRate;
+    if (config.minTotalFee != null) serverFilters['min_total_fee'] = config.minTotalFee;
 
     const platforms = [
       'Pump.fun', 'pump_mayhem', 'pump_mayhem_agent', 'pump_agent',
