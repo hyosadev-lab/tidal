@@ -187,11 +187,11 @@ Liquidity: $${info.liquidity}
 Holders: ${token.holder_count}
 
 --- SECURITY ---
-Owner Renounced: ${token.owner_renounced === 'yes' ? 'YES 🚫' : token.owner_renounced === 'no' ? 'NO ✅' : '-'}
 Rug Ratio: ${token.rug_ratio}
 Top 10 Holders: ${(token.top_10_holder_rate * 100).toFixed(1)}% of supply
-Dev Status: ${token.creator_token_status} ${token.creator_token_status !== 'creator_close' ? '🚫' : '✅'}
-Wash Trading: ${token.is_wash_trading ? 'YES 🚫' : 'NO ✅'}
+Developer Status: ${token.creator_token_status === 'creator_hold'
+  ? 'Creator still holds tokens'
+  : 'Creator holds no tokens'} (${(token.dev_team_hold_rate * 100).toFixed(1)}% of total supply)
 
 --- SIGNAL SCORES ---
 Composite: ${scores.composite.toFixed(1)}/100 (threshold: ${config.minScoreToBuy})

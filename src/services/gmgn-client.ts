@@ -138,6 +138,7 @@ export interface TrenchesToken {
   creator_token_status: string;     // 'creator_hold' | 'creator_close'
   is_wash_trading: boolean;
   owner_renounced: string;          // "yes" | "no"
+  dev_team_hold_rate: number;       // 0–1
 }
 
 export interface TokenInfo {
