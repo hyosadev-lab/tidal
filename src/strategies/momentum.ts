@@ -48,15 +48,7 @@ export function scoreMomentum(
   const buyPressureRatio = totalVolume1h > 0 ? buyVolume1h / totalVolume1h : 0.5;
 
   // 2. Organic growth:
-  //    - No single candle spike >100%
-  //    - Price change (since grad or 1h) < 150%
-  const hasExtremeCandleSpike = candles.some((c) => {
-    const open = parseFloat(c.open);
-    const close = parseFloat(c.close);
-    if (open === 0) return false;
-    return Math.abs((close - open) / open) > 1.0;
-  });
-  const organicGrowth = !hasExtremeCandleSpike && priceChangePct < MAX_ORGANIC_PRICE_CHANGE_PCT;
+  const organicGrowth = priceChangePct < MAX_ORGANIC_PRICE_CHANGE_PCT;
 
   // 3. Volume acceleration
   const last3 = candles.slice(-3);
