@@ -5,8 +5,8 @@ export interface SmartMoneySignal {
   score: number;
   smartWalletCount: number;
   totalSmartHoldingPct: number;
-  recentEntry: boolean;         // any smart wallet entered within last 30 min
-  smartWalletsStillHolding: number; // wallets with sell_amount_percentage < 0.5
+  recentEntry: boolean;
+  smartWalletsStillHolding: number;
 }
 
 const RECENT_ENTRY_MINUTES = 30;
@@ -42,18 +42,18 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
 
   // Smart wallet count
   if (smartWalletCount > 5) {
-    score += 60;
+    score += 50;
   } else if (smartWalletCount >= 3) {
-    score += 40;
+    score += 30;
   } else if (smartWalletCount >= 1) {
-    score += 15;
+    score += 10;
   }
 
   // Recent entry bonus
-  if (recentEntry) score += 25;
+  if (recentEntry) score += 20;
 
   // Still holding bonus
-  if (smartWalletsStillHolding >= 2) score += 15;
+  if (smartWalletsStillHolding >= 2) score += 30;
 
   return {
     score: Math.min(score, 100),

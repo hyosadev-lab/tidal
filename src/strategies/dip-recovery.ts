@@ -32,25 +32,18 @@ export function scoreDipRecovery(
     ? ((athPrice - currentPrice) / athPrice) * 100
     : 0;
 
-  // ── Scoring ──────────────────────────────────────────────────────────────
-
-  // Gate 1: token not in sweet spot dip range → low zone & volume not relevant
+  // ── Gate: token not in sweet spot dip range ───────────────────────────────
   if (dipFromAthPct < config.minDipFromAthPct) {
-    // Token at or near ATH, or shallow dip — not a dip buy opportunity
     return { score: 0, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
   if (dipFromAthPct > config.maxDipFromAthPct) {
-    // Too deep — might be dead/rug, low zone & volume recovery not relevant
     return { score: 15, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
-  // Sweet spot: dipFromAthPct 60–70%
-  // Now low zone and volume recovery are meaningful
   let score = 40;
 
   // 3. Low zone: candles within ±20% of current price
-  //    Valid only in sweet spot — current price is already significantly below ATH
   const lowZoneCandleList = candles.filter((c) => {
     const close = parseFloat(c.close);
     return Math.abs(close - currentPrice) / currentPrice <= 0.20;
@@ -61,14 +54,13 @@ export function scoreDipRecovery(
   const lowZoneMaxCandles = toCandles(lowZoneMaxMinutes, resolution);
 
   if (lowZoneCandles >= lowZoneMinCandles && lowZoneCandles <= lowZoneMaxCandles) {
-    score += 30;  // healthy consolidation at bottom
+    score += 30;
   } else if (lowZoneCandles > lowZoneMaxCandles) {
-    score += 5;   // too long at bottom — might be dead
+    score += 5;
   }
-  // lowZoneCandles < lowZoneMinCandles → +0 pts (just started dropping, not consolidated yet)
+  // lowZoneCandles < lowZoneMinCandles → +0 pts
 
   // 4. Recovery volume: recent N candles vs low zone average
-  //    Valid only in sweet spot — meaningful only when consolidation exists
   const recoveryLookback = toCandles(recoveryVolumeLookbackMinutes, resolution);
   const recentCandles = candles.slice(-Math.max(recoveryLookback, 1));
   const recentAvgVolume = avg(recentCandles.map((c) => parseFloat(c.volume)));
@@ -84,11 +76,13 @@ export function scoreDipRecovery(
     score += 30;
   } else if (volumeRecoveryPct >= 20) {
     score += 20;
+  } else if (volumeRecoveryPct < -30) {
+    // Volume sedang collapse — penalty, bukan recovery
+    score -= 15;
   }
-  // else: +0
 
   return {
-    score: Math.min(score, 100),
+    score: Math.max(0, Math.min(score, 100)),
     athPrice,
     dipFromAthPct,
     lowZoneCandles,
