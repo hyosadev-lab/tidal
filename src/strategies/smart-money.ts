@@ -50,10 +50,10 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
   }
 
   // Recent entry bonus
-  if (recentEntry) score += 20;
+  if (recentEntry) score += 15;
 
   // Still holding bonus
-  if (smartWalletsStillHolding >= 2) score += 30;
+  if (smartWalletsStillHolding >= 3) score += 35;
 
   return {
     score: Math.min(score, 100),
