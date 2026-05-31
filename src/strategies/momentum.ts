@@ -13,7 +13,7 @@ export interface MomentumSignal {
 }
 
 const MIN_SWAPS_1H = 500;
-const MAX_ORGANIC_PRICE_CHANGE_PCT = 150; // above this = not organic accumulation
+const MAX_ORGANIC_PRICE_CHANGE_PCT = 100; // above this = not organic accumulation
 
 export function scoreMomentum(
   candles: KlineCandle[],
