@@ -30,8 +30,6 @@ export interface Config {
   // Strategy Thresholds
   minScoreToBuy: number;
   aiConfidenceThreshold: number;
-  minDipFromAthPct: number;
-  maxDipFromAthPct: number;
 
   // Exit Parameters (optional)
   trailingActivatePct: number | null;
@@ -162,8 +160,6 @@ export function getConfig(): Config {
     // Strategy
     minScoreToBuy: requireFloat('MIN_SCORE_TO_BUY'),
     aiConfidenceThreshold: requireFloat('AI_CONFIDENCE_THRESHOLD'),
-    minDipFromAthPct: requireInt('MIN_DIP_FROM_ATH_PCT'),
-    maxDipFromAthPct: requireInt('MAX_DIP_FROM_ATH_PCT'),
 
     // Exit
     trailingActivatePct,

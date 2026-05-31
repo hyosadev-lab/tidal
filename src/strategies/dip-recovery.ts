@@ -1,5 +1,5 @@
 import { type KlineCandle } from '../services/gmgn-client.ts';
-import { getConfig, type KlineResolution, toCandles } from '../config.ts';
+import { type KlineResolution, toCandles } from '../config.ts';
 import { avg } from '../utils/math.ts';
 
 export interface DipRecoverySignal {
@@ -22,8 +22,6 @@ export function scoreDipRecovery(
     return { score: 0, athPrice: 0, dipFromAthPct: 0, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
-  const config = getConfig();
-
   // 1. ATH from all candles since graduation
   const athPrice = Math.max(...candles.map((c) => parseFloat(c.high)));
 
@@ -33,15 +31,26 @@ export function scoreDipRecovery(
     : 0;
 
   // ── Gate: token not in sweet spot dip range ───────────────────────────────
-  if (dipFromAthPct < config.minDipFromAthPct) {
+  if (dipFromAthPct < 40) {
     return { score: 0, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
-  if (dipFromAthPct > config.maxDipFromAthPct) {
+  if (dipFromAthPct > 70) {
     return { score: 15, athPrice, dipFromAthPct, lowZoneCandles: 0, volumeRecoveryPct: 0 };
   }
 
-  let score = 40;
+  // Tiered base score: deeper dip = more discount = higher base score
+  // 40–49%: just entered sweet spot, still close to ATH, could dip more
+  // 50–59%: mid sweet spot, better cushion
+  // 60–70%: deep in sweet spot, far from SL, best discount
+  let score = 0;
+  if (dipFromAthPct >= 60) {
+    score = 40;
+  } else if (dipFromAthPct >= 50) {
+    score = 32;
+  } else {
+    score = 25;
+  }
 
   // 3. Low zone: candles within ±20% of current price
   const lowZoneCandleList = candles.filter((c) => {

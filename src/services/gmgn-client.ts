@@ -210,6 +210,7 @@ export interface HolderWallet {
   profit: number;
   realized_profit: number;
   unrealized_profit: number;
+  native_balance: string;   // SOL balance in lamports (string)
 }
 
 // ─── GMGN Client ─────────────────────────────────────────────────────────────

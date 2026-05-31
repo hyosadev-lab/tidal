@@ -135,7 +135,9 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
     },
     smartMoneyDetails: {
       smartWalletCount: smartMoney.smartWalletCount,
+      activeSmartWalletCount: smartMoney.activeSmartWalletCount,
       totalSmartHoldingPct: smartMoney.totalSmartHoldingPct,
+      avgSolBalance: smartMoney.avgSolBalance,
       recentEntry: smartMoney.recentEntry,
       smartWalletsStillHolding: smartMoney.smartWalletsStillHolding,
     },
@@ -207,9 +209,10 @@ Momentum Score: ${scores.momentum.score.toFixed(1)}/100
   → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
   → Price change (${minutesSinceGrad < 60 ? 'since graduation' : '1h'}): ${scores.momentum.priceChangePct.toFixed(1)}%
 Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
-  → Smart wallets holding: ${scores.smartMoney.smartWalletCount}
+  → Total smart wallets: ${scores.smartMoney.smartWalletCount} (active: ${scores.smartMoney.activeSmartWalletCount})
   → Combined supply held: ${(scores.smartMoney.totalSmartHoldingPct * 100).toFixed(1)}%
-  → Recent entry (<30min): ${scores.smartMoney.recentEntry}
+  → Avg SOL balance: ${scores.smartMoney.avgSolBalance.toFixed(2)} SOL
+  → Recent entry (<1min): ${scores.smartMoney.recentEntry}
   → Still holding: ${scores.smartMoney.smartWalletsStillHolding}
 
 --- PRICE ACTION ---
