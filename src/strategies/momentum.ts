@@ -1,93 +1,88 @@
-import { type KlineCandle } from '../services/gmgn-client.ts';
+import { type KlineCandle, type TokenInfo } from '../services/gmgn-client.ts';
 import { avg } from '../utils/math.ts';
 
 export interface MomentumSignal {
   score: number;
-  buyPressureRatio: number;
-  swaps1h: number;
-  organicGrowth: boolean;
+  // Komponen 1: buy pressure saat ini (5m window dari token_info)
+  buyPressureRatio5m: number;
+  // Komponen 2: volume acceleration dari kline
   volumeAcceleration: number;
-  priceChangePct: number;         // priceChangeSinceGrad if < 60 min, priceChange1h if >= 60 min
-  priceChangeSinceGrad: number;   // always available for logging/prompt
-  priceChange1h: number;          // always available for logging/prompt
+  // Komponen 3: candle color pattern dari kline
+  greenCandlePct: number;
+  swaps5m: number;
 }
-
-const MIN_SWAPS_1H = 500;
-const MAX_ORGANIC_PRICE_CHANGE_PCT = 100; // above this = not organic accumulation
 
 export function scoreMomentum(
   candles: KlineCandle[],
-  swaps1h: number,
-  buyVolume1h: number,
-  sellVolume1h: number,
-  priceChangeSinceGrad: number,
-  priceChange1h: number,
-  minutesSinceGraduation: number,
+  priceInfo: TokenInfo["price"],
 ): MomentumSignal {
-  // Use priceChangeSinceGrad if token graduated < 60 min ago,
-  // otherwise priceChange1h is fully post-graduation and more reliable
-  const priceChangePct = minutesSinceGraduation < 60
-    ? priceChangeSinceGrad
-    : priceChange1h;
+  const volume5m = parseFloat(priceInfo.volume_5m);
+  const buyVolume5m = parseFloat(priceInfo.buy_volume_5m);
 
-  if (candles.length === 0) {
-    return {
-      score: 0,
-      buyPressureRatio: 0.5,
-      swaps1h,
-      organicGrowth: false,
-      volumeAcceleration: 0,
-      priceChangePct,
-      priceChangeSinceGrad,
-      priceChange1h,
-    };
+  // ── Komponen 1: Buy pressure saat ini (5m) ───────────────────────────────
+  const buyPressureRatio5m = volume5m > 0
+    ? buyVolume5m / volume5m
+    : 0.5;
+
+  // ── Komponen 2 & 3: dari kline ───────────────────────────────────────────
+  let volumeAcceleration = 0;
+  let greenCandlePct = 0;
+
+  if (candles.length >= 2) {
+    // Volume acceleration: last 3 vs prior 3 candles
+    const last3 = candles.slice(-3);
+    const prior3 = candles.slice(-6, -3);
+    const last3AvgVol = avg(last3.map((c) => parseFloat(c.volume)));
+    const prior3AvgVol = prior3.length > 0
+      ? avg(prior3.map((c) => parseFloat(c.volume)))
+      : 0;
+    volumeAcceleration = prior3AvgVol > 0 ? last3AvgVol / prior3AvgVol : 0;
+
+    // Candle color pattern: % green candles in recent N candles
+    const recentCandles = candles.slice(-6);
+    const greenCount = recentCandles.filter(
+      (c) => parseFloat(c.close) > parseFloat(c.open)
+    ).length;
+    greenCandlePct = recentCandles.length > 0
+      ? (greenCount / recentCandles.length) * 100
+      : 0;
   }
-
-  // 1. Buy pressure ratio
-  const totalVolume1h = buyVolume1h + sellVolume1h;
-  const buyPressureRatio = totalVolume1h > 0 ? buyVolume1h / totalVolume1h : 0.5;
-
-  // 2. Organic growth:
-  const organicGrowth = priceChangePct < MAX_ORGANIC_PRICE_CHANGE_PCT;
-
-  // 3. Volume acceleration
-  const last3 = candles.slice(-3);
-  const prior3 = candles.slice(-6, -3);
-  const last3AvgVolume = avg(last3.map((c) => parseFloat(c.volume)));
-  const prior3AvgVolume = prior3.length > 0
-    ? avg(prior3.map((c) => parseFloat(c.volume)))
-    : 0;
-  const volumeAcceleration = prior3AvgVolume > 0
-    ? last3AvgVolume / prior3AvgVolume
-    : 0;
 
   // ── Scoring ──────────────────────────────────────────────────────────────
   let score = 0;
 
-  // 1. Buy pressure quality (+35 pts max)
-  if (buyPressureRatio > 0.55) {
-    score += 35;
-  } else if (buyPressureRatio >= 0.50) {
-    score += 15;
+  // 1. Buy pressure saat ini — 5m window (+35 pts max)
+  if (buyPressureRatio5m > 0.60) {
+    score += 35;  // buyers dominan sekarang
+  } else if (buyPressureRatio5m >= 0.50) {
+    score += 20;  // sedikit lebih banyak buyer
   }
+  // < 0.50 → sellers dominan → +0
 
-  // 2. Swap activity (+20 pts)
-  if (swaps1h >= MIN_SWAPS_1H) score += 20;
+  // 2. Volume acceleration dari kline (+30 pts max)
+  if (volumeAcceleration > 1.5) {
+    score += 30;  // momentum building kuat
+  } else if (volumeAcceleration >= 1.2) {
+    score += 20;  // momentum building
+  }
+  // < 1.2 → flat atau turun → +0
 
-  // 3. Organic growth (+30 pts)
-  if (organicGrowth) score += 30;
+  // 3. Candle color pattern dari kline (+20 pts max)
+  if (greenCandlePct >= 60) {
+    score += 20;  // buyers konsisten
+  } else if (greenCandlePct >= 40) {
+    score += 10;  // netral
+  }
+  // < 40% → sellers dominan → +0
 
-  // 4. Volume acceleration (+15 pts)
-  if (volumeAcceleration > 1.2) score += 15;
+  // 4. Swap activity sekarang (+15 pts)
+  if (priceInfo.swaps_5m >= 50) score += 15;
 
   return {
     score: Math.min(score, 100),
-    buyPressureRatio,
-    swaps1h,
-    organicGrowth,
+    buyPressureRatio5m,
+    swaps5m: priceInfo.swaps_5m,
     volumeAcceleration,
-    priceChangePct,
-    priceChangeSinceGrad,
-    priceChange1h,
+    greenCandlePct,
   };
 }
