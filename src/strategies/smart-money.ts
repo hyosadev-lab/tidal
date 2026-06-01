@@ -1,7 +1,7 @@
 import { type HolderWallet } from '../services/gmgn-client.ts';
 import { lamportsToSol, minutesSince } from '../utils/math.ts';
 
-const RECENT_ENTRY_MINUTES = 1; // < 1 minute
+const RECENT_ENTRY_MINUTES = 5; // < 5 minutes
 
 export interface SmartMoneySignal {
   score: number;

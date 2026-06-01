@@ -178,7 +178,7 @@ Rug Ratio: ${token.rug_ratio}
 Top 10 Holders: ${(token.top_10_holder_rate * 100).toFixed(1)}% of supply
 Developer Status: ${token.creator_token_status === 'creator_hold'
   ? 'Creator still holds tokens'
-  : 'Creator holds no tokens'} (${(token.dev_team_hold_rate * 100).toFixed(1)}% of total supply)
+  : 'Creator holds no tokens ✅'} (${(token.dev_team_hold_rate * 100).toFixed(1)}% of total supply)
 
 --- SIGNAL SCORES ---
 Composite: ${scores.composite.toFixed(1)}/100 (threshold: ${config.minScoreToBuy})
