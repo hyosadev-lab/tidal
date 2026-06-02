@@ -36,7 +36,7 @@ export function scoreDipRecovery(
   }
 
   // ── Komponen 1: Dip depth dari ATH ───────────────────────────────────────
-  const athPrice = Math.max(...candles.slice(-toCandles(60, resolution)).map((c) => parseFloat(c.high)));
+  const athPrice = Math.max(...candles.map((c) => parseFloat(c.high)));
   const dipFromAthPct = athPrice > 0
     ? ((athPrice - currentPrice) / athPrice) * 100
     : 0;
