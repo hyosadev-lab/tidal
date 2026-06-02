@@ -51,9 +51,9 @@ export function scoreDipRecovery(
 
   // Tiered base score
   let score = 0;
-  if (dipFromAthPct >= 60) {
+  if (dipFromAthPct >= 70) {
     score = 40;
-  } else if (dipFromAthPct >= 50) {
+  } else if (dipFromAthPct >= 60) {
     score = 32;
   } else {
     score = 25;
