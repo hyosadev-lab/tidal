@@ -42,10 +42,10 @@ export function scoreDipRecovery(
     : 0;
 
   // Gate: hanya sweet spot yang dilanjutkan
-  if (dipFromAthPct < 40) {
+  if (dipFromAthPct < 50) {
     return { score: 0, athPrice, dipFromAthPct, priceRangePct: 0, hasLowerLow: false, volumeRatio: 0, hasBuyerReturn: false };
   }
-  if (dipFromAthPct > 70) {
+  if (dipFromAthPct > 80) {
     return { score: 15, athPrice, dipFromAthPct, priceRangePct: 0, hasLowerLow: false, volumeRatio: 0, hasBuyerReturn: false };
   }
 
