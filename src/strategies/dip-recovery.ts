@@ -1,37 +1,30 @@
 import { type KlineCandle } from '../services/gmgn-client.ts';
-import { type KlineResolution, toCandles } from '../config.ts';
-import { avg } from '../utils/math.ts';
 
 export interface DipRecoverySignal {
   score: number;
   athPrice: number;
   dipFromAthPct: number;
-  // Komponen 2: price range stability
-  priceRangePct: number;
-  // Komponen 3: lower low check
-  hasLowerLow: boolean;
-  // Komponen 4: volume pattern
-  volumeRatio: number;
-  hasBuyerReturn: boolean;
+  hasLowerLow: boolean;       // true = downtrend still forming (bad)
+  buyVolumeRatio5m: number;   // buy_volume_5m / total_volume_5m
+  buyTxRatio5m: number;       // buys_5m / (buys_5m + sells_5m)
 }
 
 export function scoreDipRecovery(
   candles: KlineCandle[],
   currentPrice: number,
-  resolution: KlineResolution,
-  lowZoneMinMinutes: number,
-  lowZoneMaxMinutes: number,
-  recoveryVolumeLookbackMinutes: number
+  buyVolume5m: number,
+  sellVolume5m: number,
+  buys5m: number,
+  sells5m: number,
 ): DipRecoverySignal {
   if (candles.length === 0) {
     return {
       score: 0,
       athPrice: 0,
       dipFromAthPct: 0,
-      priceRangePct: 0,
       hasLowerLow: false,
-      volumeRatio: 0,
-      hasBuyerReturn: false,
+      buyVolumeRatio5m: 0,
+      buyTxRatio5m: 0,
     };
   }
 
@@ -43,13 +36,13 @@ export function scoreDipRecovery(
 
   // Gate: hanya sweet spot yang dilanjutkan
   if (dipFromAthPct < 50) {
-    return { score: 0, athPrice, dipFromAthPct, priceRangePct: 0, hasLowerLow: false, volumeRatio: 0, hasBuyerReturn: false };
+    return { score: 0, athPrice, dipFromAthPct, hasLowerLow: false, buyVolumeRatio5m: 0, buyTxRatio5m: 0 };
   }
   if (dipFromAthPct > 80) {
-    return { score: 15, athPrice, dipFromAthPct, priceRangePct: 0, hasLowerLow: false, volumeRatio: 0, hasBuyerReturn: false };
+    return { score: 15, athPrice, dipFromAthPct, hasLowerLow: false, buyVolumeRatio5m: 0, buyTxRatio5m: 0 };
   }
 
-  // Tiered base score
+  // Tiered base score berdasarkan kedalaman dip
   let score = 0;
   if (dipFromAthPct >= 70) {
     score = 40;
@@ -59,76 +52,54 @@ export function scoreDipRecovery(
     score = 25;
   }
 
-  // ── Komponen 2: Price range stability ────────────────────────────────────
-  // Ukur seberapa sideways N candles terakhir
-  const lookbackCandles = Math.max(toCandles(recoveryVolumeLookbackMinutes, resolution), 3);
-  const recentCandles = candles.slice(-lookbackCandles);
-
-  const recentHighest = Math.max(...recentCandles.map((c) => parseFloat(c.high)));
-  const recentLowest = Math.min(...recentCandles.map((c) => parseFloat(c.low)));
-  const priceRangePct = recentLowest > 0
-    ? ((recentHighest - recentLowest) / recentLowest) * 100
-    : 100;
-
-  if (priceRangePct < 15) {
-    score += 25;  // sideways ketat → konsolidasi solid
-  } else if (priceRangePct <= 30) {
-    score += 15;  // sideways longgar → ada sedikit volatilitas
-  }
-  // > 30% → masih terlalu volatile → +0
-
-  // ── Komponen 3: Lower low check ──────────────────────────────────────────
-  // Apakah downtrend sudah berhenti?
+  // ── Komponen 2: Downtrend melambat — dari kline ───────────────────────────
+  // Bandingkan lowest low dari 3 candles terakhir vs 3 candles sebelumnya
   const windowSize = 3;
   const lastN = candles.slice(-windowSize);
   const prevN = candles.slice(-(windowSize * 2), -windowSize);
 
-  const lastLow = prevN.length > 0
-    ? Math.min(...lastN.map((c) => parseFloat(c.low)))
-    : 0;
+  const lastLow = Math.min(...lastN.map((c) => parseFloat(c.low)));
   const prevLow = prevN.length > 0
     ? Math.min(...prevN.map((c) => parseFloat(c.low)))
-    : 0;
+    : lastLow;
 
-  // hasLowerLow = true berarti masih turun (bad)
+  // hasLowerLow = true berarti token masih membuat low baru (downtrend berlanjut)
   const hasLowerLow = prevN.length > 0 && lastLow < prevLow;
 
-  if (!hasLowerLow && prevN.length > 0) {
-    score += 15;  // tidak membuat lower low → downtrend mungkin sudah berhenti
+  if (!hasLowerLow) {
+    score += 20;  // downtrend melambat, tidak membuat lower low
   }
 
-  // ── Komponen 4: Volume pattern ────────────────────────────────────────────
-  // Seller exhaustion + buyer return
-  // Split recent candles menjadi dua bagian
-  const half = Math.max(Math.floor(recentCandles.length / 2), 1);
-  const firstHalf = recentCandles.slice(0, half);
-  const secondHalf = recentCandles.slice(half);
+  // ── Komponen 3: Buy volume dominan — dari token_info 5m ──────────────────
+  const totalVolume5m = buyVolume5m + sellVolume5m;
+  const buyVolumeRatio5m = totalVolume5m > 0
+    ? buyVolume5m / totalVolume5m
+    : 0.5;
 
-  const firstHalfAvgVol = avg(firstHalf.map((c) => parseFloat(c.volume)));
-  const secondHalfAvgVol = avg(secondHalf.map((c) => parseFloat(c.volume)));
+  if (buyVolumeRatio5m > 0.60) {
+    score += 25;  // buyers dominan secara dollar value
+  } else if (buyVolumeRatio5m >= 0.50) {
+    score += 15;  // sedikit lebih banyak buyer
+  }
 
-  const volumeRatio = firstHalfAvgVol > 0
-    ? secondHalfAvgVol / firstHalfAvgVol
-    : 0;
+  // ── Komponen 4: Lebih banyak buyer dari seller — dari token_info 5m ───────
+  const totalTx5m = buys5m + sells5m;
+  const buyTxRatio5m = totalTx5m > 0
+    ? buys5m / totalTx5m
+    : 0.5;
 
-  // Buyer return: ada minimal 1 candle hijau di second half
-  const hasBuyerReturn = secondHalf.some(
-    (c) => parseFloat(c.close) > parseFloat(c.open)
-  );
-
-  if (volumeRatio > 1.2 && hasBuyerReturn) {
-    score += 20;  // volume naik + ada candle hijau → buyers returning
-  } else if (volumeRatio > 1.0) {
-    score += 10;  // volume sedikit naik
+  if (buyTxRatio5m > 0.60) {
+    score += 15;  // lebih banyak transaksi beli
+  } else if (buyTxRatio5m >= 0.50) {
+    score += 8;
   }
 
   return {
     score: Math.max(0, Math.min(score, 100)),
     athPrice,
     dipFromAthPct,
-    priceRangePct,
     hasLowerLow,
-    volumeRatio,
-    hasBuyerReturn,
+    buyVolumeRatio5m,
+    buyTxRatio5m,
   };
 }

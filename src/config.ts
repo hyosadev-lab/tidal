@@ -54,10 +54,6 @@ export interface Config {
 
   // Kline Signal Parameters
   klineResolution: KlineResolution;
-  lowZoneMinMinutes: number;
-  lowZoneMaxMinutes: number;
-  recoveryVolumeLookbackMinutes: number;
-
   // Execution
   slippage: number;
   autoSlippage: boolean;
@@ -184,10 +180,6 @@ export function getConfig(): Config {
 
     // Kline
     klineResolution: parseKlineResolution(process.env['KLINE_RESOLUTION'] ?? '5m'),
-    lowZoneMinMinutes: requireInt('LOW_ZONE_MIN_MINUTES'),
-    lowZoneMaxMinutes: requireInt('LOW_ZONE_MAX_MINUTES'),
-    recoveryVolumeLookbackMinutes: requireInt('RECOVERY_VOLUME_LOOKBACK_MINUTES'),
-
     // Execution
     slippage: requireFloat('SLIPPAGE'),
     autoSlippage: parseBool('AUTO_SLIPPAGE', false),

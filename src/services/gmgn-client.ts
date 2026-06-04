@@ -127,7 +127,8 @@ export interface TrenchesToken {
   symbol: string;
   name: string;
   launchpad_platform: string;
-  open_timestamp: number;           // Unix seconds — graduation time
+  open_timestamp: number;
+  complete_timestamp: number;
   usd_market_cap: number;
   liquidity: number;
   holder_count: number;

@@ -46,7 +46,7 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
 
   let candles: KlineCandle[];
   try {
-    const from = token.open_timestamp;
+    const from = token.complete_timestamp;
     const to = nowUnix();
     candles = await client.getTokenKline(token.address, config.klineResolution, from, to);
     await sleep(500);
@@ -74,10 +74,10 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   const dip = scoreDipRecovery(
     candles,
     currentPrice,
-    config.klineResolution,
-    config.lowZoneMinMinutes,
-    config.lowZoneMaxMinutes,
-    config.recoveryVolumeLookbackMinutes
+    parseFloat(info.price.buy_volume_5m),
+    parseFloat(info.price.sell_volume_5m),
+    info.price.buys_5m ?? 0,
+    info.price.sells_5m ?? 0,
   );
 
   const momentum = scoreMomentum(
@@ -90,9 +90,9 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   // ── Composite score ───────────────────────────────────────────────────────
 
   const composite =
-    dip.score * 0.60 +
-    momentum.score * 0.20 +
-    smartMoney.score * 0.20;
+    dip.score * 1 +
+    momentum.score * 0 +
+    smartMoney.score * 0;
 
   const scores: AllSignalScores = { composite, dip, momentum, smartMoney };
 
@@ -107,10 +107,9 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
     dipDetails: {
       athPrice: dip.athPrice,
       dipFromAthPct: dip.dipFromAthPct,
-      priceRangePct: dip.priceRangePct,
       hasLowerLow: dip.hasLowerLow,
-      volumeRatio: dip.volumeRatio,
-      hasBuyerReturn: dip.hasBuyerReturn,
+      buyVolumeRatio5m: dip.buyVolumeRatio5m,
+      buyTxRatio5m: dip.buyTxRatio5m,
     },
     momentumDetails: {
       buyPressureRatio5m: momentum.buyPressureRatio5m,
@@ -157,11 +156,7 @@ export function buildEntryPrompt({ token, info, scores, migrationPrice }: Enrich
   const config = getConfig();
 
   const nowUnixSecond = nowUnix() / 1000;
-  const minutesSinceGrad = Math.round((nowUnixSecond - token.open_timestamp) / 60);
-  const currentPrice = parseFloat(info.price.price);
-  const priceChangeSinceGrad = migrationPrice > 0
-    ? ((currentPrice - migrationPrice) / migrationPrice * 100).toFixed(1)
-    : 'N/A';
+  const minutesSinceGrad = Math.round((nowUnixSecond - token.complete_timestamp) / 60);
 
   return `
 Token: ${token.symbol} / ${token.name}
@@ -185,10 +180,9 @@ Composite: ${scores.composite.toFixed(1)}/100 (threshold: ${config.minScoreToBuy
 Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
   → ATH since graduation: $${scores.dip.athPrice}
   → Dip from ATH: ${scores.dip.dipFromAthPct.toFixed(1)}%
-  → Price range stability: ${scores.dip.priceRangePct.toFixed(1)}% (< 15% = tight consolidation)
-  → Lower low forming: ${scores.dip.hasLowerLow} (false = downtrend may be stopping)
-  → Volume ratio (recent/earlier): ${scores.dip.volumeRatio.toFixed(2)}x
-  → Buyer return candle: ${scores.dip.hasBuyerReturn}
+  → Lower low forming: ${scores.dip.hasLowerLow} (false = downtrend slowing)
+  → Buy volume ratio 5m: ${scores.dip.buyVolumeRatio5m.toFixed(2)} (>0.60 = buyers dominant)
+  → Buy tx ratio 5m: ${scores.dip.buyTxRatio5m.toFixed(2)} (>0.60 = more buyers than sellers)
 Momentum Score: ${scores.momentum.score.toFixed(1)}/100
   → Buy pressure ratio 5m: ${scores.momentum.buyPressureRatio5m.toFixed(2)} (>0.60 = buyers dominant)
   → Swaps 5m: ${scores.momentum.swaps5m} (>= 50 = active)
@@ -203,11 +197,11 @@ Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
 
 --- PRICE ACTION ---
 Price at graduation: $${migrationPrice.toFixed(8)}
-5m price change: ${info.price.price_5m}%
-5m volume: $${info.price.volume_5m}
-5m buy volume: $${info.price.buy_volume_5m}
-5m sell volume: $${info.price.sell_volume_5m}
-5m swaps: ${info.price.swaps_5m}
+1h price change: ${info.price.price_1h}%
+1h volume: $${info.price.volume_1h}
+1h buy volume: $${info.price.buy_volume_1h}
+1h sell volume: $${info.price.sell_volume_1h}
+1h swaps: ${info.price.swaps_1h}
 Smart money wallets: ${info.wallet_tags_stat.smart_wallets}
 KOL wallets: ${info.wallet_tags_stat.renowned_wallets}
 
