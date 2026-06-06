@@ -90,9 +90,9 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   // ── Composite score ───────────────────────────────────────────────────────
 
   const composite =
-    dip.score * 1 +
+    dip.score * 0.70 +
     momentum.score * 0 +
-    smartMoney.score * 0;
+    smartMoney.score * 0.30;
 
   const scores: AllSignalScores = { composite, dip, momentum, smartMoney };
 
@@ -120,8 +120,8 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
     smartMoneyDetails: {
       smartWalletCount: smartMoney.smartWalletCount,
       activeSmartWalletCount: smartMoney.activeSmartWalletCount,
-      totalSmartHoldingPct: smartMoney.totalSmartHoldingPct,
-      avgSolBalance: smartMoney.avgSolBalance,
+      highBalanceActiveCount: smartMoney.highBalanceActiveCount,
+      avgAmountPct: smartMoney.avgAmountPct,
       recentEntry: smartMoney.recentEntry,
       smartWalletsStillHolding: smartMoney.smartWalletsStillHolding,
     },
@@ -183,16 +183,18 @@ Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
   → Lower low forming: ${scores.dip.hasLowerLow} (false = downtrend slowing)
   → Buy volume ratio 5m: ${scores.dip.buyVolumeRatio5m.toFixed(2)} (>0.60 = buyers dominant)
   → Buy tx ratio 5m: ${scores.dip.buyTxRatio5m.toFixed(2)} (>0.60 = more buyers than sellers)
-Momentum Score: ${scores.momentum.score.toFixed(1)}/100
-  → Buy pressure ratio 5m: ${scores.momentum.buyPressureRatio5m.toFixed(2)} (>0.60 = buyers dominant)
-  → Swaps 5m: ${scores.momentum.swaps5m} (>= 50 = active)
-  → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
-  → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 6 candles
+  `+
+// Momentum Score: ${scores.momentum.score.toFixed(1)}/100
+//   → Buy pressure ratio 5m: ${scores.momentum.buyPressureRatio5m.toFixed(2)} (>0.60 = buyers dominant)
+//   → Swaps 5m: ${scores.momentum.swaps5m} (>= 50 = active)
+//   → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
+//   → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 6 candles
+  `
 Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
   → Total smart wallets: ${scores.smartMoney.smartWalletCount} (active: ${scores.smartMoney.activeSmartWalletCount})
-  → Combined supply held: ${(scores.smartMoney.totalSmartHoldingPct * 100).toFixed(1)}%
-  → Avg SOL balance: ${scores.smartMoney.avgSolBalance.toFixed(2)} SOL
-  → Recent entry (<1min): ${scores.smartMoney.recentEntry}
+  → Active with SOL balance > 10: ${scores.smartMoney.highBalanceActiveCount}
+  → Avg supply held per wallet: ${(scores.smartMoney.avgAmountPct * 100).toFixed(3)}%
+  → Recent entry (<5min): ${scores.smartMoney.recentEntry}
   → Still holding: ${scores.smartMoney.smartWalletsStillHolding}
 
 --- PRICE ACTION ---

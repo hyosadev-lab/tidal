@@ -1,16 +1,19 @@
 import { type HolderWallet } from '../services/gmgn-client.ts';
 import { lamportsToSol, minutesSince } from '../utils/math.ts';
 
-const RECENT_ENTRY_MINUTES = 5; // < 5 minutes
+const RECENT_ENTRY_MINUTES = 5;           // < 5 minutes
+const MIN_SOL_BALANCE = 30;               // SOL balance threshold for "trusted" wallet
+const MIN_AMOUNT_PCT_HIGH = 0.005;        // 0.5% of supply
+const MIN_AMOUNT_PCT_LOW = 0.001;         // 0.1% of supply
 
 export interface SmartMoneySignal {
   score: number;
-  smartWalletCount: number;          // total smart wallets in holder list
-  activeSmartWalletCount: number;    // wallets still holding (sell_amount_percentage < 0.5)
-  totalSmartHoldingPct: number;      // combined supply % held by active wallets
-  avgSolBalance: number;             // average SOL balance of active wallets
-  recentEntry: boolean;              // any active wallet entered < 1 minute ago
-  smartWalletsStillHolding: number;  // alias for activeSmartWalletCount (kept for DB compat)
+  smartWalletCount: number;              // total smart wallets in holder list
+  activeSmartWalletCount: number;        // wallets still holding (sell_amount_percentage < 0.5)
+  highBalanceActiveCount: number;        // active wallets with SOL balance > 10
+  avgAmountPct: number;                  // average amount_percentage of active wallets
+  recentEntry: boolean;                  // any active wallet entered < 5 minutes ago
+  smartWalletsStillHolding: number;      // alias for activeSmartWalletCount (kept for DB compat)
 }
 
 export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
@@ -19,8 +22,8 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
       score: 0,
       smartWalletCount: 0,
       activeSmartWalletCount: 0,
-      totalSmartHoldingPct: 0,
-      avgSolBalance: 0,
+      highBalanceActiveCount: 0,
+      avgAmountPct: 0,
       recentEntry: false,
       smartWalletsStillHolding: 0,
     };
@@ -28,7 +31,7 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
 
   const smartWalletCount = holders.length;
 
-  // Only wallets still holding — these are the ones that matter
+  // Active = masih holding (sell_amount_percentage < 0.5)
   const activeWallets = holders.filter(
     (h) => (h.sell_amount_percentage ?? 1) < 0.5
   );
@@ -40,25 +43,24 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
       score: 0,
       smartWalletCount,
       activeSmartWalletCount: 0,
-      totalSmartHoldingPct: 0,
-      avgSolBalance: 0,
+      highBalanceActiveCount: 0,
+      avgAmountPct: 0,
       recentEntry: false,
       smartWalletsStillHolding: 0,
     };
   }
 
-  const totalSmartHoldingPct = activeWallets.reduce(
-    (sum, h) => sum + (h.amount_percentage ?? 0),
-    0
-  );
+  // Active wallets dengan SOL balance > 10
+  const highBalanceActiveCount = activeWallets.filter(
+    (h) => lamportsToSol(h.native_balance) > MIN_SOL_BALANCE
+  ).length;
 
-  // SOL balance: native_balance is in lamports (string)
-  const solBalances = activeWallets.map((h) => lamportsToSol(h.native_balance));
-  const avgSolBalance = solBalances.length > 0
-    ? solBalances.reduce((sum, b) => sum + b, 0) / solBalances.length
+  // Average amount_percentage of active wallets
+  const avgAmountPct = activeWallets.length > 0
+    ? activeWallets.reduce((sum, h) => sum + (h.amount_percentage ?? 0), 0) / activeWallets.length
     : 0;
 
-  // Recent entry: any active wallet entered < 1 minute ago
+  // Recent entry: any active wallet entered < 5 minutes ago
   const recentEntry = activeWallets.some(
     (h) => h.start_holding_at && minutesSince(h.start_holding_at) < RECENT_ENTRY_MINUTES
   );
@@ -66,36 +68,38 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
   // ── Scoring ──────────────────────────────────────────────────────────────
   let score = 0;
 
-  // 1. Active smart wallet count (+60 pts max)
-  //    Only count wallets still holding — exited wallets are not relevant
+  // 1. Active smart wallet count (+40 pts max)
   if (activeSmartWalletCount > 5) {
-    score += 60;
-  } else if (activeSmartWalletCount >= 3) {
     score += 40;
+  } else if (activeSmartWalletCount >= 3) {
+    score += 25;
   } else if (activeSmartWalletCount >= 1) {
+    score += 15;
+  }
+
+  // 2. Active wallets dengan SOL balance > 10 (+30 pts max)
+  if (highBalanceActiveCount > 3) {
+    score += 30;
+  } else if (highBalanceActiveCount >= 1) {
     score += 20;
   }
 
-  // 2. Average SOL balance of active wallets (+25 pts max)
-  //    Higher SOL balance = more conviction and capital at risk
-  if (avgSolBalance > 10) {
-    score += 25;
-  } else if (avgSolBalance >= 5) {
-    score += 15;
-  } else if (avgSolBalance >= 1) {
-    score += 5;
-  }
-
-  // 3. Recent entry bonus (+15 pts)
-  //    Active wallet entered < 1 minute ago = very fresh signal
+  // 3. Recent entry < 5 menit (+15 pts)
   if (recentEntry) score += 15;
+
+  // 4. Average amount_percentage — seberapa serius mereka di token ini (+15 pts max)
+  if (avgAmountPct >= MIN_AMOUNT_PCT_HIGH) {
+    score += 15;   // > 0.5% supply
+  } else if (avgAmountPct >= MIN_AMOUNT_PCT_LOW) {
+    score += 8;    // > 0.1% supply
+  }
 
   return {
     score: Math.min(score, 100),
     smartWalletCount,
     activeSmartWalletCount,
-    totalSmartHoldingPct,
-    avgSolBalance,
+    highBalanceActiveCount,
+    avgAmountPct,
     recentEntry,
     smartWalletsStillHolding: activeSmartWalletCount,
   };
