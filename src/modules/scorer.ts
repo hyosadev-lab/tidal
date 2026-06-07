@@ -191,7 +191,7 @@ Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
 //   → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 6 candles
   `
 Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
-  → Total smart wallets: ${scores.smartMoney.smartWalletCount} (active: ${scores.smartMoney.activeSmartWalletCount})
+  → Total smart wallets: ${scores.smartMoney.smartWalletCount} (active: ${scores.smartMoney.activeSmartWalletCount}${scores.smartMoney.activeSmartWalletCount === 0 && scores.smartMoney.smartWalletCount > 0 ? ' ⚠️ ALL EXITED' : ''})
   → Active with SOL balance > 10: ${scores.smartMoney.highBalanceActiveCount}
   → Avg supply held per wallet: ${(scores.smartMoney.avgAmountPct * 100).toFixed(3)}%
   → Recent entry (<5min): ${scores.smartMoney.recentEntry}

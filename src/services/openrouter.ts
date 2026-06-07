@@ -79,9 +79,7 @@ Decide: BUY or SKIP.
 Rules:
 - Output ONLY valid JSON — no preamble, no markdown, nothing outside the JSON.
 - A high composite score with red flags (high holder concentration, dev holding, wash trading) is still SKIP.
-`+
-// - Trust smart_degen presence as a strong confirming signal.
-`
+- If smart money wallets exist but activeSmartWalletCount is 0, all smart money has exited → strong SKIP signal.
 - confidence < 0.6 → always SKIP.
 
 Output format:
