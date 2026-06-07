@@ -1,5 +1,9 @@
 import { type KlineCandle } from '../services/gmgn-client.ts';
 
+const SWEET_SPOT = 70;
+const MIN_DIP = 50;
+const MAX_DIP = 80;
+
 export interface DipRecoverySignal {
   score: number;
   athPrice: number;
@@ -57,14 +61,10 @@ export function scoreDipRecovery(
   }
 
   // Tiered base score berdasarkan kedalaman dip
-  let score = 0;
-  if (dipFromAthPct >= 70) {
-    score = 40;
-  } else if (dipFromAthPct >= 60) {
-    score = 32;
-  } else {
-    score = 25;
-  }
+  const distance = Math.abs(dipFromAthPct - SWEET_SPOT);
+  const maxDistance = Math.max(SWEET_SPOT - MIN_DIP, MAX_DIP - SWEET_SPOT);
+
+  let score = Math.round(40 * (1 - distance / maxDistance));
 
   // ── Komponen 2: Downtrend melambat — dari kline ───────────────────────────
   // Bandingkan lowest low dari 3 candles terakhir vs 3 candles sebelumnya
