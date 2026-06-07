@@ -42,6 +42,20 @@ export function scoreDipRecovery(
     return { score: 15, athPrice, dipFromAthPct, hasLowerLow: false, buyVolumeRatio5m: 0, buyTxRatio5m: 0 };
   }
 
+  // Gate: dead cat bounce — ada candle spike >100% di 3 candles terakhir
+  // Candle naik >100% setelah downtrend panjang = kemungkinan besar bukan genuine recovery
+  const recentCandles = candles.slice(-3);
+  const hasRecentSpike = recentCandles.some((c) => {
+    const open = parseFloat(c.open);
+    const close = parseFloat(c.close);
+    if (open === 0) return false;
+    return ((close - open) / open) > 1.0;
+  });
+
+  if (hasRecentSpike) {
+    return { score: 0, athPrice, dipFromAthPct, hasLowerLow: false, buyVolumeRatio5m: 0, buyTxRatio5m: 0 };
+  }
+
   // Tiered base score berdasarkan kedalaman dip
   let score = 0;
   if (dipFromAthPct >= 70) {
