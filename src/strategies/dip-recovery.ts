@@ -1,8 +1,8 @@
 import { type KlineCandle } from '../services/gmgn-client.ts';
 
-const SWEET_SPOT = 70;
-const MIN_DIP = 50;
-const MAX_DIP = 80;
+const SWEET_SPOT = 60;
+const MIN_DIP = 40;
+const MAX_DIP = 70;
 
 export interface DipRecoverySignal {
   score: number;
@@ -39,10 +39,10 @@ export function scoreDipRecovery(
     : 0;
 
   // Gate: hanya sweet spot yang dilanjutkan
-  if (dipFromAthPct < 50) {
+  if (dipFromAthPct < MIN_DIP) {
     return { score: 0, athPrice, dipFromAthPct, hasLowerLow: false, buyVolumeRatio5m: 0, buyTxRatio5m: 0 };
   }
-  if (dipFromAthPct > 80) {
+  if (dipFromAthPct > MAX_DIP) {
     return { score: 15, athPrice, dipFromAthPct, hasLowerLow: false, buyVolumeRatio5m: 0, buyTxRatio5m: 0 };
   }
 
