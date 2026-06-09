@@ -199,10 +199,15 @@ Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
 
 --- PRICE ACTION ---
 Price at graduation: $${migrationPrice.toFixed(8)}
+5m price change: ${info.price.price_5m}%
 1h price change: ${info.price.price_1h}%
+5m volume: $${info.price.volume_5m}
 1h volume: $${info.price.volume_1h}
+5m buy volume: $${info.price.buy_volume_5m}
 1h buy volume: $${info.price.buy_volume_1h}
+5m sell volume: $${info.price.sell_volume_5m}
 1h sell volume: $${info.price.sell_volume_1h}
+5m swaps: ${info.price.swaps_5m}
 1h swaps: ${info.price.swaps_1h}
 Smart money wallets: ${info.wallet_tags_stat.smart_wallets}
 KOL wallets: ${info.wallet_tags_stat.renowned_wallets}
