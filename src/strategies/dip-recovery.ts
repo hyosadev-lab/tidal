@@ -1,7 +1,7 @@
 import { type KlineCandle } from '../services/gmgn-client.ts';
 
 const SWEET_SPOT = 60;
-const MIN_DIP = 40;
+const MIN_DIP = 50;
 const MAX_DIP = 70;
 
 export interface DipRecoverySignal {
