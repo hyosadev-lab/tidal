@@ -58,5 +58,16 @@ function passesClientFilter(token: TrenchesToken): boolean {
     logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'wash_trading' });
     return false;
   }
+
+  const completeTime = token.complete_cost_time / 60;
+  if (completeTime < 8) {
+    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'recently_completed', completeTime });
+    return false;
+  }
+  if (completeTime > 75) {
+    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'too_old', completeTime });
+    return false;
+  }
+
   return true;
 }

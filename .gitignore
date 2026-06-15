@@ -34,3 +34,7 @@ dummy.*
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Private files
+*.pem
+wallets.json

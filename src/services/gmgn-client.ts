@@ -140,6 +140,7 @@ export interface TrenchesToken {
   is_wash_trading: boolean;
   owner_renounced: string;          // "yes" | "no"
   dev_team_hold_rate: number;       // 0–1
+  complete_cost_time: number;       // unix seconds between open and complete
 }
 
 export interface TokenInfo {

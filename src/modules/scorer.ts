@@ -90,9 +90,9 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   // ── Composite score ───────────────────────────────────────────────────────
 
   const composite =
-    dip.score * 0.70 +
-    momentum.score * 0 +
-    smartMoney.score * 0.30;
+    dip.score * 0.30 +
+    momentum.score * 0.30 +
+    smartMoney.score * 0.40;
 
   const scores: AllSignalScores = { composite, dip, momentum, smartMoney };
 
@@ -116,6 +116,7 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
       swaps5m: momentum.swaps5m,
       volumeAcceleration: momentum.volumeAcceleration,
       greenCandlePct: momentum.greenCandlePct,
+      priceMomentum5m: momentum.priceMomentum5m,
     },
     smartMoneyDetails: {
       trackedWalletCount: smartMoney.trackedWalletCount,

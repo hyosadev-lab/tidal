@@ -7,8 +7,10 @@ export interface MomentumSignal {
   buyPressureRatio5m: number;
   // Komponen 2: volume acceleration dari kline
   volumeAcceleration: number;
-  // Komponen 3: candle color pattern dari kline
+  // Komponen 3: candle color pattern dari kline (last 8 candles)
   greenCandlePct: number;
+  // Komponen 4: price change % dalam 5m
+  priceMomentum5m: number;
   swaps5m: number;
 }
 
@@ -18,71 +20,78 @@ export function scoreMomentum(
 ): MomentumSignal {
   const volume5m = parseFloat(priceInfo.volume_5m);
   const buyVolume5m = parseFloat(priceInfo.buy_volume_5m);
+  const currentPrice = parseFloat(priceInfo.price);
+  const price5mAgo = parseFloat(priceInfo.price_5m);
 
   // ── Komponen 1: Buy pressure saat ini (5m) ───────────────────────────────
-  const buyPressureRatio5m = volume5m > 0
-    ? buyVolume5m / volume5m
-    : 0.5;
+  const buyPressureRatio5m = volume5m > 0 ? buyVolume5m / volume5m : 0.5;
 
-  // ── Komponen 2 & 3: dari kline ───────────────────────────────────────────
+  // ── Komponen 2, 3, 4: dari kline + price info ─────────────────────────────
   let volumeAcceleration = 0;
   let greenCandlePct = 0;
+  let priceMomentum5m = 0;
 
-  if (candles.length >= 2) {
+  if (candles.length >= 6) {
     // Volume acceleration: last 3 vs prior 3 candles
     const last3 = candles.slice(-3);
     const prior3 = candles.slice(-6, -3);
     const last3AvgVol = avg(last3.map((c) => parseFloat(c.volume)));
-    const prior3AvgVol = prior3.length > 0
-      ? avg(prior3.map((c) => parseFloat(c.volume)))
-      : 0;
+    const prior3AvgVol = avg(prior3.map((c) => parseFloat(c.volume)));
     volumeAcceleration = prior3AvgVol > 0 ? last3AvgVol / prior3AvgVol : 0;
 
-    // Candle color pattern: % green candles in recent N candles
-    const recentCandles = candles.slice(-6);
+    // Candle color pattern: last 8 candles (lebih representatif dari 6)
+    const recentCandles = candles.slice(-8);
     const greenCount = recentCandles.filter(
       (c) => parseFloat(c.close) > parseFloat(c.open)
     ).length;
-    greenCandlePct = recentCandles.length > 0
-      ? (greenCount / recentCandles.length) * 100
+    greenCandlePct = (greenCount / recentCandles.length) * 100;
+
+    // Price momentum: % change dalam 5m (price_5m adalah harga absolut awal window)
+    priceMomentum5m = price5mAgo > 0
+      ? ((currentPrice - price5mAgo) / price5mAgo) * 100
       : 0;
   }
 
   // ── Scoring ──────────────────────────────────────────────────────────────
   let score = 0;
 
-  // 1. Buy pressure saat ini — 5m window (+35 pts max)
-  if (buyPressureRatio5m > 0.60) {
-    score += 35;  // buyers dominan sekarang
-  } else if (buyPressureRatio5m >= 0.50) {
-    score += 20;  // sedikit lebih banyak buyer
-  }
-  // < 0.50 → sellers dominan → +0
+  // 1. Buy Pressure (komponen terkuat) — max 40 pts
+  if (buyPressureRatio5m >= 0.68)      score += 40;
+  else if (buyPressureRatio5m >= 0.58) score += 32;
+  else if (buyPressureRatio5m >= 0.52) score += 22;
+  else if (buyPressureRatio5m >= 0.48) score += 10;
+  // < 0.48 → sellers dominan → +0
 
-  // 2. Volume acceleration dari kline (+30 pts max)
-  if (volumeAcceleration > 1.5) {
-    score += 30;  // momentum building kuat
-  } else if (volumeAcceleration >= 1.2) {
-    score += 20;  // momentum building
-  }
-  // < 1.2 → flat atau turun → +0
+  // 2. Volume Acceleration — max 30 pts
+  if (volumeAcceleration >= 2.0)       score += 30;
+  else if (volumeAcceleration >= 1.5)  score += 23;
+  else if (volumeAcceleration >= 1.25) score += 15;
+  else if (volumeAcceleration >= 1.1)  score += 8;
+  // < 1.1 → flat atau turun → +0
 
-  // 3. Candle color pattern dari kline (+20 pts max)
-  if (greenCandlePct >= 60) {
-    score += 20;  // buyers konsisten
-  } else if (greenCandlePct >= 40) {
-    score += 10;  // netral
-  }
-  // < 40% → sellers dominan → +0
+  // 3. Price Momentum + Green Candle (kombinasi) — max 20 pts
+  // priceMomentum: +20% price change = 1.0 (penuh), capped di 1.0
+  const priceMomentumNorm = priceMomentum5m > 0
+    ? Math.min(priceMomentum5m / 20, 1.0)
+    : 0;
+  const priceGreenScore = priceMomentumNorm * 0.6 + (greenCandlePct / 100) * 0.4;
+  score += Math.round(priceGreenScore * 20);
 
-  // 4. Swap activity sekarang (+15 pts)
-  if (priceInfo.swaps_5m >= 50) score += 15;
+  // 4. Swap Activity — max 10 pts
+  if (priceInfo.swaps_5m >= 80)      score += 10;
+  else if (priceInfo.swaps_5m >= 45) score += 6;
+
+  // Bonus synergy: semua komponen positif secara bersamaan
+  if (buyPressureRatio5m > 0.55 && volumeAcceleration > 1.3 && greenCandlePct > 55) {
+    score += 5;
+  }
 
   return {
-    score: Math.min(score, 100),
+    score: Math.min(Math.max(score, 0), 100),
     buyPressureRatio5m,
-    swaps5m: priceInfo.swaps_5m,
     volumeAcceleration,
     greenCandlePct,
+    priceMomentum5m,
+    swaps5m: priceInfo.swaps_5m,
   };
 }
