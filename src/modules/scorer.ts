@@ -35,8 +35,8 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   try {
     info = await client.getTokenInfo(token.address);
     if (info.migration_market_cap_quote === 'SOL') {
-      const solPrice = await getSolPriceUsd();
-      info.migration_market_cap = info.migration_market_cap * solPrice;
+      const solPriceUsd = await getSolPriceUsd();
+      info.migration_market_cap = info.migration_market_cap * solPriceUsd;
     }
     await sleep(500);
   } catch (err) {
@@ -118,12 +118,15 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
       greenCandlePct: momentum.greenCandlePct,
     },
     smartMoneyDetails: {
-      smartWalletCount: smartMoney.smartWalletCount,
-      activeSmartWalletCount: smartMoney.activeSmartWalletCount,
-      highBalanceActiveCount: smartMoney.highBalanceActiveCount,
-      avgAmountPct: smartMoney.avgAmountPct,
+      trackedWalletCount: smartMoney.trackedWalletCount,
+      activeTrackedCount: smartMoney.activeTrackedCount,
+      hasTrackedEntry: smartMoney.hasTrackedEntry,
       recentEntry: smartMoney.recentEntry,
-      smartWalletsStillHolding: smartMoney.smartWalletsStillHolding,
+      recentEntryCount: smartMoney.recentEntryCount,
+      hotEntryCount: smartMoney.hotEntryCount,
+      freshEntryCount: smartMoney.freshEntryCount,
+      validEntryCount: smartMoney.validEntryCount,
+      bestEntryWindow: smartMoney.bestEntryWindow,
     },
   });
 
@@ -155,15 +158,19 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
 export function buildEntryPrompt({ token, info, scores, migrationPrice }: EnrichedToken): string {
   const config = getConfig();
 
-  const nowUnixSecond = nowUnix() / 1000;
-  const minutesSinceGrad = Math.round((nowUnixSecond - token.complete_timestamp) / 60);
+  const minutesSinceGrad = Math.round((nowUnix() - token.complete_timestamp) / 60);
+  const currentPrice = parseFloat(info.price.price);
+
+  const sm = scores.smartMoney;
+  const allExited = sm.hasTrackedEntry && sm.activeTrackedCount === 0;
 
   return `
 Token: ${token.symbol} / ${token.name}
 Mint: ${token.address}
 Platform: ${token.launchpad_platform}
 Graduated: ${minutesSinceGrad} minutes ago
-Current Price: $${info.price.price}
+Price at graduation: $${migrationPrice.toFixed(8)}
+Current Price: $${currentPrice.toFixed(8)}
 Market Cap: $${token.usd_market_cap}
 Liquidity: $${info.liquidity}
 Holders: ${token.holder_count}
@@ -172,7 +179,7 @@ Holders: ${token.holder_count}
 Rug Ratio: ${token.rug_ratio}
 Top 10 Holders: ${(token.top_10_holder_rate * 100).toFixed(1)}% of supply
 Developer Status: ${token.creator_token_status === 'creator_hold'
-  ? 'Creator still holds tokens'
+  ? 'Creator still holds tokens ⚠️'
   : 'Creator holds no tokens ✅'} (${(token.dev_team_hold_rate * 100).toFixed(1)}% of total supply)
 
 --- SIGNAL SCORES ---
@@ -190,28 +197,41 @@ Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
 //   → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
 //   → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 6 candles
   `
-Smart Money Score: ${scores.smartMoney.score.toFixed(1)}/100
-  → Total smart wallets: ${scores.smartMoney.smartWalletCount} (active: ${scores.smartMoney.activeSmartWalletCount}${scores.smartMoney.activeSmartWalletCount === 0 && scores.smartMoney.smartWalletCount > 0 ? ' ⚠️ ALL EXITED' : ''})
-  → Active with SOL balance > 10: ${scores.smartMoney.highBalanceActiveCount}
-  → Avg supply held per wallet: ${(scores.smartMoney.avgAmountPct * 100).toFixed(3)}%
-  → Recent entry (<5min): ${scores.smartMoney.recentEntry}
-  → Still holding: ${scores.smartMoney.smartWalletsStillHolding}
+Smart Money Score: ${sm.score.toFixed(1)}/100
+  → Tracked wallets found in token: ${sm.trackedWalletCount}
+  → Still holding: ${sm.activeTrackedCount}${allExited ? ' ⚠️ ALL EXITED — bearish' : ''}
+  → Recent entries: ${sm.recentEntryCount} (best window: ${sm.bestEntryWindow})
+  → Entry window breakdown: hot <5m=(${sm.hotEntryCount}) fresh 5–25m=(${sm.freshEntryCount}) valid 25–45m=(${sm.validEntryCount})
+  → Cluster signal: ${
+      sm.recentEntryCount >= 3 ? '🔥 HIGH CONVICTION (3+ tracked wallets)' :
+      sm.recentEntryCount === 2 ? '✅ GOOD SIGNAL (2 tracked wallets)'     :
+      sm.recentEntryCount === 1 ? '⚠️ WEAK SIGNAL (1 tracked wallet)'      :
+      sm.activeTrackedCount > 0 ? '⏳ STALE — tracked wallets holding but entry window passed' :
+                                  '❌ NO TRACKED WALLET ENTRY'
+    }
 
---- PRICE ACTION ---
-Price at graduation: $${migrationPrice.toFixed(8)}
-5m price change: ${info.price.price_5m}%
-1h price change: ${info.price.price_1h}%
+--- 5M PRICE ACTION ---
+${(() => {
+  const p5m = parseFloat(info.price.price_5m);
+  const pct5m = p5m > 0 ? (((currentPrice - p5m) / p5m) * 100).toFixed(1) : 'N/A';
+  return `5m price change: ${pct5m}%`;
+})()}
 5m volume: $${info.price.volume_5m}
-1h volume: $${info.price.volume_1h}
 5m buy volume: $${info.price.buy_volume_5m}
-1h buy volume: $${info.price.buy_volume_1h}
 5m sell volume: $${info.price.sell_volume_5m}
-1h sell volume: $${info.price.sell_volume_1h}
 5m swaps: ${info.price.swaps_5m}
-1h swaps: ${info.price.swaps_1h}
-Smart money wallets: ${info.wallet_tags_stat.smart_wallets}
-KOL wallets: ${info.wallet_tags_stat.renowned_wallets}
 
-Buy 0.1 SOL of this token? Respond in JSON only.
+--- 1H PRICE ACTION ---
+${(() => {
+  const p1h = parseFloat(info.price.price_1h);
+  const pct1h = p1h > 0 ? (((currentPrice - p1h) / p1h) * 100).toFixed(1) : 'N/A';
+  return `1h price change: ${pct1h}%`;
+})()}
+1h volume: $${info.price.volume_1h}
+1h buy volume: $${info.price.buy_volume_1h}
+1h sell volume: $${info.price.sell_volume_1h}
+1h swaps: ${info.price.swaps_1h}
+
+Buy ${config.tradeSizeSol} SOL of this token? Respond in JSON only.
   `.trim();
 }

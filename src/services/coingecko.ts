@@ -3,7 +3,7 @@ let cachedSolPriceUsd = 150; // fallback default
 let solPriceLastFetched = 0;
 const SOL_PRICE_TTL_MS = 5 * 60 * 1000;
 
-const OPENROUTER_URL =
+const COINGECKO_URL =
   "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd";
 
 export async function getSolPriceUsd(): Promise<number> {
@@ -12,7 +12,7 @@ export async function getSolPriceUsd(): Promise<number> {
   }
 
   try {
-    const res = await fetch(OPENROUTER_URL);
+    const res = await fetch(COINGECKO_URL);
     const data = (await res.json()) as any;
     cachedSolPriceUsd = data?.solana?.usd ?? cachedSolPriceUsd;
     solPriceLastFetched = Date.now();

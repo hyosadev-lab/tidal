@@ -42,7 +42,7 @@ export function minutesSince(unixSeconds: number): number {
 
 // Current unix timestamp in seconds
 export function nowUnix(): number {
-  return Math.floor(Date.now());
+  return Math.floor(Date.now() / 1000);
 }
 
 // Format USD for display

@@ -320,6 +320,18 @@ export class GmgnClient {
     return (data?.list ?? []) as HolderWallet[];
   }
 
+  async getSmartMoneyTraders(mintAddress: string, limit = 20): Promise<HolderWallet[]> {
+    const data = await this.normalRequest('GET', '/v1/market/token_top_traders', {
+      chain: CHAIN,
+      address: mintAddress,
+      tag: 'smart_degen',
+      order_by: 'profit',
+      direction: 'desc',
+      limit,
+    }) as any;
+    return (data?.list ?? []) as HolderWallet[];
+  }
+
   // ── Trade Execution ────────────────────────────────────────────────────────
 
   async swap(params: SwapParams): Promise<SwapResponse> {
