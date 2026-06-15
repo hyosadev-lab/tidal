@@ -40,8 +40,11 @@ export function minutesSince(unixSeconds: number): number {
   return (Date.now() / 1000 - unixSeconds) / 60;
 }
 
-// Current unix timestamp in seconds
-export function nowUnix(): number {
+export function unixMillis(): number {
+  return Date.now();
+}
+
+export function unixSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 

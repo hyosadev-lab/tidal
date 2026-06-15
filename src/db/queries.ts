@@ -1,5 +1,5 @@
 import { getDb } from './database.ts';
-import { nowUnix } from '../utils/math.ts';
+import { unixMillis } from '../utils/math.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -239,7 +239,7 @@ export function closePosition(params: {
         exit_handler = ?
     WHERE mint_address = ?
   `).run(
-    nowUnix(),
+    unixMillis(),
     params.exitPriceUsd,
     params.solReturned,
     params.pnlUsd,
@@ -343,7 +343,7 @@ export function forceCloseStuckPosition(mintAddress: string): void {
         exit_reason = 'FORCE_CLOSE',
         exit_handler = 'manual'
     WHERE mint_address = ? AND status = 'open'
-  `).run(nowUnix(), mintAddress);
+  `).run(unixMillis(), mintAddress);
 
   logger.info('position_force_closed', { mint: mintAddress });
 }

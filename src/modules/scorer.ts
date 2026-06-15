@@ -5,7 +5,7 @@ import { insertSignalScores } from '../db/queries.ts';
 import { scoreDipRecovery, type DipRecoverySignal } from '../strategies/dip-recovery.ts';
 import { scoreMomentum, type MomentumSignal } from '../strategies/momentum.ts';
 import { scoreSmartMoney, type SmartMoneySignal } from '../strategies/smart-money.ts';
-import { nowUnix } from '../utils/math.ts';
+import { unixMillis, unixSeconds } from '../utils/math.ts';
 import { sleep } from '../utils/retry.ts';
 import { getSolPriceUsd } from '../services/coingecko.ts';
 
@@ -47,7 +47,7 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
   let candles: KlineCandle[];
   try {
     const from = token.complete_timestamp;
-    const to = nowUnix();
+    const to = unixMillis();
     candles = await client.getTokenKline(token.address, config.klineResolution, from, to);
     await sleep(500);
   } catch (err) {
@@ -160,7 +160,7 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
 export function buildEntryPrompt({ token, info, scores, migrationPrice }: EnrichedToken): string {
   const config = getConfig();
 
-  const minutesSinceGrad = Math.round((nowUnix() - token.complete_timestamp) / 60);
+  const minutesSinceGrad = Math.round((unixSeconds() - token.complete_timestamp) / 60);
   const currentPrice = parseFloat(info.price.price);
 
   const sm = scores.smartMoney;
