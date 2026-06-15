@@ -112,11 +112,12 @@ export async function enrichAndScore(token: TrenchesToken): Promise<EnrichedToke
       buyTxRatio5m: dip.buyTxRatio5m,
     },
     momentumDetails: {
-      buyPressureRatio5m: momentum.buyPressureRatio5m,
-      swaps5m: momentum.swaps5m,
+      surgeRatio: momentum.surgRatio,
+      buyDominance: momentum.buyDominance,
       volumeAcceleration: momentum.volumeAcceleration,
-      greenCandlePct: momentum.greenCandlePct,
       priceMomentum5m: momentum.priceMomentum5m,
+      greenCandlePct: momentum.greenCandlePct,
+      swaps5m: momentum.swaps5m,
     },
     smartMoneyDetails: {
       trackedWalletCount: smartMoney.trackedWalletCount,
@@ -191,13 +192,13 @@ Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
   → Lower low forming: ${scores.dip.hasLowerLow} (false = downtrend slowing)
   → Buy volume ratio 5m: ${scores.dip.buyVolumeRatio5m.toFixed(2)} (>0.60 = buyers dominant)
   → Buy tx ratio 5m: ${scores.dip.buyTxRatio5m.toFixed(2)} (>0.60 = more buyers than sellers)
-  `+
-// Momentum Score: ${scores.momentum.score.toFixed(1)}/100
-//   → Buy pressure ratio 5m: ${scores.momentum.buyPressureRatio5m.toFixed(2)} (>0.60 = buyers dominant)
-//   → Swaps 5m: ${scores.momentum.swaps5m} (>= 50 = active)
-//   → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
-//   → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 6 candles
-  `
+Momentum Score: ${scores.momentum.score.toFixed(1)}/100
+  → Volume surge ratio: ${scores.momentum.surgRatio.toFixed(2)}x (volume_5m vs avg 5m in 1h; >=4.0x = explosion)
+  → Buy dominance 5m: ${scores.momentum.buyDominance.toFixed(2)} (>0.65 = buyers in control)
+  → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
+  → Price change 5m: ${scores.momentum.priceMomentum5m.toFixed(1)}% (+20% = max score)
+  → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 8 candles
+  → Swaps 5m: ${scores.momentum.swaps5m} (>= 100 = very active)
 Smart Money Score: ${sm.score.toFixed(1)}/100
   → Tracked wallets found in token: ${sm.trackedWalletCount}
   → Still holding: ${sm.activeTrackedCount}${allExited ? ' ⚠️ ALL EXITED — bearish' : ''}
