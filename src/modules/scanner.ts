@@ -50,24 +50,26 @@ function passesClientFilter(token: TrenchesToken): boolean {
     logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'owner_not_renounced' });
     return false;
   }
+
   // if (token.creator_token_status === 'creator_hold') {
   //   logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'creator_hold' });
   //   return false;
   // }
+
   if (token.is_wash_trading) {
     logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'wash_trading' });
     return false;
   }
 
-  const completeTime = token.complete_cost_time / 60;
-  if (completeTime < 8) {
-    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'recently_completed', completeTime });
-    return false;
-  }
-  if (completeTime > 75) {
-    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'too_old', completeTime });
-    return false;
-  }
+  // const completeTime = token.complete_cost_time / 60;
+  // if (completeTime < 8) {
+  //   logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'recently_completed', completeTime });
+  //   return false;
+  // }
+  // if (completeTime > 75) {
+  //   logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'too_old', completeTime });
+  //   return false;
+  // }
 
   return true;
 }
