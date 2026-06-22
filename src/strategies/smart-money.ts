@@ -1,128 +1,101 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import { type HolderWallet } from '../services/gmgn-client.ts';
-import { minutesSince } from '../utils/math.ts';
+import { type FollowWalletTrade } from "../services/gmgn-client.ts";
+import { minutesSince } from "../utils/math.ts";
 
-// ── Entry window tiers (minutes since wallet first bought token) ──────────────
-const ENTRY_WINDOW_HOT_MIN   = 5;   // < 5m  → hot signal
-const ENTRY_WINDOW_FRESH_MIN = 25;  // < 25m → fresh signal
-const ENTRY_WINDOW_VALID_MIN = 45;  // < 45m → still valid, weaker
+// ── Entry window tiers (minutes since trade timestamp) ────────────────────────
+const ENTRY_WINDOW_HOT_MIN = 5; // < 5m  → hot signal
+const ENTRY_WINDOW_FRESH_MIN = 25; // < 25m → fresh signal
+const ENTRY_WINDOW_VALID_MIN = 45; // < 45m → still valid, weaker
 
 // ── Cluster strength thresholds ───────────────────────────────────────────────
-const CLUSTER_HIGH_CONVICTION = 3;  // 3+ tracked wallets → high conviction
-const CLUSTER_GOOD_SIGNAL     = 2;  // 2  tracked wallets → good signal
-
-// ── Tracked wallet loader ─────────────────────────────────────────────────────
-// Loaded once at startup from wallets.json.
-// Wallets in this list are pre-qualified — no stats checks needed.
-
-let _trackedWallets: Set<string> | null = null;
-
-export function getTrackedWallets(): Set<string> {
-  if (_trackedWallets) return _trackedWallets;
-
-  const filePath = join(process.cwd(), 'wallets.json');
-  try {
-    const raw = readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw) as { wallets?: string[] };
-    const wallets = parsed.wallets ?? [];
-    _trackedWallets = new Set(wallets.map((w) => w.trim()).filter(Boolean));
-    console.info(`[smart-money] Loaded ${_trackedWallets.size} tracked wallets from wallets.json`);
-  } catch (err) {
-    console.warn(`[smart-money] Could not load wallets.json: ${err}. Smart money signal will be zero.`);
-    _trackedWallets = new Set();
-  }
-
-  return _trackedWallets;
-}
+const CLUSTER_HIGH_CONVICTION = 3; // 3+ distinct followed wallets → high conviction
+const CLUSTER_GOOD_SIGNAL = 2; // 2  distinct followed wallets → good signal
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type EntryWindow = 'hot' | 'fresh' | 'valid' | 'stale' | 'none';
+export type EntryWindow = "hot" | "fresh" | "valid" | "stale" | "none";
 
 export interface SmartMoneySignal {
   score: number;
 
-  // ── Core 3 questions ──────────────────────────────────────────────────────
-  hasTrackedEntry: boolean;          // Q1: ada tracked wallet yang entry?
-  recentEntry: boolean;              // Q2: ada yang entry dalam valid window?
-  recentEntryCount: number;          // Q3: berapa banyak tracked wallet yang baru entry?
+  // ── Core questions ──────────────────────────────────────────────────────────
+  hasFollowedEntry: boolean; // Q1: ada followed wallet yang beli token ini?
+  recentEntry: boolean; // Q2: ada yang beli dalam valid window?
+  recentEntryCount: number; // Q3: berapa banyak distinct followed wallet yang baru beli?
 
   // ── Entry window breakdown ─────────────────────────────────────────────────
-  hotEntryCount: number;             // wallets entered < 5m ago
-  freshEntryCount: number;           // wallets entered 5–25m ago
-  validEntryCount: number;           // wallets entered 25–45m ago
-  bestEntryWindow: EntryWindow;      // tightest window yang ada entry-nya
+  hotEntryCount: number; // distinct wallets, trade < 5m ago
+  freshEntryCount: number; // distinct wallets, trade 5–25m ago
+  validEntryCount: number; // distinct wallets, trade 25–45m ago
+  bestEntryWindow: EntryWindow; // tightest window yang ada entry-nya
 
-  // ── Holder state ───────────────────────────────────────────────────────────
-  trackedWalletCount: number;        // total tracked wallets ditemukan di token ini
-  activeTrackedCount: number;        // tracked wallets masih holding (sell_amount_percentage < 0.5)
+  // ── Conviction breakdown ───────────────────────────────────────────────────
+  fullOpenCount: number; // distinct wallets dengan is_open_or_close === 1 (full position)
+  partialAddCount: number; // distinct wallets dengan is_open_or_close === 0 (partial add)
+
+  // ── Trade detail ───────────────────────────────────────────────────────────
+  distinctWalletCount: number; // total distinct followed wallets yang trade token ini (buy, semua window)
+  trades: FollowWalletTrade[]; // trade mentah yang relevan (sudah difilter side=buy untuk token ini)
 }
 
 // ── Zero signal ───────────────────────────────────────────────────────────────
 
-function zeroSignal(overrides: Partial<SmartMoneySignal> = {}): SmartMoneySignal {
+function zeroSignal(
+  overrides: Partial<SmartMoneySignal> = {},
+): SmartMoneySignal {
   return {
     score: 0,
-    hasTrackedEntry: false,
+    hasFollowedEntry: false,
     recentEntry: false,
     recentEntryCount: 0,
     hotEntryCount: 0,
     freshEntryCount: 0,
     validEntryCount: 0,
-    bestEntryWindow: 'none',
-    trackedWalletCount: 0,
-    activeTrackedCount: 0,
+    bestEntryWindow: "none",
+    fullOpenCount: 0,
+    partialAddCount: 0,
+    distinctWalletCount: 0,
+    trades: [],
     ...overrides,
   };
 }
 
 // ── Main scoring function ──────────────────────────────────────────────────────
 //
-// @param traders - smart_degen wallets dari token_top_traders
+// @param trades - trade buy dari followed wallets untuk satu token tertentu
+//                 (base_address sudah difilter ke satu mint sebelum dipanggil,
+//                 biasanya hasil grouping di scanner.ts)
 //
 // Logic:
-//   1. Filter traders yang ada di tracked wallet list
-//   2. Filter yang masih holding (sell_amount_percentage < 0.5)
-//   3. Cek recency of entry via start_holding_at
-//   4. Score berdasarkan cluster strength + entry window
+//   1. Group by maker (distinct followed wallet)
+//   2. Untuk tiap wallet, ambil trade buy paling baru sebagai representasi entry
+//   3. Cek recency of entry via timestamp
+//   4. Cek conviction via is_open_or_close (1 = full open, lebih kuat)
+//   5. Score berdasarkan cluster strength + entry window + conviction
 
-export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
-  const trackedWallets = getTrackedWallets();
+export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
+  if (trades.length === 0) return zeroSignal();
 
-  if (holders.length === 0 || trackedWallets.size === 0) return zeroSignal();
-
-  // ── Filter: hanya tracked wallets ─────────────────────────────────────────
-  const trackedHolders = holders.filter((h) => trackedWallets.has(h.address));
-  const trackedWalletCount = trackedHolders.length;
-
-  if (trackedWalletCount === 0) return zeroSignal();
-
-  const hasTrackedEntry = true;
-
-  // ── Filter: hanya yang masih holding ──────────────────────────────────────
-  const activeTracked = trackedHolders.filter(
-    (h) => (h.sell_amount_percentage ?? 1) < 0.5
-  );
-  const activeTrackedCount = activeTracked.length;
-
-  // Gate: semua sudah exit → tidak ada sinyal bullish
-  if (activeTrackedCount === 0) {
-    return zeroSignal({
-      hasTrackedEntry,
-      trackedWalletCount,
-      activeTrackedCount: 0,
-    });
+  // ── Group by distinct followed wallet, ambil trade buy terbaru per wallet ──
+  const latestByWallet = new Map<string, FollowWalletTrade>();
+  for (const t of trades) {
+    const existing = latestByWallet.get(t.maker);
+    if (!existing || t.timestamp > existing.timestamp) {
+      latestByWallet.set(t.maker, t);
+    }
   }
 
-  // ── Entry window analysis ─────────────────────────────────────────────────
-  let hotEntryCount   = 0;
+  const distinctWalletCount = latestByWallet.size;
+  const hasFollowedEntry = distinctWalletCount > 0;
+
+  // ── Entry window + conviction analysis ─────────────────────────────────────
+  let hotEntryCount = 0;
   let freshEntryCount = 0;
   let validEntryCount = 0;
+  let fullOpenCount = 0;
+  let partialAddCount = 0;
 
-  for (const h of activeTracked) {
-    if (!h.start_holding_at) continue;
-    const ageMin = minutesSince(h.start_holding_at);
+  for (const t of latestByWallet.values()) {
+    const ageMin = minutesSince(t.timestamp);
 
     if (ageMin < ENTRY_WINDOW_HOT_MIN) {
       hotEntryCount++;
@@ -131,65 +104,81 @@ export function scoreSmartMoney(holders: HolderWallet[]): SmartMoneySignal {
     } else if (ageMin < ENTRY_WINDOW_VALID_MIN) {
       validEntryCount++;
     }
+
+    if (t.is_open_or_close === 1) {
+      fullOpenCount++;
+    } else {
+      partialAddCount++;
+    }
   }
 
   const recentEntryCount = hotEntryCount + freshEntryCount + validEntryCount;
-  const recentEntry      = recentEntryCount > 0;
+  const recentEntry = recentEntryCount > 0;
 
   const bestEntryWindow: EntryWindow =
-    hotEntryCount   > 0 ? 'hot'   :
-    freshEntryCount > 0 ? 'fresh' :
-    validEntryCount > 0 ? 'valid' :
-    activeTrackedCount  > 0 ? 'stale' : 'none';
+    hotEntryCount > 0
+      ? "hot"
+      : freshEntryCount > 0
+        ? "fresh"
+        : validEntryCount > 0
+          ? "valid"
+          : distinctWalletCount > 0
+            ? "stale"
+            : "none";
 
   // ── Scoring ───────────────────────────────────────────────────────────────
   //
-  // Cluster strength (recent tracked entries)  → 55 pts  (primary signal)
-  // Entry window tightness                     → 30 pts  (recency bonus)
-  // Active tracked wallets holding             → 15 pts  (baseline conviction)
+  // Cluster strength (recent distinct wallet entries) → 45 pts (primary signal)
+  // Entry window tightness                            → 25 pts (recency bonus)
+  // Conviction — full position open ratio              → 30 pts (is_open_or_close)
   //
   // Max total: 100 pts (capped)
 
   let score = 0;
 
-  // 1. Cluster strength — recent tracked entries (55 pts)
+  // 1. Cluster strength — recent distinct wallet entries (45 pts)
   if (recentEntryCount >= CLUSTER_HIGH_CONVICTION) {
-    score += 55;  // 3+ wallets → high conviction
+    score += 45; // 3+ wallets → high conviction
   } else if (recentEntryCount >= CLUSTER_GOOD_SIGNAL) {
-    score += 38;  // 2 wallets → good signal
+    score += 30; // 2 wallets → good signal
   } else if (recentEntryCount === 1) {
-    score += 20;  // 1 wallet → weak signal
+    score += 15; // 1 wallet → weak signal
   }
   // 0 recent entries → 0 pts dari cluster
 
-  // 2. Entry window tightness (30 pts)
+  // 2. Entry window tightness (25 pts)
   if (hotEntryCount > 0) {
-    score += 30;  // < 5m → sinyal terkuat
+    score += 25; // < 5m → sinyal terkuat
   } else if (freshEntryCount > 0) {
-    score += 20;  // 5–25m → fresh
+    score += 17; // 5–25m → fresh
   } else if (validEntryCount > 0) {
-    score += 10;  // 25–45m → masih valid, melemah
+    score += 8; // 25–45m → masih valid, melemah
   }
 
-  // 3. Active tracked wallets holding (15 pts)
-  if (activeTrackedCount >= 3) {
-    score += 15;
-  } else if (activeTrackedCount === 2) {
-    score += 10;
-  } else if (activeTrackedCount === 1) {
-    score += 5;
+  // 3. Conviction — full position open ratio (30 pts)
+  // is_open_or_close === 1 = full open/close, sinyal jauh lebih kuat dari partial add
+  if (fullOpenCount >= CLUSTER_HIGH_CONVICTION) {
+    score += 30; // 3+ full opens → very strong conviction
+  } else if (fullOpenCount >= CLUSTER_GOOD_SIGNAL) {
+    score += 22; // 2 full opens
+  } else if (fullOpenCount === 1) {
+    score += 14; // 1 full open
+  } else if (partialAddCount > 0) {
+    score += 5; // hanya partial add — sinyal lemah tapi bukan nol
   }
 
   return {
     score: Math.min(score, 100),
-    hasTrackedEntry,
+    hasFollowedEntry,
     recentEntry,
     recentEntryCount,
     hotEntryCount,
     freshEntryCount,
     validEntryCount,
     bestEntryWindow,
-    trackedWalletCount,
-    activeTrackedCount,
+    fullOpenCount,
+    partialAddCount,
+    distinctWalletCount,
+    trades,
   };
 }

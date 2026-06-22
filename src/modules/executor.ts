@@ -61,7 +61,7 @@ export function canOpenPosition(): boolean {
 export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
   const config = getConfig();
   const client = getGmgnClient();
-  const { token, info } = enriched;
+  const { candidate, info } = enriched;
 
   const inputAmountLamports = solToLamports(config.tradeSizeSol);
   const conditionOrders = buildConditionOrders();
@@ -69,11 +69,11 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
 
   // ── DRY RUN ───────────────────────────────────────────────────────────────
   if (config.dryRun) {
-    const simulatedOrderId = `dry_${Date.now()}_${token.address.slice(0, 8)}`;
+    const simulatedOrderId = `dry_${Date.now()}_${candidate.mintAddress.slice(0, 8)}`;
     const simulatedPrice = parseFloat(info.price.price);
 
     insertTrade({
-      mintAddress: token.address,
+      mintAddress: candidate.mintAddress,
       side: 'BUY',
       solAmount: config.tradeSizeSol,
       tokenAmount: '0', // simulated
@@ -83,8 +83,8 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     });
 
     insertPosition({
-      mintAddress: token.address,
-      symbol: token.symbol,
+      mintAddress: candidate.mintAddress,
+      symbol: candidate.symbol,
       entryPriceUsd: simulatedPrice,
       solInvested: config.tradeSizeSol,
       tokenAmount: '0', // simulated
@@ -93,8 +93,8 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     });
 
     logger.info('buy_simulated', {
-      mint: token.address,
-      symbol: token.symbol,
+      mint: candidate.mintAddress,
+      symbol: candidate.symbol,
       sol_amount: config.tradeSizeSol,
       price_usd: simulatedPrice,
       condition_orders: conditionOrders.length,
@@ -109,7 +109,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     chain: 'sol',
     from_address: config.walletAddress,
     input_token: SOL_ADDRESS,
-    output_token: token.address,
+    output_token: candidate.mintAddress,
     input_amount: inputAmountLamports,
     slippage: config.slippage,
     auto_slippage: config.autoSlippage,
@@ -129,13 +129,13 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
       baseDelayMs: 2000,
     });
   } catch (err) {
-    logger.error('buy_failed', { mint: token.address, symbol: token.symbol, error: String(err) });
+    logger.error('buy_failed', { mint: candidate.mintAddress, symbol: candidate.symbol, error: String(err) });
     return false;
   }
 
   logger.info('buy_submitted', {
-    mint: token.address,
-    symbol: token.symbol,
+    mint: candidate.mintAddress,
+    symbol: candidate.symbol,
     sol_amount: config.tradeSizeSol,
     order_id: swapResponse.order_id,
     hash: swapResponse.hash,
@@ -145,7 +145,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
 
   // Save trade as pending
   insertTrade({
-    mintAddress: token.address,
+    mintAddress: candidate.mintAddress,
     side: 'BUY',
     solAmount: config.tradeSizeSol,
     orderId: swapResponse.order_id,
@@ -158,7 +158,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
   const confirmed = await pollOrderUntilConfirmed(swapResponse.order_id, ORDER_POLL_TIMEOUT_MS);
 
   if (!confirmed) {
-    logger.error('buy_not_confirmed', { mint: token.address, order_id: swapResponse.order_id });
+    logger.error('buy_not_confirmed', { mint: candidate.mintAddress, order_id: swapResponse.order_id });
     updateTradeStatus(swapResponse.order_id, 'failed');
     return false;
   }
@@ -175,8 +175,8 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
   });
 
   insertPosition({
-    mintAddress: token.address,
-    symbol: token.symbol,
+    mintAddress: candidate.mintAddress,
+    symbol: candidate.symbol,
     entryPriceUsd: priceUsd,
     solInvested: solSpent,
     tokenAmount,
@@ -186,8 +186,8 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
   });
 
   logger.info('buy_confirmed', {
-    mint: token.address,
-    symbol: token.symbol,
+    mint: candidate.mintAddress,
+    symbol: candidate.symbol,
     price_usd: priceUsd,
     sol_spent: solSpent,
     token_amount: tokenAmount,

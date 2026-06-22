@@ -122,30 +122,11 @@ export interface KlineCandle {
   amount: string;            // token units
 }
 
-export interface TrenchesToken {
-  address: string;
-  symbol: string;
-  name: string;
-  launchpad_platform: string;
-  open_timestamp: number;
-  complete_timestamp: number;
-  usd_market_cap: number;
-  liquidity: number;
-  holder_count: number;
-  top_10_holder_rate: number;       // 0–1
-  smart_degen_count: number;
-  renowned_count: number;
-  rug_ratio: number;
-  creator_token_status: string;     // 'creator_hold' | 'creator_close'
-  is_wash_trading: boolean;
-  owner_renounced: string;          // "yes" | "no"
-  dev_team_hold_rate: number;       // 0–1
-  complete_cost_time: number;       // unix seconds between open and complete
-}
-
 export interface TokenInfo {
+  ath_price:         number;
   price: {
     price:           string;
+    ath_price:       string;
     price_1m:        string;
     price_5m:        string;
     price_1h:        string;
@@ -215,6 +196,47 @@ export interface HolderWallet {
   native_balance: string;   // SOL balance in lamports (string)
 }
 
+export interface FollowWalletTrade {
+  id: string;
+  chain: string;
+  transaction_hash: string;
+  maker: string;                       // followed wallet address
+  side: 'buy' | 'sell';
+  base_address: string;                // token contract address
+  quote_address: string;
+  base_amount: string;
+  quote_amount: string;
+  amount_usd: string;
+  cost_usd: string;
+  buy_cost_usd: string;
+  price: string;
+  price_usd: string;
+  price_now: string;
+  price_change: string;                // ratio vs price at trade time, e.g. "6.66" = +666%
+  timestamp: number;                   // unix seconds
+  is_open_or_close: number;            // 1 = full open/close, 0 = partial add/reduce
+  launchpad: string;
+  launchpad_platform: string;
+  migrated_pool_exchange: string;
+  base_token: {
+    symbol: string;
+    logo: string;
+    hot_level: number;
+    total_supply: string;
+    token_create_time: number;
+    token_open_time: number;
+  };
+  maker_info: {
+    address: string;
+    name: string;
+    twitter_username: string;
+    twitter_name: string;
+    tags: string[];
+    tag_rank: Record<string, number>;
+  };
+  balance_info: unknown | null;
+}
+
 // ─── GMGN Client ─────────────────────────────────────────────────────────────
 
 const RATE_LIMIT_RETRY_BUFFER_MS = 1000;
@@ -279,10 +301,26 @@ export class GmgnClient {
 
   // ── Market Data ────────────────────────────────────────────────────────────
 
-  async getGraduatedTokens(filters?: Record<string, number | string>): Promise<TrenchesToken[]> {
-    const body = this.buildTrenchesBody(filters);
-    const data = await this.normalRequest('POST', '/v1/trenches', { chain: CHAIN }, body) as any;
-    return (data?.completed ?? []) as TrenchesToken[];
+  /**
+   * Fetch recent trades from wallets the user follows on the GMGN platform.
+   * Uses signed auth (criticalRequest) — the follow list is resolved server-side
+   * from the GMGN account bound to the API key. `--wallet` filter is optional
+   * and not used here since we want the full follow-list activity.
+   */
+  async getFollowWallet(params?: {
+    side?: 'buy' | 'sell';
+    limit?: number;
+    minAmountUsd?: number;
+    maxAmountUsd?: number;
+  }): Promise<FollowWalletTrade[]> {
+    const query: Record<string, string | number> = { chain: CHAIN };
+    if (params?.side) query['side'] = params.side;
+    if (params?.limit) query['limit'] = params.limit;
+    if (params?.minAmountUsd != null) query['min_amount_usd'] = params.minAmountUsd;
+    if (params?.maxAmountUsd != null) query['max_amount_usd'] = params.maxAmountUsd;
+
+    const data = await this.criticalRequest('GET', '/v1/trade/follow_wallet', query, null) as any;
+    return (data?.list ?? []) as FollowWalletTrade[];
   }
 
   async getTokenInfo(mintAddress: string): Promise<TokenInfo> {
@@ -359,43 +397,6 @@ export class GmgnClient {
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
-  private buildTrenchesBody(filters?: Record<string, number | string>): Record<string, unknown> {
-    const config = getConfig();
-    const serverFilters: Record<string, unknown> = {};
-
-    if (config.minLiquidityUsd != null) serverFilters['min_liquidity'] = config.minLiquidityUsd;
-    if (config.minHolderCount > 0) serverFilters['min_holder_count'] = config.minHolderCount;
-    if (config.maxTop10HolderRate != null) serverFilters['max_top_holder_rate'] = config.maxTop10HolderRate;
-    if (config.maxRugRatio != null) serverFilters['max_rug_ratio'] = config.maxRugRatio;
-    if (config.minTokenAge != '') serverFilters['min_created'] = config.minTokenAge;
-    if (config.maxTokenAge != '') serverFilters['max_created'] = config.maxTokenAge;
-    if (config.minMarketcap != null) serverFilters['min_marketcap'] = config.minMarketcap;
-    if (config.maxMarketcap != null) serverFilters['max_marketcap'] = config.maxMarketcap;
-    if (config.minSmartDegenCount > 0) serverFilters['min_smart_degen_count'] = config.minSmartDegenCount;
-    if (config.minRenownedCount > 0) serverFilters['min_renowned_count'] = config.minRenownedCount;
-    if (config.maxInsiderRatio != null) serverFilters['max_insider_ratio'] = config.maxInsiderRatio;
-    if (config.maxCreatorBalanceRate != null) serverFilters['max_creator_balance_rate'] = config.maxCreatorBalanceRate;
-    if (config.minTotalFee != null) serverFilters['min_total_fee'] = config.minTotalFee;
-
-    const platforms = [
-      'Pump.fun', 'pump_mayhem', 'pump_mayhem_agent', 'pump_agent',
-      'letsbonk', 'bonkers', 'bags', 'memoo', 'liquid', 'bankr',
-      'surge', 'anoncoin', 'moonshot_app', 'believe', 'trendsfun',
-      'Moonshot', 'boop', 'ray_launchpad', 'meteora_virtual_curve',
-    ];
-
-    const section = {
-      filters: ['offchain', 'onchain'],
-      launchpad_platform: platforms,
-      quote_address_type: [4, 5, 3, 1, 13, 0],
-      launchpad_platform_v2: true,
-      limit: 80,
-      ...serverFilters,
-      ...filters,
-    };
-
-    return { version: 'v2', completed: section };
-  }
 
   private async normalRequest(
     method: string,

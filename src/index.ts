@@ -1,7 +1,7 @@
 import { getConfig } from './config.ts';
 import { getDb } from './db/database.ts';
 import { logger } from './utils/logger.ts';
-import { scanGraduatedTokens } from './modules/scanner.ts';
+import { scanFollowedWalletActivity } from './modules/scanner.ts';
 import { enrichAndScore, buildEntryPrompt } from './modules/scorer.ts';
 import { evaluateEntry } from './services/openrouter.ts';
 import { canOpenPosition, executeBuy } from './modules/executor.ts';
@@ -83,13 +83,13 @@ async function positionLoop(): Promise<void> {
 async function scanCycle(): Promise<void> {
   const config = getConfig();
 
-  const candidates = await scanGraduatedTokens();
+  const candidates = await scanFollowedWalletActivity();
 
-  for (const token of candidates) {
-    logger.info('evaluating_candidate', { mint: token.address, symbol: token.symbol });
+  for (const candidate of candidates) {
+    logger.info('evaluating_candidate', { mint: candidate.mintAddress, symbol: candidate.symbol });
 
     // Enrich + score
-    const enriched = await enrichAndScore(token);
+    const enriched = await enrichAndScore(candidate);
     if (!enriched) continue;
 
     // AI entry decision
@@ -97,7 +97,7 @@ async function scanCycle(): Promise<void> {
     const decision = await evaluateEntry(prompt);
 
     insertAiDecision({
-      mintAddress: token.address,
+      mintAddress: candidate.mintAddress,
       decisionType: 'entry',
       action: decision.action,
       confidence: decision.confidence,
@@ -107,8 +107,8 @@ async function scanCycle(): Promise<void> {
     });
 
     logger.info('ai_entry_decision', {
-      mint: token.address,
-      symbol: token.symbol,
+      mint: candidate.mintAddress,
+      symbol: candidate.symbol,
       action: decision.action,
       confidence: decision.confidence,
       red_flags: decision.red_flags,
@@ -118,7 +118,7 @@ async function scanCycle(): Promise<void> {
 
     // Position gate
     if (!canOpenPosition()) {
-      logger.warn('buy_skipped_position_full', { mint: token.address, symbol: token.symbol });
+      logger.warn('buy_skipped_position_full', { mint: candidate.mintAddress, symbol: candidate.symbol });
       continue;
     }
 

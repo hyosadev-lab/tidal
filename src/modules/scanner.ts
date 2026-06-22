@@ -1,75 +1,65 @@
-import { getGmgnClient, type TrenchesToken } from '../services/gmgn-client.ts';
+import { getGmgnClient, type FollowWalletTrade } from '../services/gmgn-client.ts';
 import { shouldSkipToken } from '../db/queries.ts';
 import { logger } from '../utils/logger.ts';
 
-export type { TrenchesToken };
+export type { FollowWalletTrade };
 
-export async function scanGraduatedTokens(): Promise<TrenchesToken[]> {
+// ── Candidate ──────────────────────────────────────────────────────────────────
+// Satu candidate = satu token (base_address) yang terdeteksi dibeli oleh satu
+// atau lebih followed wallet. Trade mentahnya tetap disimpan untuk diteruskan
+// ke scoreSmartMoney() di scorer.ts — tidak perlu fetch ulang.
+
+export interface ScanCandidate {
+  mintAddress: string;
+  symbol: string;
+  trades: FollowWalletTrade[];   // semua trade buy untuk token ini, dari followed wallets
+}
+
+export async function scanFollowedWalletActivity(): Promise<ScanCandidate[]> {
   const client = getGmgnClient();
 
-  let tokens: TrenchesToken[];
+  let trades: FollowWalletTrade[];
   try {
-    tokens = await client.getGraduatedTokens();
+    trades = await client.getFollowWallet({ side: 'buy', limit: 100 });
   } catch (err) {
     logger.error('scan_failed', { error: String(err) });
     return [];
   }
 
-  const passed: TrenchesToken[] = [];
-  let skippedDedup = 0;
-  let skippedClientFilter = 0;
+  // ── Group by base_address (token) ───────────────────────────────────────────
+  const grouped = new Map<string, FollowWalletTrade[]>();
+  for (const t of trades) {
+    const list = grouped.get(t.base_address);
+    if (list) {
+      list.push(t);
+    } else {
+      grouped.set(t.base_address, [t]);
+    }
+  }
 
-  for (const token of tokens) {
+  const passed: ScanCandidate[] = [];
+  let skippedDedup = 0;
+
+  for (const [mintAddress, tokenTrades] of grouped) {
     // Dedup: skip if already in positions or active trades
-    if (shouldSkipToken(token.address)) {
+    if (shouldSkipToken(mintAddress)) {
       skippedDedup++;
       continue;
     }
 
-    // Client-side filter
-    if (!passesClientFilter(token)) {
-      skippedClientFilter++;
-      continue;
-    }
-
-    passed.push(token);
+    passed.push({
+      mintAddress,
+      symbol: tokenTrades[0]?.base_token?.symbol ?? '???',
+      trades: tokenTrades,
+    });
   }
 
   logger.info('scan_complete', {
-    total: tokens.length,
+    total_trades: trades.length,
+    distinct_tokens: grouped.size,
     passed: passed.length,
     skipped_dedup: skippedDedup,
-    skipped_client_filter: skippedClientFilter,
   });
 
   return passed;
-}
-
-function passesClientFilter(token: TrenchesToken): boolean {
-  if (token.owner_renounced === 'no') {
-    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'owner_not_renounced' });
-    return false;
-  }
-
-  // if (token.creator_token_status === 'creator_hold') {
-  //   logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'creator_hold' });
-  //   return false;
-  // }
-
-  if (token.is_wash_trading) {
-    logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'wash_trading' });
-    return false;
-  }
-
-  // const completeTime = token.complete_cost_time / 60;
-  // if (completeTime < 8) {
-  //   logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'recently_completed', completeTime });
-  //   return false;
-  // }
-  // if (completeTime > 75) {
-  //   logger.warn('token_skipped', { mint: token.address, symbol: token.symbol, reason: 'too_old', completeTime });
-  //   return false;
-  // }
-
-  return true;
 }
