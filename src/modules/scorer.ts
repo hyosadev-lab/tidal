@@ -16,7 +16,7 @@ import {
   scoreSmartMoney,
   type SmartMoneySignal,
 } from "../strategies/smart-money.ts";
-import { unixMillis, unixSeconds } from "../utils/math.ts";
+import { unixMillis } from "../utils/math.ts";
 import { sleep } from "../utils/retry.ts";
 
 export interface AllSignalScores {
@@ -95,7 +95,9 @@ export async function enrichAndScore(
   // ── Composite score ───────────────────────────────────────────────────────
 
   const composite =
-    dip.score * 0.4 + momentum.score * 0.25 + smartMoney.score * 0.35;
+    dip.score * config.weightDip +
+    momentum.score * config.weightMomentum +
+    smartMoney.score * config.weightSmartMoney;
 
   const scores: AllSignalScores = { composite, dip, momentum, smartMoney };
 

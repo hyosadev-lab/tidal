@@ -31,6 +31,11 @@ export interface Config {
   minScoreToBuy: number;
   aiConfidenceThreshold: number;
 
+  // Composite Score Weights (must sum to 1.0)
+  weightDip: number;
+  weightMomentum: number;
+  weightSmartMoney: number;
+
   // Exit Parameters (optional)
   trailingActivatePct: number | null;
   trailingDrawdownPct: number | null;
@@ -134,6 +139,19 @@ export function getConfig(): Config {
     process.exit(1);
   }
 
+  // Composite score weights — default 0.40 / 0.25 / 0.35 (dip / momentum / smartMoney)
+  const weightDip        = optionalFloat('WEIGHT_DIP')         ?? 0.40;
+  const weightMomentum   = optionalFloat('WEIGHT_MOMENTUM')    ?? 0.25;
+  const weightSmartMoney = optionalFloat('WEIGHT_SMART_MONEY') ?? 0.35;
+
+  const weightSum = weightDip + weightMomentum + weightSmartMoney;
+  if (Math.abs(weightSum - 1.0) > 0.001) {
+    console.error(
+      `[config] WEIGHT_DIP + WEIGHT_MOMENTUM + WEIGHT_SMART_MONEY must sum to 1.0 (got ${weightSum.toFixed(3)}: dip=${weightDip}, momentum=${weightMomentum}, smartMoney=${weightSmartMoney}).`
+    );
+    process.exit(1);
+  }
+
   _config = {
     // GMGN Auth
     gmgnApiKey: requireEnv('GMGN_API_KEY'),
@@ -156,6 +174,11 @@ export function getConfig(): Config {
     // Strategy
     minScoreToBuy: requireFloat('MIN_SCORE_TO_BUY'),
     aiConfidenceThreshold: requireFloat('AI_CONFIDENCE_THRESHOLD'),
+
+    // Composite Score Weights
+    weightDip,
+    weightMomentum,
+    weightSmartMoney,
 
     // Exit
     trailingActivatePct,
