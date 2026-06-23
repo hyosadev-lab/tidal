@@ -95,7 +95,7 @@ export async function enrichAndScore(
   // ── Composite score ───────────────────────────────────────────────────────
 
   const composite =
-    dip.score * 0.3 + momentum.score * 0.3 + smartMoney.score * 0.4;
+    dip.score * 0.4 + momentum.score * 0.25 + smartMoney.score * 0.35;
 
   const scores: AllSignalScores = { composite, dip, momentum, smartMoney };
 
