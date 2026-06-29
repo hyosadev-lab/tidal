@@ -99,7 +99,21 @@ export async function enrichAndScore(
     momentum.score * config.weightMomentum +
     smartMoney.score * config.weightSmartMoney;
 
-  const scores: AllSignalScores = { composite, dip, momentum, smartMoney };
+  // ── FOMO Gate ──────────────────────────────────────────────────────────────
+  // Smart money harus tetap jadi filter utama. Kalau momentum sangat tinggi
+  // (sering = harga sudah pump tajam) TAPI smart money rendah (tidak ada
+  // followed wallet yang masuk / entry-nya stale), ini pola klasik "harga naik
+  // karena hype/FOMO retail", bukan karena smart money masuk lebih dulu —
+  // composite diturunkan langsung supaya tidak lolos threshold buy.
+  const SMART_MONEY_WEAK_THRESHOLD = 30;
+  const MOMENTUM_HIGH_THRESHOLD    = 70;
+  const fomoGateTriggered =
+    momentum.score >= MOMENTUM_HIGH_THRESHOLD &&
+    smartMoney.score < SMART_MONEY_WEAK_THRESHOLD;
+
+  const compositeAfterGate = fomoGateTriggered ? composite * 0.5 : composite;
+
+  const scores: AllSignalScores = { composite: compositeAfterGate, dip, momentum, smartMoney };
 
   // ── Persist scores ────────────────────────────────────────────────────────
 
@@ -123,6 +137,8 @@ export async function enrichAndScore(
       priceMomentum5m: momentum.priceMomentum5m,
       greenCandlePct: momentum.greenCandlePct,
       swaps5m: momentum.swaps5m,
+      fomoPenalty: momentum.fomoPenalty,
+      isLateEntry: momentum.isLateEntry,
     },
     smartMoneyDetails: {
       distinctWalletCount: smartMoney.distinctWalletCount,
@@ -141,21 +157,25 @@ export async function enrichAndScore(
   logger.info("token_scored", {
     mint: mintAddress,
     symbol: candidate.symbol,
-    composite: composite.toFixed(1),
+    composite: compositeAfterGate.toFixed(1),
     dip: dip.score.toFixed(1),
     momentum: momentum.score.toFixed(1),
     smart_money: smartMoney.score.toFixed(1),
     threshold: config.minScoreToBuy,
+    fomo_gate_triggered: fomoGateTriggered,
+    is_late_entry: momentum.isLateEntry,
   });
 
   // ── Gate: below threshold → skip ─────────────────────────────────────────
 
-  if (composite < config.minScoreToBuy) {
+  if (compositeAfterGate < config.minScoreToBuy) {
     logger.warn("token_skipped", {
       mint: mintAddress,
       symbol: candidate.symbol,
-      reason: "below_score_threshold",
-      composite: composite.toFixed(1),
+      reason: fomoGateTriggered
+        ? "fomo_gate_high_momentum_low_smart_money"
+        : "below_score_threshold",
+      composite: compositeAfterGate.toFixed(1),
     });
     return null;
   }
@@ -204,9 +224,10 @@ Momentum Score: ${scores.momentum.score.toFixed(1)}/100
   → Volume surge ratio: ${scores.momentum.surgRatio.toFixed(2)}x (volume_5m vs avg 5m in 1h; >=4.0x = explosion)
   → Buy dominance 5m: ${scores.momentum.buyDominance.toFixed(2)} (>0.65 = buyers in control)
   → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
-  → Price change 5m: ${scores.momentum.priceMomentum5m.toFixed(1)}% (+20% = max score)
+  → Price change 5m: ${scores.momentum.priceMomentum5m.toFixed(1)}% ${scores.momentum.isLateEntry ? "⚠️ LATE ENTRY WARNING — price already pumped, momentum may have already peaked" : "(healthy range)"}
   → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 8 candles
   → Swaps 5m: ${scores.momentum.swaps5m} (>= 100 = very active)
+  ${scores.momentum.fomoPenalty > 0 ? `→ FOMO penalty applied: -${scores.momentum.fomoPenalty.toFixed(0)} pts (price moved >${50}% in 5m — historically correlated with -30% to -55% losses on this agent)` : ""}
 Smart Money Score: ${sm.score.toFixed(1)}/100
   → Distinct followed wallets bought this token: ${sm.distinctWalletCount}
   → Recent entries (within 45m): ${sm.recentEntryCount} (best window: ${sm.bestEntryWindow})${allExited ? " ⚠️ entries are stale — no recent activity" : ""}
