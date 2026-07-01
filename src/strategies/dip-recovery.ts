@@ -109,14 +109,32 @@ export function scoreDipRecovery(
   }
 
   // ── Komponen 3: Buy volume dominan — dari token_info 5m ──────────────────
+  // Dip dalam TANPA buyer dominance = falling knife — tidak ada yang mau catch.
+  // Threshold dinaikkan dari 0.6 → 0.65 supaya kita hanya masuk kalau buyers
+  // benar-benar mendominasi secara volume, bukan sekadar sedikit lebih banyak.
   const totalVolume5m = buyVolume5m + sellVolume5m;
   const buyVolumeRatio5m =
     totalVolume5m > 0 ? buyVolume5m / totalVolume5m : 0.5;
 
-  if (buyVolumeRatio5m > 0.6) {
-    score += 25; // buyers dominan secara dollar value
-  } else if (buyVolumeRatio5m >= 0.5) {
-    score += 15; // sedikit lebih banyak buyer
+  // Hard gate: tanpa buyer dominance yang kuat, dip recovery tidak valid
+  if (buyVolumeRatio5m < 0.50) {
+    // Sellers masih dominan — masih falling knife, bukan recovery
+    return {
+      score: 0,
+      athPrice,
+      dipFromAthPct,
+      hasLowerLow,
+      buyVolumeRatio5m,
+      buyTxRatio5m: 0,
+    };
+  }
+
+  if (buyVolumeRatio5m > 0.65) {
+    score += 25; // buyers dominan kuat secara dollar value
+  } else if (buyVolumeRatio5m >= 0.55) {
+    score += 12; // ada lebih banyak buyer tapi belum kuat
+  } else {
+    score += 4;  // sedikit di atas 0.50 — moderat
   }
 
   // ── Komponen 4: Lebih banyak buyer dari seller — dari token_info 5m ───────

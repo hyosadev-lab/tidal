@@ -73,16 +73,16 @@ export function scoreMomentum(
   }
 
   // ── FOMO Guard: deteksi late-entry berdasarkan priceMomentum5m ────────────
-  // Bukan cuma "tidak dikasih bonus lagi di atas threshold" (capping pasif),
-  // tapi penalti aktif yang mengurangi score — supaya pump ekstrem benar-benar
-  // ditolak, bukan sekadar tidak ditambah.
+  // Berdasarkan data log: entry dengan priceMomentum5m > 50% sering berujung
+  // loss besar (-30% s/d -55%). Penalti dibuat lebih tajam dari sebelumnya
+  // supaya token dengan pump ekstrem benar-benar tidak bisa lolos scoring.
   let fomoPenalty = 0;
   if (priceMomentum5m > PRICE_PUMP_EXTREME_PCT) {
-    fomoPenalty = 45; // >120% dalam 5m — hampir pasti sudah di puncak/late
+    fomoPenalty = 60; // >120% dalam 5m — hampir pasti sudah di puncak (dinaikkan dari 45)
   } else if (priceMomentum5m > PRICE_PUMP_SEVERE_PCT) {
-    fomoPenalty = 28; // 80–120% — risiko tinggi entry di puncak
+    fomoPenalty = 40; // 80–120% — risiko sangat tinggi (dinaikkan dari 28)
   } else if (priceMomentum5m > PRICE_PUMP_WARN_PCT) {
-    fomoPenalty = 14; // 50–80% — mulai berisiko, redam moderat
+    fomoPenalty = 22; // 50–80% — mulai berisiko (dinaikkan dari 14)
   }
   const isLateEntry = priceMomentum5m > PRICE_PUMP_WARN_PCT;
 

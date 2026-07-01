@@ -79,13 +79,65 @@ export function buildPositionPrompt(position: Position, snap: PositionSnapshot):
   const pnlSign = snap.pnlPct >= 0 ? '+' : '';
   const pnlUsdSign = snap.pnlUsd >= 0 ? '+' : '';
 
+  // ── Red flag detection ───────────────────────────────────────────────────
+  const redFlags: string[] = [];
+
+  // Volume collapse — volume sangat rendah = tidak ada minat, liquiditas mengering
+  if (snap.volume1h < 5000) {
+    redFlags.push(`⚠️ VOLUME COLLAPSE: 1h volume hanya $${snap.volume1h.toFixed(0)} — pasar sudah kehilangan minat`);
+  }
+
+  // Sell pressure dominant
+  if (snap.buySellRatio1h < 0.40) {
+    redFlags.push(`⚠️ SELL PRESSURE: buy/sell ratio 1h = ${snap.buySellRatio1h.toFixed(2)} — sellers sangat dominan`);
+  }
+
+  // Smart money turun dari entry
+  const smDrop = (position.entry_smart_wallet_count ?? 0) - snap.smartWalletCount;
+  if (smDrop >= 2) {
+    redFlags.push(`⚠️ SMART MONEY EXIT: smart wallets turun dari ${position.entry_smart_wallet_count} → ${snap.smartWalletCount} (−${smDrop} wallets keluar)`);
+  }
+
+  // Holder count turun signifikan — distribusi sedang terjadi
+  const holderDrop = (position.entry_holder_count ?? 0) - snap.holderCount;
+  const holderDropPct = position.entry_holder_count
+    ? (holderDrop / position.entry_holder_count) * 100
+    : 0;
+  if (holderDropPct >= 10) {
+    redFlags.push(`⚠️ HOLDER DISTRIBUTION: holder turun ${holderDropPct.toFixed(0)}% dari entry (${position.entry_holder_count} → ${snap.holderCount})`);
+  }
+
+  // Dev masih hold — risiko dev dump
+  if (snap.devStatus === 'creator_hold' && snap.devHoldRate > 0.05) {
+    redFlags.push(`⚠️ DEV STILL HOLDS: dev masih pegang ${(snap.devHoldRate * 100).toFixed(1)}% supply — risiko dump`);
+  }
+
+  // Rat trader tinggi — kemungkinan pump & dump koordinasi
+  if (snap.ratTraderPct > 0.15) {
+    redFlags.push(`⚠️ HIGH RAT TRADER ACTIVITY: ${(snap.ratTraderPct * 100).toFixed(1)}% dari volume dari rat traders`);
+  }
+
+  // Loss besar sudah terjadi
+  if (snap.pnlPct <= -20) {
+    redFlags.push(`⚠️ SIGNIFICANT LOSS: sudah -${Math.abs(snap.pnlPct).toFixed(1)}% — probabilitas recovery menurun drastis`);
+  }
+
+  // Hold terlalu lama dengan PnL flat/negatif
+  if (snap.holdMinutes > 60 && snap.pnlPct < 5) {
+    redFlags.push(`⚠️ STALE POSITION: hold ${snap.holdMinutes.toFixed(0)} menit dengan PnL hanya ${pnlSign}${snap.pnlPct.toFixed(1)}% — opportunity cost tinggi`);
+  }
+
+  const redFlagSection = redFlags.length > 0
+    ? `\n--- RED FLAGS (${redFlags.length} ditemukan) ---\n${redFlags.join('\n')}\n`
+    : '\n--- RED FLAGS ---\nTidak ada red flag kritis terdeteksi.\n';
+
   return `
 Token: ${position.symbol ?? position.mint_address}
 Entry Price: $${position.entry_price_usd}
 Current Price: $${snap.price}
 PnL: ${pnlSign}${snap.pnlPct.toFixed(1)}% (${pnlUsdSign}$${snap.pnlUsd.toFixed(2)})
 Hold Duration: ${snap.holdMinutes.toFixed(0)} minutes
-
+${redFlagSection}
 --- 1H PRICE ACTION ---
 Volume 1h: $${snap.volume1h.toFixed(0)}
 Buys 1h: ${snap.buys1h} | Sells 1h: ${snap.sells1h}
@@ -107,6 +159,20 @@ CTO Flag: ${snap.ctoFlag === 1 ? 'YES (community takeover)' : 'No'}
 Trailing Stop: ${trailingInfo}
 Stop Loss: ${slInfo}
 
+--- EXIT DECISION GUIDELINES ---
+Default to SELL in any of these situations:
+1. Red flags >= 2 — multiple warning signs = elevated risk, do not wait for recovery
+2. Buy/sell ratio < 0.40 AND volume is dropping — sellers in control, exit before it gets worse
+3. Smart money count dropped since entry — they exited, you should too
+4. Holder count dropped >10% since entry — distribution happening
+5. PnL <= -20% AND no strong buy signal — cut loss, do not hope for recovery
+6. Hold > 90 minutes with PnL < 0% — stale position, capital is better deployed elsewhere
+
+Default to HOLD only if:
+- PnL is positive AND buy/sell ratio > 0.55 AND no red flags
+- Smart money count held or increased since entry
+
+Be disciplined: small certain losses are better than large uncertain ones.
 Should I HOLD or SELL this position now?
   `.trim();
 }

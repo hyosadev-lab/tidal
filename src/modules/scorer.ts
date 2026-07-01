@@ -40,9 +40,29 @@ export async function enrichAndScore(
   const client = getGmgnClient();
   const mintAddress = candidate.mintAddress;
 
-  // ── Fetch enrichment data ─────────────────────────────────────────────────
-  // Catatan: smart-money signal TIDAK di-fetch ulang di sini — datanya sudah
-  // didapat di scan loop (follow_wallet trades), diteruskan lewat `candidate`.
+  // ── Step 1: Smart Money Primary Gate (no API call needed) ────────────────
+  // Hitung smart money duluan — datanya sudah ada di candidate.trades, tidak
+  // perlu API call. Gate ini dipasang SEBELUM fetch token_info dan kline supaya
+  // kita tidak buang 2 API call untuk token yang pasti ditolak.
+  //
+  // Syarat minimum: minimal 2 distinct followed wallet dengan hot (<5m) ATAU
+  // fresh (<25m) entry. Valid-only (25-45m) tidak cukup — terlalu stale.
+  const smartMoney = scoreSmartMoney(candidate.trades);
+  const hotFreshCount = smartMoney.hotEntryCount + smartMoney.freshEntryCount;
+
+  if (hotFreshCount < 2) {
+    logger.warn("token_skipped", {
+      mint: mintAddress,
+      symbol: candidate.symbol,
+      reason: "smart_money_primary_gate_failed",
+      hot_entry_count: smartMoney.hotEntryCount,
+      fresh_entry_count: smartMoney.freshEntryCount,
+      best_window: smartMoney.bestEntryWindow,
+    });
+    return null;
+  }
+
+  // ── Step 2: Fetch enrichment data ────────────────────────────────────────
 
   let info: TokenInfo;
   try {
@@ -82,36 +102,35 @@ export async function enrichAndScore(
     return null;
   }
 
-  // ── Compute signals ───────────────────────────────────────────────────────
+  // ── Step 3: Compute signals ───────────────────────────────────────────────
 
   const dip = scoreDipRecovery(candles, info);
-
   const momentum = scoreMomentum(candles, info.price);
 
-  // Smart money signal dihitung dari trade yang sudah dikumpulkan di scan loop —
-  // tidak ada API call tambahan di sini.
-  const smartMoney = scoreSmartMoney(candidate.trades);
-
-  // ── Composite score ───────────────────────────────────────────────────────
+  // ── Step 4: Composite score ───────────────────────────────────────────────
 
   const composite =
     dip.score * config.weightDip +
     momentum.score * config.weightMomentum +
     smartMoney.score * config.weightSmartMoney;
 
-  // ── FOMO Gate ──────────────────────────────────────────────────────────────
-  // Smart money harus tetap jadi filter utama. Kalau momentum sangat tinggi
-  // (sering = harga sudah pump tajam) TAPI smart money rendah (tidak ada
-  // followed wallet yang masuk / entry-nya stale), ini pola klasik "harga naik
-  // karena hype/FOMO retail", bukan karena smart money masuk lebih dulu —
-  // composite diturunkan langsung supaya tidak lolos threshold buy.
-  const SMART_MONEY_WEAK_THRESHOLD = 30;
-  const MOMENTUM_HIGH_THRESHOLD    = 70;
+  // ── Step 5: FOMO Gate (lebih agresif dari sebelumnya) ────────────────────
+  // Momentum tinggi tanpa smart money fresh = hype/FOMO retail, bukan alpha.
+  // Threshold lebih sensitif: momentum >= 55 (dari 70) dan SM weak >= 40 (dari 30).
+  const FOMO_MOMENTUM_THRESHOLD   = 55;
+  const FOMO_SM_WEAK_THRESHOLD    = 40;
   const fomoGateTriggered =
-    momentum.score >= MOMENTUM_HIGH_THRESHOLD &&
-    smartMoney.score < SMART_MONEY_WEAK_THRESHOLD;
+    momentum.score >= FOMO_MOMENTUM_THRESHOLD &&
+    smartMoney.score < FOMO_SM_WEAK_THRESHOLD;
 
-  const compositeAfterGate = fomoGateTriggered ? composite * 0.5 : composite;
+  // Potongan lebih agresif: ×0.35 (dari ×0.5) — hampir pasti tidak lolos threshold
+  const compositeAfterFomoGate = fomoGateTriggered ? composite * 0.35 : composite;
+
+  // ── Step 6: Smart Money Score Hard Gate ──────────────────────────────────
+  // Pastikan smart money confirmation minimal terpenuhi terlepas composite-nya.
+  const SM_SCORE_MIN = 65;
+  const smartMoneyGateFailed = smartMoney.score < SM_SCORE_MIN;
+  const compositeAfterGate = smartMoneyGateFailed ? 0 : compositeAfterFomoGate;
 
   const scores: AllSignalScores = { composite: compositeAfterGate, dip, momentum, smartMoney };
 
@@ -122,7 +141,7 @@ export async function enrichAndScore(
     dipScore: dip.score,
     momentumScore: momentum.score,
     smartMoneyScore: smartMoney.score,
-    compositeScore: composite,
+    compositeScore: compositeAfterGate,
     dipDetails: {
       athPrice: dip.athPrice,
       dipFromAthPct: dip.dipFromAthPct,
@@ -158,30 +177,39 @@ export async function enrichAndScore(
     mint: mintAddress,
     symbol: candidate.symbol,
     composite: compositeAfterGate.toFixed(1),
+    composite_raw: composite.toFixed(1),
     dip: dip.score.toFixed(1),
     momentum: momentum.score.toFixed(1),
     smart_money: smartMoney.score.toFixed(1),
     threshold: config.minScoreToBuy,
     fomo_gate_triggered: fomoGateTriggered,
+    smart_money_gate_failed: smartMoneyGateFailed,
     is_late_entry: momentum.isLateEntry,
+    price_momentum_5m: momentum.priceMomentum5m.toFixed(1),
   });
 
   // ── Gate: below threshold → skip ─────────────────────────────────────────
 
   if (compositeAfterGate < config.minScoreToBuy) {
+    const reason = smartMoneyGateFailed
+      ? "smart_money_score_below_minimum"
+      : fomoGateTriggered
+        ? "fomo_gate_high_momentum_low_smart_money"
+        : "below_score_threshold";
+
     logger.warn("token_skipped", {
       mint: mintAddress,
       symbol: candidate.symbol,
-      reason: fomoGateTriggered
-        ? "fomo_gate_high_momentum_low_smart_money"
-        : "below_score_threshold",
+      reason,
       composite: compositeAfterGate.toFixed(1),
+      smart_money_score: smartMoney.score.toFixed(1),
     });
     return null;
   }
 
   return { candidate, info, candles, scores };
 }
+
 
 export function buildEntryPrompt({
   candidate,
