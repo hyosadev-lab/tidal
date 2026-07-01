@@ -41,6 +41,7 @@ export interface Config {
   trailingDrawdownPct: number | null;
   stopLossPct: number | null;
   maxHoldDurationMinutes: number;
+  aiEvaluation: boolean;
 
   // Token Filters — Server-side
   minLiquidityUsd: number | null;
@@ -185,6 +186,7 @@ export function getConfig(): Config {
     trailingDrawdownPct,
     stopLossPct: optionalFloat('STOP_LOSS_PCT'),
     maxHoldDurationMinutes: requireInt('MAX_HOLD_DURATION_MINUTES'),
+    aiEvaluation: parseBool('AI_EVALUATION', true),
 
     // Token Filters
     minLiquidityUsd: optionalFloat('MIN_LIQUIDITY_USD'),

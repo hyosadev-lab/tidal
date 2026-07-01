@@ -30,6 +30,8 @@ function needsAiEvaluation(position: Position): boolean {
   // DRY_RUN positions have no condition orders
   // if (config.dryRun) return true;
 
+  if (config.aiEvaluation) return true;
+
   // Both sides covered by condition orders
   if (hasTrailing && hasSl) return false;
 
