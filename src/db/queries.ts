@@ -68,26 +68,30 @@ export function shouldSkipToken(mintAddress: string): boolean {
 export function insertSignalScores(params: {
   mintAddress: string;
   dipScore: number;
-  momentumScore: number;
+  priceActionScore: number;
+  volumeSurgeScore: number;
   smartMoneyScore: number;
   compositeScore: number;
   dipDetails: object;
-  momentumDetails: object;
+  priceActionDetails: object;
+  volumeSurgeDetails: object;
   smartMoneyDetails: object;
 }): void {
   getDb().prepare(`
     INSERT INTO signal_scores (
-      mint_address, dip_score, momentum_score, smart_money_score,
-      composite_score, dip_details, momentum_details, smart_money_details
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      mint_address, dip_score, price_action_score, volume_surge_score, smart_money_score,
+      composite_score, dip_details, price_action_details, volume_surge_details, smart_money_details
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.mintAddress,
     params.dipScore,
-    params.momentumScore,
+    params.priceActionScore,
+    params.volumeSurgeScore,
     params.smartMoneyScore,
     params.compositeScore,
     JSON.stringify(params.dipDetails),
-    JSON.stringify(params.momentumDetails),
+    JSON.stringify(params.priceActionDetails),
+    JSON.stringify(params.volumeSurgeDetails),
     JSON.stringify(params.smartMoneyDetails)
   );
 }

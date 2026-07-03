@@ -25,11 +25,13 @@ function runMigrations(db: Database.Database): void {
       mint_address          TEXT NOT NULL,
       evaluated_at          INTEGER DEFAULT (unixepoch()),
       dip_score             REAL,
-      momentum_score        REAL,
+      price_action_score    REAL,
+      volume_surge_score    REAL,
       smart_money_score     REAL,
       composite_score       REAL,
       dip_details           TEXT,
-      momentum_details      TEXT,
+      price_action_details  TEXT,
+      volume_surge_details  TEXT,
       smart_money_details   TEXT
     );
 
@@ -92,4 +94,44 @@ function runMigrations(db: Database.Database): void {
       avg_pnl_per_trade  REAL DEFAULT 0
     );
   `);
+
+  migrateSignalScoresColumns(db);
+}
+
+/**
+ * Migrasi signal_scores dari skema lama (momentum_score / momentum_details)
+ * ke skema baru (price_action_score + volume_surge_score / ..._details).
+ *
+ * CREATE TABLE IF NOT EXISTS tidak menyentuh tabel yang sudah ada, jadi DB
+ * lama (dibuat sebelum migrasi ini) masih punya kolom momentum_score/details
+ * dan BELUM punya price_action_score/volume_surge_score. Migrasi ini
+ * menambahkan kolom baru yang hilang secara idempotent — data historis di
+ * momentum_score/momentum_details TIDAK di-backfill (tidak ada cara valid
+ * memecah nilai momentum lama jadi price_action vs volume_surge secara
+ * retroaktif), kolom lama dibiarkan apa adanya untuk referensi historis.
+ */
+function migrateSignalScoresColumns(db: Database.Database): void {
+  const columns = db.prepare(`PRAGMA table_info(signal_scores)`).all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((c) => c.name));
+
+  if (!columnNames.has('price_action_score')) {
+    db.exec(`ALTER TABLE signal_scores ADD COLUMN price_action_score REAL`);
+    logger.info('db_migration', { table: 'signal_scores', added_column: 'price_action_score' });
+  }
+  if (!columnNames.has('volume_surge_score')) {
+    db.exec(`ALTER TABLE signal_scores ADD COLUMN volume_surge_score REAL`);
+    logger.info('db_migration', { table: 'signal_scores', added_column: 'volume_surge_score' });
+  }
+  if (!columnNames.has('price_action_details')) {
+    db.exec(`ALTER TABLE signal_scores ADD COLUMN price_action_details TEXT`);
+    logger.info('db_migration', { table: 'signal_scores', added_column: 'price_action_details' });
+  }
+  if (!columnNames.has('volume_surge_details')) {
+    db.exec(`ALTER TABLE signal_scores ADD COLUMN volume_surge_details TEXT`);
+    logger.info('db_migration', { table: 'signal_scores', added_column: 'volume_surge_details' });
+  }
+  // momentum_score / momentum_details kolom lama SENGAJA tidak dihapus —
+  // SQLite DROP COLUMN aman di versi baru, tapi menghapus data historis
+  // yang mungkin masih ingin diaudit. Kolom ini simpel jadi NULL untuk
+  // baris baru karena insertSignalScores() tidak lagi menulis ke situ.
 }

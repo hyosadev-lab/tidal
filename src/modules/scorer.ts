@@ -10,19 +10,27 @@ import { insertSignalScores } from "../db/queries.ts";
 import {
   scoreDipRecovery,
   type DipRecoverySignal,
-} from "../strategies/dip-recovery.ts";
-import { scoreMomentum, type MomentumSignal } from "../strategies/momentum.ts";
+} from "../signals/dip-recovery.ts";
+import {
+  scorePriceAction,
+  type PriceActionSignal,
+} from "../signals/price-action.ts";
+import {
+  scoreVolumeSurge,
+  type VolumeSurgeSignal,
+} from "../signals/volume-surge.ts";
 import {
   scoreSmartMoney,
   type SmartMoneySignal,
-} from "../strategies/smart-money.ts";
+} from "../signals/smart-money.ts";
 import { unixMillis } from "../utils/math.ts";
 import { sleep } from "../utils/retry.ts";
 
 export interface AllSignalScores {
   composite: number;
   dip: DipRecoverySignal;
-  momentum: MomentumSignal;
+  priceAction: PriceActionSignal;
+  volumeSurge: VolumeSurgeSignal;
   smartMoney: SmartMoneySignal;
 }
 
@@ -46,7 +54,7 @@ export async function enrichAndScore(
   // kita tidak buang 2 API call untuk token yang pasti ditolak.
   //
   // Syarat minimum: minimal 2 distinct followed wallet dengan hot (<5m) ATAU
-  // fresh (<25m) entry. Valid-only (25-45m) tidak cukup — terlalu stale.
+  // fresh (<20m) entry. Valid-only (20-40m) tidak cukup — terlalu stale.
   const smartMoney = scoreSmartMoney(candidate.trades);
   const hotFreshCount = smartMoney.hotEntryCount + smartMoney.freshEntryCount;
 
@@ -79,7 +87,7 @@ export async function enrichAndScore(
 
   let candles: KlineCandle[];
   try {
-    const candleCount = 21; // fixed window — cukup untuk momentum (8) & dip-recovery (6) komponen non-ATH
+    const candleCount = 21; // fixed window — cukup untuk price-action (8) & dip-recovery (6) komponen non-ATH
     const candleToTime =
       candleCount * RESOLUTION_MINUTES[config.klineResolution] * 60 * 1000;
 
@@ -103,61 +111,93 @@ export async function enrichAndScore(
   }
 
   // ── Step 3: Compute signals ───────────────────────────────────────────────
+  // Urutan penting: priceAction dihitung dulu karena volumeSurge butuh
+  // priceChange5m-nya sebagai parameter (lihat catatan di signals/volume-surge.ts)
+  // supaya tidak ada dua definisi "price change 5m" yang bisa saling kontradiksi.
 
   const dip = scoreDipRecovery(candles, info);
-  const momentum = scoreMomentum(candles, info.price);
+  const priceAction = scorePriceAction(candles, info.price);
+  const volumeSurge = scoreVolumeSurge(candles, info.price, priceAction.priceChange5m);
 
   // ── Step 4: Composite score ───────────────────────────────────────────────
 
   const composite =
     dip.score * config.weightDip +
-    momentum.score * config.weightMomentum +
+    priceAction.score * config.weightPriceAction +
+    volumeSurge.score * config.weightVolumeSurge +
     smartMoney.score * config.weightSmartMoney;
 
-  // ── Step 5: FOMO Gate (lebih agresif dari sebelumnya) ────────────────────
-  // Momentum tinggi tanpa smart money fresh = hype/FOMO retail, bukan alpha.
-  // Threshold lebih sensitif: momentum >= 55 (dari 70) dan SM weak >= 40 (dari 30).
-  const FOMO_MOMENTUM_THRESHOLD   = 55;
-  const FOMO_SM_WEAK_THRESHOLD    = 40;
+  // ── Step 5: FOMO Gate ──────────────────────────────────────────────────────
+  // Sinyal FOMO sekarang datang dari DUA sumber independen:
+  //  - priceAction.isLateEntry (price sudah pump ekstrem dalam 5m)
+  //  - volumeSurge.isSuspectedFomo (surge volume tinggi TAPI muncul setelah pump)
+  // Kalau salah satu true DAN smart money masih lemah, ini pola hype/FOMO
+  // retail — bukan alpha genuine dari smart money masuk lebih dulu.
+  const FOMO_SM_WEAK_THRESHOLD = 40;
+  const fomoSignalTriggered = priceAction.isLateEntry || volumeSurge.isSuspectedFomo;
   const fomoGateTriggered =
-    momentum.score >= FOMO_MOMENTUM_THRESHOLD &&
-    smartMoney.score < FOMO_SM_WEAK_THRESHOLD;
+    fomoSignalTriggered && smartMoney.score < FOMO_SM_WEAK_THRESHOLD;
 
-  // Potongan lebih agresif: ×0.35 (dari ×0.5) — hampir pasti tidak lolos threshold
   const compositeAfterFomoGate = fomoGateTriggered ? composite * 0.35 : composite;
 
   // ── Step 6: Smart Money Score Hard Gate ──────────────────────────────────
-  // Pastikan smart money confirmation minimal terpenuhi terlepas composite-nya.
   const SM_SCORE_MIN = 65;
   const smartMoneyGateFailed = smartMoney.score < SM_SCORE_MIN;
   const compositeAfterGate = smartMoneyGateFailed ? 0 : compositeAfterFomoGate;
 
-  const scores: AllSignalScores = { composite: compositeAfterGate, dip, momentum, smartMoney };
+  const scores: AllSignalScores = {
+    composite: compositeAfterGate,
+    dip,
+    priceAction,
+    volumeSurge,
+    smartMoney,
+  };
 
   // ── Persist scores ────────────────────────────────────────────────────────
 
   insertSignalScores({
     mintAddress,
     dipScore: dip.score,
-    momentumScore: momentum.score,
+    priceActionScore: priceAction.score,
+    volumeSurgeScore: volumeSurge.score,
     smartMoneyScore: smartMoney.score,
     compositeScore: compositeAfterGate,
     dipDetails: {
       athPrice: dip.athPrice,
       dipFromAthPct: dip.dipFromAthPct,
+      isInSweetSpot: dip.isInSweetSpot,
       hasLowerLow: dip.hasLowerLow,
+      isDowntrendSlowing: dip.isDowntrendSlowing,
       buyVolumeRatio5m: dip.buyVolumeRatio5m,
       buyTxRatio5m: dip.buyTxRatio5m,
+      buyerDominance: dip.buyerDominance,
+      hasRejectionWick: dip.hasRejectionWick,
+      recentBouncePct: dip.recentBouncePct,
+      isDeadCatBounce: dip.isDeadCatBounce,
     },
-    momentumDetails: {
-      surgeRatio: momentum.surgRatio,
-      buyDominance: momentum.buyDominance,
-      volumeAcceleration: momentum.volumeAcceleration,
-      priceMomentum5m: momentum.priceMomentum5m,
-      greenCandlePct: momentum.greenCandlePct,
-      swaps5m: momentum.swaps5m,
-      fomoPenalty: momentum.fomoPenalty,
-      isLateEntry: momentum.isLateEntry,
+    priceActionDetails: {
+      priceChange5m: priceAction.priceChange5m,
+      priceChange15m: priceAction.priceChange15m,
+      priceChange1h: priceAction.priceChange1h,
+      greenCandlePct: priceAction.greenCandlePct,
+      hasStrongBullCandle: priceAction.hasStrongBullCandle,
+      hasRejectionWick: priceAction.hasRejectionWick,
+      isLateEntry: priceAction.isLateEntry,
+      fomoPenalty: priceAction.fomoPenalty,
+      momentumLevel: priceAction.momentumLevel,
+      isBullish: priceAction.isBullish,
+      isStable: priceAction.isStable,
+    },
+    volumeSurgeDetails: {
+      surgeRatio: volumeSurge.surgeRatio,
+      buyDominance: volumeSurge.buyDominance,
+      buyTxRatio: volumeSurge.buyTxRatio,
+      swaps5m: volumeSurge.swaps5m,
+      volumeAcceleration: volumeSurge.volumeAcceleration,
+      isExplosive: volumeSurge.isExplosive,
+      isStrong: volumeSurge.isStrong,
+      isHealthy: volumeSurge.isHealthy,
+      isSuspectedFomo: volumeSurge.isSuspectedFomo,
     },
     smartMoneyDetails: {
       distinctWalletCount: smartMoney.distinctWalletCount,
@@ -170,6 +210,7 @@ export async function enrichAndScore(
       bestEntryWindow: smartMoney.bestEntryWindow,
       fullOpenCount: smartMoney.fullOpenCount,
       partialAddCount: smartMoney.partialAddCount,
+      totalSolInvested: smartMoney.totalSolInvested,
     },
   });
 
@@ -179,13 +220,15 @@ export async function enrichAndScore(
     composite: compositeAfterGate.toFixed(1),
     composite_raw: composite.toFixed(1),
     dip: dip.score.toFixed(1),
-    momentum: momentum.score.toFixed(1),
+    price_action: priceAction.score.toFixed(1),
+    volume_surge: volumeSurge.score.toFixed(1),
     smart_money: smartMoney.score.toFixed(1),
     threshold: config.minScoreToBuy,
     fomo_gate_triggered: fomoGateTriggered,
     smart_money_gate_failed: smartMoneyGateFailed,
-    is_late_entry: momentum.isLateEntry,
-    price_momentum_5m: momentum.priceMomentum5m.toFixed(1),
+    is_late_entry: priceAction.isLateEntry,
+    is_suspected_fomo: volumeSurge.isSuspectedFomo,
+    price_change_5m: priceAction.priceChange5m.toFixed(1),
   });
 
   // ── Gate: below threshold → skip ─────────────────────────────────────────
@@ -210,7 +253,6 @@ export async function enrichAndScore(
   return { candidate, info, candles, scores };
 }
 
-
 export function buildEntryPrompt({
   candidate,
   info,
@@ -220,6 +262,9 @@ export function buildEntryPrompt({
 
   const currentPrice = parseFloat(info.price.price);
   const sm = scores.smartMoney;
+  const pa = scores.priceAction;
+  const vs = scores.volumeSurge;
+  const dip = scores.dip;
   const allExited =
     sm.hasFollowedEntry &&
     sm.recentEntryCount === 0 &&
@@ -242,24 +287,38 @@ Developer Status: ${
 
 --- SIGNAL SCORES ---
 Composite: ${scores.composite.toFixed(1)}/100 (threshold: ${config.minScoreToBuy})
-Dip Recovery Score: ${scores.dip.score.toFixed(1)}/100
-  → All-time high price: $${scores.dip.athPrice}
-  → Dip from ATH: ${scores.dip.dipFromAthPct.toFixed(1)}%
-  → Lower low forming: ${scores.dip.hasLowerLow} (false = downtrend slowing)
-  → Buy volume ratio 5m: ${scores.dip.buyVolumeRatio5m.toFixed(2)} (>0.60 = buyers dominant)
-  → Buy tx ratio 5m: ${scores.dip.buyTxRatio5m.toFixed(2)} (>0.60 = more buyers than sellers)
-Momentum Score: ${scores.momentum.score.toFixed(1)}/100
-  → Volume surge ratio: ${scores.momentum.surgRatio.toFixed(2)}x (volume_5m vs avg 5m in 1h; >=4.0x = explosion)
-  → Buy dominance 5m: ${scores.momentum.buyDominance.toFixed(2)} (>0.65 = buyers in control)
-  → Volume acceleration: ${scores.momentum.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
-  → Price change 5m: ${scores.momentum.priceMomentum5m.toFixed(1)}% ${scores.momentum.isLateEntry ? "⚠️ LATE ENTRY WARNING — price already pumped, momentum may have already peaked" : "(healthy range)"}
-  → Green candles: ${scores.momentum.greenCandlePct.toFixed(0)}% of recent 8 candles
-  → Swaps 5m: ${scores.momentum.swaps5m} (>= 100 = very active)
-  ${scores.momentum.fomoPenalty > 0 ? `→ FOMO penalty applied: -${scores.momentum.fomoPenalty.toFixed(0)} pts (price moved >${50}% in 5m — historically correlated with -30% to -55% losses on this agent)` : ""}
+
+Dip Recovery Score: ${dip.score.toFixed(1)}/100
+  → All-time high price: $${dip.athPrice}
+  → Dip from ATH: ${dip.dipFromAthPct.toFixed(1)}% ${dip.isInSweetSpot ? "✅ in sweet spot (55-75%)" : ""}
+  → Downtrend slowing: ${dip.isDowntrendSlowing} (false = still making lower lows)
+  → Buyer dominance: ${dip.buyerDominance.toFixed(2)} (>0.65 = strong)
+  → Rejection wick at low: ${dip.hasRejectionWick}
+  → Recent bounce from low: ${dip.recentBouncePct.toFixed(1)}%
+  → Dead cat bounce risk: ${dip.isDeadCatBounce ? "⚠️ YES" : "No"}
+
+Price Action Score: ${pa.score.toFixed(1)}/100
+  → Price change 5m: ${pa.priceChange5m.toFixed(1)}% ${pa.isLateEntry ? "⚠️ LATE ENTRY — price already pumped" : "(healthy range)"}
+  → Price change 15m: ${pa.priceChange15m.toFixed(1)}%
+  → Price change 1h: ${pa.priceChange1h.toFixed(1)}%
+  → Momentum level: ${pa.momentumLevel}
+  → Green candles: ${pa.greenCandlePct.toFixed(0)}% of recent 8
+  → Strong bull candle: ${pa.hasStrongBullCandle}
+  ${pa.fomoPenalty > 0 ? `→ FOMO penalty applied: -${pa.fomoPenalty.toFixed(0)} pts (price moved >50% in 5m — historically correlated with -30% to -55% losses on this agent)` : ""}
+
+Volume Surge Score: ${vs.score.toFixed(1)}/100
+  → Surge ratio: ${vs.surgeRatio.toFixed(2)}x (volume_5m vs avg 5m in 1h)
+  → Buy dominance: ${vs.buyDominance.toFixed(2)} (>0.65 = buyers in control)
+  → Volume acceleration: ${vs.volumeAcceleration.toFixed(2)}x (last 3 vs prior 3 candles)
+  → Swaps 5m: ${vs.swaps5m}
+  → Classification: ${vs.isExplosive ? "🔥 EXPLOSIVE" : vs.isStrong ? "✅ STRONG" : vs.isHealthy ? "🟢 HEALTHY" : "⚪ WEAK"}
+  ${vs.isSuspectedFomo ? "→ ⚠️ SUSPECTED FOMO: high surge but price already pumped — this volume may be retail chasing, not smart entry" : ""}
+
 Smart Money Score: ${sm.score.toFixed(1)}/100
   → Distinct followed wallets bought this token: ${sm.distinctWalletCount}
-  → Recent entries (within 45m): ${sm.recentEntryCount} (best window: ${sm.bestEntryWindow})${allExited ? " ⚠️ entries are stale — no recent activity" : ""}
-  → Entry window breakdown: hot <5m=(${sm.hotEntryCount}) fresh 5–25m=(${sm.freshEntryCount}) valid 25–45m=(${sm.validEntryCount})
+  → Total SOL invested by followed wallets: ${sm.totalSolInvested.toFixed(2)} SOL
+  → Recent entries (within 40m): ${sm.recentEntryCount} (best window: ${sm.bestEntryWindow})${allExited ? " ⚠️ entries are stale — no recent activity" : ""}
+  → Entry window breakdown: hot <5m=(${sm.hotEntryCount}) fresh 5–20m=(${sm.freshEntryCount}) valid 20–40m=(${sm.validEntryCount})
   → Conviction: full position opens=(${sm.fullOpenCount}) partial adds=(${sm.partialAddCount})
   → Cluster signal: ${
     sm.recentEntryCount >= 3
@@ -273,29 +332,34 @@ Smart Money Score: ${sm.score.toFixed(1)}/100
             : "❌ NO FOLLOWED WALLET ENTRY"
   }
 
---- 5M PRICE ACTION ---
-${(() => {
-  const p5m = parseFloat(info.price.price_5m);
-  const pct5m =
-    p5m > 0 ? (((currentPrice - p5m) / p5m) * 100).toFixed(1) : "N/A";
-  return `5m price change: ${pct5m}%`;
-})()}
+--- 5M PRICE ACTION (raw) ---
 5m volume: $${info.price.volume_5m}
 5m buy volume: $${info.price.buy_volume_5m}
 5m sell volume: $${info.price.sell_volume_5m}
 5m swaps: ${info.price.swaps_5m}
 
---- 1H PRICE ACTION ---
-${(() => {
-  const p1h = parseFloat(info.price.price_1h);
-  const pct1h =
-    p1h > 0 ? (((currentPrice - p1h) / p1h) * 100).toFixed(1) : "N/A";
-  return `1h price change: ${pct1h}%`;
-})()}
+--- 1H PRICE ACTION (raw) ---
 1h volume: $${info.price.volume_1h}
 1h buy volume: $${info.price.buy_volume_1h}
 1h sell volume: $${info.price.sell_volume_1h}
 1h swaps: ${info.price.swaps_1h}
+
+--- ENTRY TIMING CHECK (READ CAREFULLY) ---
+This agent has a documented history of buying at local tops — entering after a
+token already pumped, then losing 30–55% as price reverted. Price moves above
++50% within 5 minutes are the single strongest predictor of this failure mode.
+
+Before answering BUY, explicitly check:
+1. Has the price already moved sharply in the last 5 minutes? If yes, the easy
+   gains are likely already gone.
+2. Is momentum being driven by smart money (Smart Money Score) or by generic
+   volume/hype (Volume Surge isSuspectedFomo)? High volume surge + low/no
+   smart money entries is a FOMO pattern, not an alpha signal.
+3. Would you rather enter when momentum is just starting than when it's
+   already large?
+
+If price change 5m is already large and smart money confirmation is weak,
+default to SKIP or WAIT even if the composite score crossed the threshold.
 
 Buy ${config.tradeSizeSol} SOL of this token? Respond in JSON only.
   `.trim();
