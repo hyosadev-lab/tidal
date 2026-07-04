@@ -2,8 +2,6 @@ import { type FollowWalletTrade } from '../services/gmgn-client.ts';
 import { minutesSince } from '../utils/math.ts';
 
 // ── Entry window tiers (minutes since trade timestamp) ────────────────────
-// Catatan: interface baru mendefinisikan fresh sebagai 5-20m dan valid 20-40m
-// (bukan 5-25m/25-45m seperti versi lama di strategies/) — window dipersempit.
 const ENTRY_WINDOW_HOT_MIN   = 5;  // < 5m  → hot signal
 const ENTRY_WINDOW_FRESH_MIN = 20; // < 20m → fresh signal
 const ENTRY_WINDOW_VALID_MIN = 40; // < 40m → still valid, weaker
@@ -16,24 +14,29 @@ export type EntryWindow = 'hot' | 'fresh' | 'valid' | 'stale' | 'none';
 export interface SmartMoneySignal {
   score: number;                    // 0-100
 
-  // Core presence
+  // Core presence — HANYA wallet yang tervalidasi masih hold (lihat catatan)
   hasFollowedEntry: boolean;
   recentEntry: boolean;
   recentEntryCount: number;
 
-  // Timing
-  hotEntryCount: number;            // distinct wallets, trade < 5m ago
-  freshEntryCount: number;          // distinct wallets, trade 5–20m ago
-  validEntryCount: number;          // distinct wallets, trade 20–40m ago
-  bestEntryWindow: EntryWindow;     // tightest window yang ada entry-nya
+  // Timing — HANYA dihitung dari wallet yang masih hold
+  hotEntryCount: number;            // distinct wallets holding, trade < 5m ago
+  freshEntryCount: number;          // distinct wallets holding, trade 5–20m ago
+  validEntryCount: number;          // distinct wallets holding, trade 20–40m ago
+  bestEntryWindow: EntryWindow;
 
-  // Conviction
+  // Conviction — HANYA dari wallet yang masih hold
   fullOpenCount: number;
   partialAddCount: number;
 
-  // Additional quality
+  // Exit tracking (BARU) — wallet yang sudah tidak hold, terdeteksi dari sell
+  exitedWalletCount: number;        // latest action = full close (side=sell, is_open_or_close=1)
+  reducedWalletCount: number;       // latest action = partial reduce (side=sell, is_open_or_close=0)
+  hasRecentSmartMoneyExit: boolean;
+
+  // Additional quality — HANYA dari wallet yang masih hold
   totalSolInvested: number;
-  distinctWalletCount: number;      // total distinct followed wallets yang trade token ini
+  distinctWalletCount: number;      // distinct wallet MASIH HOLD (bukan total historis)
 }
 
 function zeroSignal(overrides: Partial<SmartMoneySignal> = {}): SmartMoneySignal {
@@ -48,6 +51,9 @@ function zeroSignal(overrides: Partial<SmartMoneySignal> = {}): SmartMoneySignal
     bestEntryWindow: 'none',
     fullOpenCount: 0,
     partialAddCount: 0,
+    exitedWalletCount: 0,
+    reducedWalletCount: 0,
+    hasRecentSmartMoneyExit: false,
     totalSolInvested: 0,
     distinctWalletCount: 0,
     ...overrides,
@@ -55,22 +61,34 @@ function zeroSignal(overrides: Partial<SmartMoneySignal> = {}): SmartMoneySignal
 }
 
 /**
- * @param trades - trade buy dari followed wallets untuk satu token tertentu
- *                 (base_address sudah difilter ke satu mint sebelum dipanggil,
- *                 hasil grouping di scanner.ts). Diasumsikan side sudah 'buy'
- *                 semua — caller (scanner.ts) yang filter side.
+ * @param trades - SEMUA trade (buy DAN sell) dari followed wallets untuk satu
+ *                 token tertentu (base_address sudah difilter ke satu mint,
+ *                 hasil grouping di scanner.ts, sudah difilter freshness).
  *
- * CATATAN totalSolInvested: [Menebak] dihitung dari FollowWalletTrade.quote_amount,
- * dengan asumsi quote token pada trade meme-coin di Solana hampir selalu SOL.
- * Ini TIDAK diverifikasi terhadap quote_address secara eksplisit — kalau ada
- * followed wallet yang trade lewat pool dengan quote non-SOL (jarang tapi
- * mungkin), angka ini akan salah. Kalau perlu presisi, cross-check
- * quote_address terhadap SOL mint address sebelum sum.
+ * Logika inti — validasi hold status per wallet SEBELUM dihitung ke sinyal apapun:
+ *   1. Group by wallet (maker), ambil trade PALING BARU (buy atau sell, mana
+ *      saja yang timestamp-nya lebih baru) — bukan buy terbaru saja seperti
+ *      versi sebelumnya.
+ *   2. Kalau aksi terakhir wallet itu 'buy' → dianggap masih hold, dihitung
+ *      seperti biasa (entry window tier, full open/partial add, SOL invested).
+ *   3. Kalau aksi terakhir 'sell' dengan is_open_or_close=1 → wallet itu
+ *      SUDAH EXIT PENUH. Tidak dihitung ke recentEntryCount/hotEntryCount/dst
+ *      sama sekali — malah dicatat sebagai exitedWalletCount, yang jadi
+ *      penalti ke score.
+ *   4. Kalau aksi terakhir 'sell' dengan is_open_or_close=0 → partial reduce,
+ *      masih hold sisa posisi tapi aksi terakhirnya mengurangi bukan menambah.
+ *      Tidak dihitung sebagai sinyal bullish (recentEntryCount dst), tapi juga
+ *      bukan full exit — dicatat terpisah di reducedWalletCount, tidak masuk
+ *      penalti sebesar full exit.
+ *
+ * Ini mencegah kasus: wallet buy di T-5m, lalu sell penuh di T-2m — versi lama
+ * akan salah membaca ini sebagai "hot fresh entry", padahal wallet itu sudah
+ * tidak punya posisi sama sekali di token ini.
  */
 export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
   if (trades.length === 0) return zeroSignal();
 
-  // ── Group by distinct followed wallet, ambil trade buy terbaru per wallet ──
+  // ── Group by wallet, ambil trade PALING BARU (buy atau sell) ────────────
   const latestByWallet = new Map<string, FollowWalletTrade>();
   for (const t of trades) {
     const existing = latestByWallet.get(t.maker);
@@ -79,18 +97,30 @@ export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
     }
   }
 
-  const distinctWalletCount = latestByWallet.size;
-  const hasFollowedEntry = distinctWalletCount > 0;
-
-  // ── Entry window + conviction analysis ─────────────────────────────────
+  // ── Klasifikasi wallet berdasarkan aksi terakhir ─────────────────────────
   let hotEntryCount = 0;
   let freshEntryCount = 0;
   let validEntryCount = 0;
   let fullOpenCount = 0;
   let partialAddCount = 0;
   let totalSolInvested = 0;
+  let holdingWalletCount = 0;
+
+  let exitedWalletCount = 0;
+  let reducedWalletCount = 0;
 
   for (const t of latestByWallet.values()) {
+    if (t.side === 'sell') {
+      if (t.is_open_or_close === 1) {
+        exitedWalletCount++; // full close — sudah tidak hold sama sekali
+      } else {
+        reducedWalletCount++; // partial reduce — masih hold sisa, tapi aksi terakhir mengurangi
+      }
+      continue; // wallet ini TIDAK dihitung ke sinyal entry apapun di bawah
+    }
+
+    // t.side === 'buy' → aksi terakhir adalah beli, dianggap masih hold
+    holdingWalletCount++;
     const ageMin = minutesSince(t.timestamp);
 
     if (ageMin < ENTRY_WINDOW_HOT_MIN) {
@@ -111,8 +141,11 @@ export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
     if (!isNaN(solAmount)) totalSolInvested += solAmount;
   }
 
+  const distinctWalletCount = holdingWalletCount;
+  const hasFollowedEntry = distinctWalletCount > 0;
   const recentEntryCount = hotEntryCount + freshEntryCount + validEntryCount;
   const recentEntry = recentEntryCount > 0;
+  const hasRecentSmartMoneyExit = exitedWalletCount > 0;
 
   const bestEntryWindow: EntryWindow =
     hotEntryCount > 0
@@ -130,7 +163,8 @@ export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
   // Cluster strength (recent distinct wallet entries) → 40 pts
   // Entry window tightness                            → 20 pts
   // Conviction — full position open ratio              → 25 pts
-  // Capital commitment — totalSolInvested               → 15 pts (baru)
+  // Capital commitment — totalSolInvested               → 15 pts
+  // Exit penalty — dikurangi dari total, bukan komponen positif
 
   let score = 0;
 
@@ -163,15 +197,30 @@ export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
     score += 4;
   }
 
-  // 4. Capital commitment — totalSolInvested (15 pts, baru)
-  // [Menebak] threshold arbitrer — sesuaikan setelah lihat distribusi riil
-  // totalSolInvested dari followed wallets di data log.
+  // 4. Capital commitment — totalSolInvested (15 pts)
   if (totalSolInvested >= 10)      score += 15;
   else if (totalSolInvested >= 5)  score += 10;
   else if (totalSolInvested >= 2)  score += 5;
 
+  // 5. Exit penalty — followed wallet yang exit penuh di token yang sama
+  // adalah sinyal negatif kuat, terlepas dari berapa banyak yang masih hold.
+  // [Menebak] besaran penalti arbitrer — sesuaikan setelah lihat data riil
+  // seberapa sering pola "buy lalu exit cepat" muncul di followed wallets.
+  if (exitedWalletCount >= CLUSTER_HIGH_CONVICTION) {
+    score -= 40; // 3+ wallet full-exit — sinyal distribusi kuat, hampir batalkan skor manapun
+  } else if (exitedWalletCount >= CLUSTER_GOOD_SIGNAL) {
+    score -= 25;
+  } else if (exitedWalletCount === 1) {
+    score -= 12;
+  }
+  // reducedWalletCount tidak dipenalti sekeras exitedWalletCount — partial
+  // reduce bisa berarti profit-taking normal, bukan kehilangan keyakinan total
+  if (reducedWalletCount >= CLUSTER_GOOD_SIGNAL) {
+    score -= 6;
+  }
+
   return {
-    score: Math.min(score, 100),
+    score: Math.max(0, Math.min(score, 100)),
     hasFollowedEntry,
     recentEntry,
     recentEntryCount,
@@ -181,6 +230,9 @@ export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
     bestEntryWindow,
     fullOpenCount,
     partialAddCount,
+    exitedWalletCount,
+    reducedWalletCount,
+    hasRecentSmartMoneyExit,
     totalSolInvested,
     distinctWalletCount,
   };

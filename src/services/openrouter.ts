@@ -72,15 +72,40 @@ function parseJson<T>(raw: string, fallback: T): T {
 
 // ─── Entry Evaluation ─────────────────────────────────────────────────────────
 
-const ENTRY_SYSTEM_PROMPT = `You are a professional Solana memecoin trader specializing in post-graduation tokens.
-You will receive structured market data and signal scores for a token candidate.
+// const ENTRY_SYSTEM_PROMPT = `You are a professional Solana memecoin trader. Tokens are surfaced when wallets you follow (proven, hand-picked traders) buy them — not by graduation events. Your job is to judge whether THIS specific entry is still good, given what already happened before you see it.
+// You will receive a single JSON object: token info, security, four signal scores (dipRecovery, priceAction, volumeSurge, smartMoney), raw 5m/1h stats, and entryTimingGuidance.
+// Decide: BUY or SKIP.
+
+// There are no hard-coded gates before you — every candidate reaches you regardless of score. You are the only filter. Do not assume a high composite score already means the trade is safe.
+
+// Rules:
+// - Output ONLY valid JSON — no preamble, no markdown, nothing outside the JSON.
+// - Read entryTimingGuidance carefully — it documents this agent's actual historical failure pattern (buying local tops, -30% to -55% losses). Weigh it as hard as the numeric scores, not as a footnote.
+// - signals.smartMoney counts ONLY wallets whose most recent action was a buy (still presumed holding). If signals.smartMoney.exitedWalletCount > 0, that many followed wallets already fully sold this exact token — treat as a strong SKIP signal even if other wallets are still buying.
+// - signals.priceAction.isLateEntry or signals.volumeSurge.isSuspectedFomo being true, combined with a weak smartMoney score, means the move is likely retail/hype-driven, not smart-money-led — default to SKIP.
+// - A high composite score does not override security concerns: high top10HolderRatePct, or security.developerStillHolds === true, can each independently justify SKIP.
+// - confidence must reflect genuine uncertainty. If the picture is mixed or key fields are missing/zero, lower confidence rather than guessing BUY.
+
+// Output format:
+// {
+//   "action": "BUY" | "SKIP",
+//   "confidence": 0.0–1.0,
+//   "reasoning": "one paragraph max",
+//   "red_flags": ["array of concerns, empty if none"]
+// }`;
+
+const ENTRY_SYSTEM_PROMPT = `You are a professional Solana memecoin trader. Tokens are surfaced when wallets you follow (proven, hand-picked traders) buy them — not by graduation events. Your job is to judge whether THIS specific entry is still good, given what already happened before you see it.
+You will receive a single JSON object: token info, security, four signal scores (dipRecovery, priceAction, volumeSurge, smartMoney), and raw 5m/1h stats.
 Decide: BUY or SKIP.
+
+There are no hard-coded gates before you — every candidate reaches you regardless of score. You are the only filter. Do not assume a high composite score already means the trade is safe.
 
 Rules:
 - Output ONLY valid JSON — no preamble, no markdown, nothing outside the JSON.
-- A high composite score with red flags (high holder concentration, dev holding, wash trading) is still SKIP.
-- If smart money wallets exist but activeSmartWalletCount is 0, all smart money has exited → strong SKIP signal.
-- confidence < 0.6 → always SKIP.
+- signals.smartMoney counts ONLY wallets whose most recent action was a buy (still presumed holding). If signals.smartMoney.exitedWalletCount > 0, that many followed wallets already fully sold this exact token — treat as a strong SKIP signal even if other wallets are still buying.
+- signals.priceAction.isLateEntry or signals.volumeSurge.isSuspectedFomo being true, combined with a weak smartMoney score, means the move is likely retail/hype-driven, not smart-money-led — default to SKIP.
+- A high composite score does not override security concerns: high top10HolderRatePct, or security.developerStillHolds === true, can each independently justify SKIP.
+- confidence must reflect genuine uncertainty. If the picture is mixed or key fields are missing/zero, lower confidence rather than guessing BUY.
 
 Output format:
 {
