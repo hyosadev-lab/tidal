@@ -21,6 +21,7 @@ export interface Position {
   strategy_order_id: string | null;
   entry_holder_count: number | null;
   entry_smart_wallet_count: number | null;
+  entry_signal_score_id: number | null;
   peak_price_usd: number | null;
   status: string;
 }
@@ -76,8 +77,8 @@ export function insertSignalScores(params: {
   priceActionDetails: object;
   volumeSurgeDetails: object;
   smartMoneyDetails: object;
-}): void {
-  getDb().prepare(`
+}): number {
+  const result = getDb().prepare(`
     INSERT INTO signal_scores (
       mint_address, dip_score, price_action_score, volume_surge_score, smart_money_score,
       composite_score, dip_details, price_action_details, volume_surge_details, smart_money_details
@@ -94,6 +95,28 @@ export function insertSignalScores(params: {
     JSON.stringify(params.volumeSurgeDetails),
     JSON.stringify(params.smartMoneyDetails)
   );
+  return Number(result.lastInsertRowid);
+}
+
+export interface SignalScoreRow {
+  id: number;
+  mint_address: string;
+  evaluated_at: number;
+  dip_score: number;
+  price_action_score: number;
+  volume_surge_score: number;
+  smart_money_score: number;
+  composite_score: number;
+  dip_details: string;          // JSON string — caller harus JSON.parse
+  price_action_details: string;
+  volume_surge_details: string;
+  smart_money_details: string;
+}
+
+export function getSignalScoreById(id: number): SignalScoreRow | undefined {
+  return getDb()
+    .prepare('SELECT * FROM signal_scores WHERE id = ?')
+    .get(id) as SignalScoreRow | undefined;
 }
 
 // ─── AI Decisions ────────────────────────────────────────────────────────────
@@ -181,13 +204,14 @@ export function insertPosition(params: {
   strategyOrderId?: string;
   entryHolderCount?: number;
   entrySmartWalletCount?: number;
+  entrySignalScoreId?: number;
 }): void {
   getDb().prepare(`
     INSERT INTO positions (
       mint_address, symbol, entry_price_usd, sol_invested, token_amount,
       strategy_order_id, entry_holder_count, entry_smart_wallet_count,
-      peak_price_usd
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      entry_signal_score_id, peak_price_usd
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.mintAddress,
     params.symbol ?? null,
@@ -197,6 +221,7 @@ export function insertPosition(params: {
     params.strategyOrderId ?? null,
     params.entryHolderCount ?? null,
     params.entrySmartWalletCount ?? null,
+    params.entrySignalScoreId ?? null,
     params.entryPriceUsd  // peak starts at entry price
   );
 }

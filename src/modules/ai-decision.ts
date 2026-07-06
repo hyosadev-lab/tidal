@@ -1,5 +1,5 @@
 import { getConfig } from "../config.ts";
-import { type Position } from "../db/queries.ts";
+import { type Position, getSignalScoreById } from "../db/queries.ts";
 import { type TokenInfo } from "../services/gmgn-client.ts";
 import { type EnrichedToken } from "./scorer.ts";
 import { computePnlPct, minutesSince } from "../utils/math.ts";
@@ -75,134 +75,133 @@ export function buildPositionSnapshot(
 export function buildPositionPrompt(
   position: Position,
   snap: PositionSnapshot,
-): string {
+): UserPromptPayload {
   const config = getConfig();
 
-  const trailingInfo = config.trailingActivatePct
-    ? `Active after +${config.trailingActivatePct}%, trail ${config.trailingDrawdownPct}% from peak`
-    : "NOT SET — you control exit";
-
-  const slInfo = config.stopLossPct
-    ? `-${config.stopLossPct}% from entry`
-    : "NOT SET — you control exit";
-
-  const pnlSign = snap.pnlPct >= 0 ? "+" : "";
-  const pnlUsdSign = snap.pnlUsd >= 0 ? "+" : "";
-
-  // ── Red flag detection ───────────────────────────────────────────────────
-  const redFlags: string[] = [];
-
-  // Volume collapse — volume sangat rendah = tidak ada minat, liquiditas mengering
-  if (snap.volume1h < 5000) {
-    redFlags.push(
-      `⚠️ VOLUME COLLAPSE: 1h volume hanya $${snap.volume1h.toFixed(0)} — pasar sudah kehilangan minat`,
-    );
-  }
-
-  // Sell pressure dominant
-  if (snap.buySellRatio1h < 0.4) {
-    redFlags.push(
-      `⚠️ SELL PRESSURE: buy/sell ratio 1h = ${snap.buySellRatio1h.toFixed(2)} — sellers sangat dominan`,
-    );
-  }
-
-  // Smart money turun dari entry
-  const smDrop =
-    (position.entry_smart_wallet_count ?? 0) - snap.smartWalletCount;
-  if (smDrop >= 2) {
-    redFlags.push(
-      `⚠️ SMART MONEY EXIT: smart wallets turun dari ${position.entry_smart_wallet_count} → ${snap.smartWalletCount} (−${smDrop} wallets keluar)`,
-    );
-  }
-
-  // Holder count turun signifikan — distribusi sedang terjadi
-  const holderDrop = (position.entry_holder_count ?? 0) - snap.holderCount;
   const holderDropPct = position.entry_holder_count
-    ? (holderDrop / position.entry_holder_count) * 100
+    ? ((position.entry_holder_count - snap.holderCount) / position.entry_holder_count) * 100
     : 0;
+  const smDelta = snap.smartWalletCount - (position.entry_smart_wallet_count ?? 0);
+
+  // ── Entry signal snapshot via FK (bisa null untuk posisi lama/pre-migrasi) ──
+  let entrySignals: Record<string, unknown> | null = null;
+  if (position.entry_signal_score_id != null) {
+    const row = getSignalScoreById(position.entry_signal_score_id);
+    if (row) {
+      entrySignals = {
+        compositeScore: row.composite_score,
+        dipScore: row.dip_score,
+        priceActionScore: row.price_action_score,
+        volumeSurgeScore: row.volume_surge_score,
+        smartMoneyScore: row.smart_money_score,
+        smartMoneyDetailsAtEntry: JSON.parse(row.smart_money_details),
+        priceActionDetailsAtEntry: JSON.parse(row.price_action_details),
+      };
+    }
+  }
+
+  // ── Structured flags — data mentah, bukan kalimat jadi. AI yang menyusun
+  // reasoning-nya sendiri dari angka, bukan membaca kesimpulan yang sudah dibakar. ──
+  const flags: Array<Record<string, unknown>> = [];
+
+  if (snap.volume1h < 5000) {
+    flags.push({ type: "volume_collapse", severity: "high", volume1hUsd: snap.volume1h });
+  }
+  if (snap.buySellRatio1h < 0.4) {
+    flags.push({ type: "sell_pressure", severity: "medium", buySellRatio1h: snap.buySellRatio1h });
+  }
+  if (smDelta <= -2) {
+    flags.push({
+      type: "smart_money_exit",
+      severity: "high",
+      smartWalletCountAtEntry: position.entry_smart_wallet_count,
+      smartWalletCountNow: snap.smartWalletCount,
+      delta: smDelta,
+    });
+  }
   if (holderDropPct >= 10) {
-    redFlags.push(
-      `⚠️ HOLDER DISTRIBUTION: holder turun ${holderDropPct.toFixed(0)}% dari entry (${position.entry_holder_count} → ${snap.holderCount})`,
-    );
+    flags.push({
+      type: "holder_distribution",
+      severity: "medium",
+      holderCountAtEntry: position.entry_holder_count,
+      holderCountNow: snap.holderCount,
+      dropPct: holderDropPct,
+    });
   }
-
-  // Dev masih hold — risiko dev dump
   if (snap.devStatus === "creator_hold" && snap.devHoldRate > 0.05) {
-    redFlags.push(
-      `⚠️ DEV STILL HOLDS: dev masih pegang ${(snap.devHoldRate * 100).toFixed(1)}% supply — risiko dump`,
-    );
+    flags.push({ type: "dev_still_holds", severity: "medium", devHoldRatePct: snap.devHoldRate * 100 });
   }
-
-  // Rat trader tinggi — kemungkinan pump & dump koordinasi
   if (snap.ratTraderPct > 0.15) {
-    redFlags.push(
-      `⚠️ HIGH RAT TRADER ACTIVITY: ${(snap.ratTraderPct * 100).toFixed(1)}% dari volume dari rat traders`,
-    );
+    flags.push({ type: "high_rat_trader_activity", severity: "medium", ratTraderPct: snap.ratTraderPct * 100 });
   }
-
-  // Loss besar sudah terjadi
   if (snap.pnlPct <= -20) {
-    redFlags.push(
-      `⚠️ SIGNIFICANT LOSS: sudah -${Math.abs(snap.pnlPct).toFixed(1)}% — probabilitas recovery menurun drastis`,
-    );
+    flags.push({ type: "significant_loss", severity: "high", pnlPct: snap.pnlPct });
   }
-
-  // Hold terlalu lama dengan PnL flat/negatif
   if (snap.holdMinutes > 60 && snap.pnlPct < 5) {
-    redFlags.push(
-      `⚠️ STALE POSITION: hold ${snap.holdMinutes.toFixed(0)} menit dengan PnL hanya ${pnlSign}${snap.pnlPct.toFixed(1)}% — opportunity cost tinggi`,
-    );
+    flags.push({ type: "stale_position", severity: "low", holdMinutes: snap.holdMinutes, pnlPct: snap.pnlPct });
   }
 
-  const redFlagSection =
-    redFlags.length > 0
-      ? `\n--- RED FLAGS (${redFlags.length} ditemukan) ---\n${redFlags.join("\n")}\n`
-      : "\n--- RED FLAGS ---\nTidak ada red flag kritis terdeteksi.\n";
+  const payload = {
+    position: {
+      symbol: position.symbol ?? position.mint_address,
+      mintAddress: position.mint_address,
+      entryPriceUsd: position.entry_price_usd,
+      currentPriceUsd: snap.price,
+      pnlPct: snap.pnlPct,
+      pnlUsd: snap.pnlUsd,
+      holdMinutes: snap.holdMinutes,
+    },
+    entrySignals, // null kalau posisi lama tanpa signal_score_id — AI harus tangani ini
+    market: {
+      liquidityUsd: snap.liquidity,
+      holderCount: snap.holderCount,
+      smartWalletCount: snap.smartWalletCount,
+      renownedWalletCount: snap.renownedWalletCount,
+      volume1hUsd: snap.volume1h,
+      buys1h: snap.buys1h,
+      sells1h: snap.sells1h,
+      buyVolume1hUsd: snap.buyVolume1h,
+      sellVolume1hUsd: snap.sellVolume1h,
+      buySellRatio1h: snap.buySellRatio1h,
+    },
+    changeSinceEntry: {
+      holderCountAtEntry: position.entry_holder_count,
+      holderCountDeltaPct: -holderDropPct,
+      smartWalletCountAtEntry: position.entry_smart_wallet_count,
+      smartWalletCountDelta: smDelta,
+    },
+    risk: {
+      devStatus: snap.devStatus,
+      devHoldRatePct: snap.devHoldRate * 100,
+      ratTraderPct: snap.ratTraderPct * 100,
+      ctoFlag: snap.ctoFlag === 1,
+    },
+    flags,
+    exitConfig: {
+      trailingStop: config.trailingActivatePct
+        ? { activatePct: config.trailingActivatePct, drawdownPct: config.trailingDrawdownPct }
+        : null,
+      stopLossPct: config.stopLossPct ?? null,
+    },
+    // exitDecisionPrinciples: [
+    //   "Your primary job is judging whether the ORIGINAL entry thesis (entrySignals) is still intact, not just reacting to the current snapshot alone.",
+    //   "flags with severity 'high' should weigh heavily toward SELL, especially smart_money_exit and significant_loss — do not wait for recovery once these appear.",
+    //   "If entrySignals is null, this position predates signal-score tracking — rely on flags and market state only, and be more conservative since you lack the original thesis for comparison.",
+    //   "A smart_money_exit flag means followed wallets that helped justify this entry have already sold — treat this as more urgent than a raw price-based stop loss.",
+    //   "Small certain losses are better than large uncertain ones — do not hold a broken thesis hoping for recovery.",
+    // ],
+  };
 
-  return `
-Token: ${position.symbol ?? position.mint_address}
-Entry Price: $${position.entry_price_usd}
-Current Price: $${snap.price}
-PnL: ${pnlSign}${snap.pnlPct.toFixed(1)}% (${pnlUsdSign}$${snap.pnlUsd.toFixed(2)})
-Hold Duration: ${snap.holdMinutes.toFixed(0)} minutes
-${redFlagSection}
---- 1H PRICE ACTION ---
-Volume 1h: $${snap.volume1h.toFixed(0)}
-Buys 1h: ${snap.buys1h} | Sells 1h: ${snap.sells1h}
-Buy Volume 1h: $${snap.buyVolume1h.toFixed(0)} | Sell Volume 1h: $${snap.sellVolume1h.toFixed(0)}
-Buy/Sell Ratio 1h: ${snap.buySellRatio1h.toFixed(2)} (>0.5 = more buys)
-
---- MARKET STATE ---
-Liquidity: $${snap.liquidity.toFixed(0)}
-Holder Count: ${snap.holderCount} (was ${position.entry_holder_count ?? "N/A"} at entry)
-Smart Money Holders: ${snap.smartWalletCount} (was ${position.entry_smart_wallet_count ?? "N/A"} at entry)
-KOL Holders: ${snap.renownedWalletCount}
-
---- DEV & RISK ---
-Dev Status: ${snap.devStatus} | Dev Hold Rate: ${(snap.devHoldRate * 100).toFixed(1)}%
-Rat Trader Activity: ${(snap.ratTraderPct * 100).toFixed(1)}%
-CTO Flag: ${snap.ctoFlag === 1 ? "YES (community takeover)" : "No"}
-
---- EXIT CONFIG ---
-Trailing Stop: ${trailingInfo}
-Stop Loss: ${slInfo}
-
---- EXIT DECISION GUIDELINES ---
-Default to SELL in any of these situations:
-1. Red flags >= 2 — multiple warning signs = elevated risk, do not wait for recovery
-2. Buy/sell ratio < 0.40 AND volume is dropping — sellers in control, exit before it gets worse
-3. Smart money count dropped since entry — they exited, you should too
-4. Holder count dropped >10% since entry — distribution happening
-5. PnL <= -20% AND no strong buy signal — cut loss, do not hope for recovery
-6. Hold > 90 minutes with PnL < 0% — stale position, capital is better deployed elsewhere
-
-Default to HOLD only if:
-- PnL is positive AND buy/sell ratio > 0.55 AND no red flags
-- Smart money count held or increased since entry
-
-Be disciplined: small certain losses are better than large uncertain ones.
-Should I HOLD or SELL this position now?
-  `.trim();
+  return [
+    {
+      type: "text",
+      text: "Should this position be held or sold now? Answer only with JSON.",
+    },
+    {
+      type: "text",
+      text: JSON.stringify(payload, null, 2),
+    },
+  ];
 }
 
 // ─── Entry Prompt ───────────────────────────────────────────────────────────

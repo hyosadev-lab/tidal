@@ -1,6 +1,7 @@
 import { getConfig } from '../config.ts';
 import { logger } from '../utils/logger.ts';
 import { withRetry } from '../utils/retry.ts';
+import { type UserPromptPayload } from '../modules/ai-decision.ts';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -19,7 +20,7 @@ export interface PositionDecision {
 
 async function callOpenRouter(
   systemPrompt: string,
-  userPrompt: string,
+  userPrompt: string | UserPromptPayload,
   rawResponseOut?: { raw: string }
 ): Promise<string> {
   const config = getConfig();
@@ -115,7 +116,7 @@ Output format:
   "red_flags": ["array of concerns, empty if none"]
 }`;
 
-export async function evaluateEntry(userPrompt: string): Promise<EntryDecision> {
+export async function evaluateEntry(userPrompt: string | UserPromptPayload): Promise<EntryDecision> {
   const rawOut = { raw: '' };
 
   try {
@@ -140,15 +141,18 @@ export async function evaluateEntry(userPrompt: string): Promise<EntryDecision> 
 // ─── Position Evaluation ──────────────────────────────────────────────────────
 
 const POSITION_SYSTEM_PROMPT = `You are a professional Solana memecoin trader managing an open position.
-You will receive the current state of a token you are holding.
+You will receive a single JSON object: position info (entry vs current price, PnL, hold duration), the ORIGINAL entry signal scores that justified opening this position (if available), current market state, structured risk flags, and exit config.
 Decide: HOLD or SELL.
 
+Your primary job is to judge whether the ORIGINAL thesis (entrySignals, if present) is still intact — not just react to the current snapshot in isolation. A position entered on a strong smartMoney signal that has since seen smart money exit is a broken thesis, even if price hasn't dropped yet.
+
 Rules:
-- Output ONLY valid JSON.
-- SELL if: smart money is exiting, volume is collapsing, holder count declining, or momentum clearly reversed.
-- HOLD if: fundamentals still intact, or token showing signs of further upside.
-- You may SELL below take-profit target if risk/reward has deteriorated.
-- confidence < 0.6 → HOLD (when in doubt, let the position run).
+- Output ONLY valid JSON — no preamble, no markdown, nothing outside the JSON.
+- SELL if: smart money is exiting (see flags with type "smart_money_exit"), volume is collapsing, holder count declining, or momentum has clearly reversed from the entry thesis.
+- HOLD if: the entry thesis is still intact and no high-severity flags are present.
+- You may SELL below any take-profit target if risk/reward has deteriorated — do not wait for a specific price target once the thesis is broken.
+- If entrySignals is null (older position, no signal snapshot available), rely more heavily on the current flags and market state since you cannot compare against an original thesis.
+- confidence must reflect genuine uncertainty. When in doubt with no clear high-severity flag, lean toward HOLD rather than forcing a SELL decision.
 
 Output format:
 {
@@ -157,7 +161,8 @@ Output format:
   "reasoning": "one paragraph max"
 }`;
 
-export async function evaluatePosition(userPrompt: string): Promise<PositionDecision> {
+export async function evaluatePosition(userPrompt: string | UserPromptPayload): Promise<PositionDecision> {
+  const config = getConfig();
   const rawOut = { raw: '' };
 
   try {
@@ -170,8 +175,8 @@ export async function evaluatePosition(userPrompt: string): Promise<PositionDeci
       reasoning: parsed.reasoning ?? 'No reasoning provided',
     };
 
-    // confidence < 0.6 → HOLD
-    if (decision.confidence < 0.6 && decision.action === 'SELL') {
+    // confidence rendah → HOLD (dulu hardcode 0.6, sekarang config.exitConfidenceThreshold)
+    if (decision.confidence < config.exitConfidenceThreshold && decision.action === 'SELL') {
       decision.action = 'HOLD';
       decision.reasoning = `[Low confidence override] ${decision.reasoning}`;
     }

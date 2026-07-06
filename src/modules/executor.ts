@@ -90,6 +90,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
       tokenAmount: '0', // simulated
       entryHolderCount: info.stat?.holder_count,
       entrySmartWalletCount: info.wallet_tags_stat?.smart_wallets,
+      entrySignalScoreId: enriched.signalScoreId,
     });
 
     logger.info('buy_simulated', {
@@ -183,6 +184,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     strategyOrderId: swapResponse.strategy_order_id,
     entryHolderCount: info.stat?.holder_count,
     entrySmartWalletCount: info.wallet_tags_stat?.smart_wallets,
+    entrySignalScoreId: enriched.signalScoreId,
   });
 
   logger.info('buy_confirmed', {

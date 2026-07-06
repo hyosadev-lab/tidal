@@ -79,6 +79,7 @@ function runMigrations(db: Database.Database): void {
       strategy_order_id        TEXT,
       entry_holder_count       INTEGER,
       entry_smart_wallet_count INTEGER,
+      entry_signal_score_id    INTEGER REFERENCES signal_scores(id),
       peak_price_usd           REAL,
       status                   TEXT DEFAULT 'open'
     );
@@ -96,6 +97,7 @@ function runMigrations(db: Database.Database): void {
   `);
 
   migrateSignalScoresColumns(db);
+  migratePositionsColumns(db);
 }
 
 /**
@@ -134,4 +136,22 @@ function migrateSignalScoresColumns(db: Database.Database): void {
   // SQLite DROP COLUMN aman di versi baru, tapi menghapus data historis
   // yang mungkin masih ingin diaudit. Kolom ini simpel jadi NULL untuk
   // baris baru karena insertSignalScores() tidak lagi menulis ke situ.
+}
+
+/**
+ * Tambah entry_signal_score_id (FK ke signal_scores.id) ke tabel positions.
+ * Menyimpan REFERENSI, bukan snapshot skor — supaya buildPositionPrompt bisa
+ * JOIN ke signal_scores dan baca skor entry asli apa adanya, tanpa duplikasi
+ * data yang bisa drift kalau struktur sinyal berubah lagi di masa depan.
+ * Posisi lama (dibuat sebelum migrasi ini) akan punya entry_signal_score_id
+ * NULL — buildPositionPrompt harus menangani kasus ini secara graceful.
+ */
+function migratePositionsColumns(db: Database.Database): void {
+  const columns = db.prepare(`PRAGMA table_info(positions)`).all() as Array<{ name: string }>;
+  const columnNames = new Set(columns.map((c) => c.name));
+
+  if (!columnNames.has('entry_signal_score_id')) {
+    db.exec(`ALTER TABLE positions ADD COLUMN entry_signal_score_id INTEGER REFERENCES signal_scores(id)`);
+    logger.info('db_migration', { table: 'positions', added_column: 'entry_signal_score_id' });
+  }
 }

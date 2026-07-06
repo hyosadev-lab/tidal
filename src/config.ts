@@ -30,6 +30,7 @@ export interface Config {
   // Strategy Thresholds
   minScoreToBuy: number;
   aiConfidenceThreshold: number;
+  exitConfidenceThreshold: number;
 
   // Composite Score Weights (must sum to 1.0)
   weightDip: number;
@@ -181,6 +182,11 @@ export function getConfig(): Config {
     // Strategy
     minScoreToBuy: requireFloat('MIN_SCORE_TO_BUY'),
     aiConfidenceThreshold: requireFloat('AI_CONFIDENCE_THRESHOLD'),
+    // [Menebak] default 0.6 dipertahankan sama dengan nilai hardcode lama di
+    // openrouter.ts evaluatePosition — belum ada dasar empiris angka ini
+    // optimal untuk exit decision, cuma menjaga behavior tidak berubah diam-diam
+    // saat bug hardcode ini diperbaiki.
+    exitConfidenceThreshold: optionalFloat('EXIT_CONFIDENCE_THRESHOLD') ?? 0.6,
 
     // Composite Score Weights
     weightDip,

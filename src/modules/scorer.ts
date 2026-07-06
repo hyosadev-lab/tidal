@@ -39,6 +39,7 @@ export interface EnrichedToken {
   info: TokenInfo;
   candles: KlineCandle[];
   scores: AllSignalScores;
+  signalScoreId: number;
 }
 
 /**
@@ -121,7 +122,7 @@ export async function enrichAndScore(
 
   // ── Persist scores ────────────────────────────────────────────────────
 
-  insertSignalScores({
+  const signalScoreId = insertSignalScores({
     mintAddress,
     dipScore: dip.score,
     priceActionScore: priceAction.score,
@@ -208,5 +209,5 @@ export async function enrichAndScore(
     return null;
   }
 
-  return { candidate, info, candles, scores };
+  return { candidate, info, candles, scores, signalScoreId };
 }
