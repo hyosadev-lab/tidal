@@ -1,5 +1,5 @@
 import { getDb } from './database.ts';
-import { unixMillis } from '../utils/math.ts';
+import { unixSeconds } from '../utils/math.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ export interface Position {
   entry_signal_score_id: number | null;
   peak_price_usd: number | null;
   status: string;
+  mode: 'dry_run' | 'live';
 }
 
 export interface Trade {
@@ -157,12 +158,13 @@ export function insertTrade(params: {
   strategyOrderId?: string;
   txHash?: string;
   status?: string;
+  mode: 'dry_run' | 'live';
 }): void {
   getDb().prepare(`
     INSERT INTO trades (
       mint_address, side, sol_amount, token_amount, price_usd,
-      order_id, strategy_order_id, tx_hash, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      order_id, strategy_order_id, tx_hash, status, mode
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.mintAddress,
     params.side,
@@ -172,7 +174,8 @@ export function insertTrade(params: {
     params.orderId ?? null,
     params.strategyOrderId ?? null,
     params.txHash ?? null,
-    params.status ?? 'pending'
+    params.status ?? 'pending',
+    params.mode
   );
 }
 
@@ -205,13 +208,14 @@ export function insertPosition(params: {
   entryHolderCount?: number;
   entrySmartWalletCount?: number;
   entrySignalScoreId?: number;
+  mode: 'dry_run' | 'live';
 }): void {
   getDb().prepare(`
     INSERT INTO positions (
       mint_address, symbol, entry_price_usd, sol_invested, token_amount,
       strategy_order_id, entry_holder_count, entry_smart_wallet_count,
-      entry_signal_score_id, peak_price_usd
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      entry_signal_score_id, peak_price_usd, mode
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.mintAddress,
     params.symbol ?? null,
@@ -222,7 +226,8 @@ export function insertPosition(params: {
     params.entryHolderCount ?? null,
     params.entrySmartWalletCount ?? null,
     params.entrySignalScoreId ?? null,
-    params.entryPriceUsd  // peak starts at entry price
+    params.entryPriceUsd,  // peak starts at entry price
+    params.mode
   );
 }
 
@@ -268,7 +273,7 @@ export function closePosition(params: {
         exit_handler = ?
     WHERE mint_address = ?
   `).run(
-    unixMillis(),
+    unixSeconds(),
     params.exitPriceUsd,
     params.solReturned,
     params.pnlUsd,
@@ -372,7 +377,7 @@ export function forceCloseStuckPosition(mintAddress: string): void {
         exit_reason = 'FORCE_CLOSE',
         exit_handler = 'manual'
     WHERE mint_address = ? AND status = 'open'
-  `).run(unixMillis(), mintAddress);
+  `).run(unixSeconds(), mintAddress);
 
   logger.info('position_force_closed', { mint: mintAddress });
 }

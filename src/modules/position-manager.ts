@@ -178,18 +178,63 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
       peak_price: position.peak_price_usd,
     });
 
-    // In live mode: condition order already fired on-chain, just sync DB
-    // In dry run: simulate the exit
-    const solReceived = config.dryRun
-      ? position.sol_invested * (currentPrice / position.entry_price_usd)
-      : position.sol_invested * (currentPrice / position.entry_price_usd); // approximation
+    // In live mode: condition order sudah fire on-chain. Coba query harga
+    // fill ASLI dari GMGN (bukan cuma sinkronisasi DB pakai harga polling),
+    // karena kita cuma tahu "sudah closed" lewat polling — bukan lewat
+    // notifikasi instan — jadi currentPrice yang kita pegang bisa sudah jauh
+    // meleset dari harga fill sesungguhnya di token yang sangat volatile.
+    // Approximation tetap dipakai sebagai fallback kalau:
+    //   (a) dry-run — tidak pernah ada strategy order sungguhan untuk di-query
+    //   (b) live tapi order belum muncul 'closed' di GMGN saat kita query
+    //       (race condition — sistem GMGN belum selesai proses)
+    let exitPriceUsd = currentPrice;
+    let solReceived = position.sol_invested * (currentPrice / position.entry_price_usd);
+    let exitHandler = config.dryRun ? 'condition_order_simulated' : 'condition_order_live';
+    let usedRealFill = false;
+
+    if (!config.dryRun && position.strategy_order_id) {
+      try {
+        const client = getGmgnClient();
+        const history = await client.getStrategyOrderHistory(position.mint_address, 10);
+        const match = history.find(
+          (o) => o.order_id === position.strategy_order_id && o.status === 'closed' && o.close_price
+        );
+
+        if (match) {
+          const realClosePrice = parseFloat(match.close_price);
+          if (realClosePrice > 0) {
+            exitPriceUsd = realClosePrice;
+            solReceived = position.sol_invested * (realClosePrice / position.entry_price_usd);
+            usedRealFill = true;
+          }
+        }
+      } catch (err) {
+        logger.warn('strategy_order_fill_query_failed', {
+          mint: position.mint_address,
+          strategy_order_id: position.strategy_order_id,
+          error: String(err),
+        });
+        // fall through — tetap pakai approximation
+      }
+
+      if (usedRealFill) {
+        exitHandler = 'condition_order_live_confirmed';
+      } else {
+        exitHandler = 'condition_order_live_approximated';
+        logger.warn('strategy_order_fill_not_found_yet', {
+          mint: position.mint_address,
+          strategy_order_id: position.strategy_order_id,
+          note: 'menggunakan approximation currentPrice sebagai fallback',
+        });
+      }
+    }
 
     await handlePositionClose({
       position,
-      exitPriceUsd: currentPrice,
+      exitPriceUsd,
       solReceived,
       exitReason: mirror.reason,
-      exitHandler: 'condition_order',
+      exitHandler,
       solPriceUsd,
     });
     return;

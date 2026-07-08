@@ -80,6 +80,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
       priceUsd: simulatedPrice,
       orderId: simulatedOrderId,
       status: 'confirmed',
+      mode: 'dry_run',
     });
 
     insertPosition({
@@ -91,6 +92,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
       entryHolderCount: info.stat?.holder_count,
       entrySmartWalletCount: info.wallet_tags_stat?.smart_wallets,
       entrySignalScoreId: enriched.signalScoreId,
+      mode: 'dry_run',
     });
 
     logger.info('buy_simulated', {
@@ -153,6 +155,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     strategyOrderId: swapResponse.strategy_order_id,
     txHash: swapResponse.hash,
     status: 'pending',
+    mode: config.dryRun ? 'dry_run' : 'live',
   });
 
   // ── Poll until confirmed ───────────────────────────────────────────────────
@@ -185,6 +188,7 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     entryHolderCount: info.stat?.holder_count,
     entrySmartWalletCount: info.wallet_tags_stat?.smart_wallets,
     entrySignalScoreId: enriched.signalScoreId,
+    mode: config.dryRun ? 'dry_run' : 'live',
   });
 
   logger.info('buy_confirmed', {
@@ -308,6 +312,7 @@ export async function executeSell(params: {
     orderId: swapResponse.order_id,
     txHash: swapResponse.hash,
     status: 'pending',
+    mode: config.dryRun ? 'dry_run' : 'live',
   });
 
   // ── Poll until confirmed ───────────────────────────────────────────────────

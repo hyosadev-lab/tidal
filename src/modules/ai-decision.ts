@@ -183,13 +183,13 @@ export function buildPositionPrompt(
         : null,
       stopLossPct: config.stopLossPct ?? null,
     },
-    // exitDecisionPrinciples: [
-    //   "Your primary job is judging whether the ORIGINAL entry thesis (entrySignals) is still intact, not just reacting to the current snapshot alone.",
-    //   "flags with severity 'high' should weigh heavily toward SELL, especially smart_money_exit and significant_loss — do not wait for recovery once these appear.",
-    //   "If entrySignals is null, this position predates signal-score tracking — rely on flags and market state only, and be more conservative since you lack the original thesis for comparison.",
-    //   "A smart_money_exit flag means followed wallets that helped justify this entry have already sold — treat this as more urgent than a raw price-based stop loss.",
-    //   "Small certain losses are better than large uncertain ones — do not hold a broken thesis hoping for recovery.",
-    // ],
+    exitDecisionPrinciples: [
+      "Your primary job is judging whether the ORIGINAL entry thesis (entrySignals) is still intact, not just reacting to the current snapshot alone.",
+      "flags with severity 'high' should weigh heavily toward SELL, especially smart_money_exit and significant_loss — do not wait for recovery once these appear.",
+      "If entrySignals is null, this position predates signal-score tracking — rely on flags and market state only, and be more conservative since you lack the original thesis for comparison.",
+      "A smart_money_exit flag means followed wallets that helped justify this entry have already sold — treat this as more urgent than a raw price-based stop loss.",
+      "Small certain losses are better than large uncertain ones — do not hold a broken thesis hoping for recovery.",
+    ],
   };
 
   return [
@@ -316,14 +316,14 @@ export function buildEntryPrompt(enriched: EnrichedToken): UserPromptPayload {
       },
     },
     tradeSizeSol: config.tradeSizeSol,
-    // entryTimingGuidance: [
-    //   "This agent has a documented history of buying at local tops — entering after a token already pumped, then losing 30-55% as price reverted.",
-    //   "priceChange5mPct above +50 is the strongest known predictor of that failure mode.",
-    //   "High volumeSurge score with low smartMoney score (isSuspectedFomo=true) means retail chasing, not smart entry — treat as a negative signal, not confirmation.",
-    //   'Prefer entries where momentumLevel is "early" or "healthy" with fresh/hot smart money entries over entries where momentumLevel is "extended" or "extreme".',
-    //   "If priceChange5mPct is already large and smartMoney confirmation is weak (score < 65 or recentEntryCount < 2), default to SKIP even if composite crossed a typical threshold.",
-    //   "signals.smartMoney only counts wallets whose LATEST action was a buy (still holding). If exitedWalletCount > 0, that many followed wallets already fully sold this exact token recently — this is a red flag even if other wallets are currently buying, since it may indicate early distribution.",
-    // ],
+    entryTimingGuidance: [
+      "This agent has a documented history of buying at local tops — entering after a token already pumped, then losing 30-55% as price reverted.",
+      "priceChange5mPct above +50 is the strongest known predictor of that failure mode.",
+      "High volumeSurge score with low smartMoney score (isSuspectedFomo=true) means retail chasing, not smart entry — treat as a negative signal, not confirmation.",
+      'Prefer entries where momentumLevel is "early" or "healthy" with fresh/hot smart money entries over entries where momentumLevel is "extended" or "extreme".',
+      "If priceChange5mPct is already large and smartMoney confirmation is weak (score < 65 or recentEntryCount < 2), default to SKIP even if composite crossed a typical threshold.",
+      "signals.smartMoney only counts wallets whose LATEST action was a buy (still holding). If exitedWalletCount > 0, that many followed wallets already fully sold this exact token recently — this is a red flag even if other wallets are currently buying, since it may indicate early distribution.",
+    ],
   };
 
   return [

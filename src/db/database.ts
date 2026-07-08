@@ -58,7 +58,8 @@ function runMigrations(db: Database.Database): void {
       order_id             TEXT UNIQUE,
       strategy_order_id    TEXT,
       tx_hash              TEXT,
-      status               TEXT DEFAULT 'pending'
+      status               TEXT DEFAULT 'pending',
+      mode                 TEXT DEFAULT 'live'
     );
 
     CREATE TABLE IF NOT EXISTS positions (
@@ -81,7 +82,8 @@ function runMigrations(db: Database.Database): void {
       entry_smart_wallet_count INTEGER,
       entry_signal_score_id    INTEGER REFERENCES signal_scores(id),
       peak_price_usd           REAL,
-      status                   TEXT DEFAULT 'open'
+      status                   TEXT DEFAULT 'open',
+      mode                     TEXT DEFAULT 'live'
     );
 
     CREATE TABLE IF NOT EXISTS daily_stats (
@@ -98,6 +100,7 @@ function runMigrations(db: Database.Database): void {
 
   migrateSignalScoresColumns(db);
   migratePositionsColumns(db);
+  migrateModeColumn(db);
 }
 
 /**
@@ -153,5 +156,49 @@ function migratePositionsColumns(db: Database.Database): void {
   if (!columnNames.has('entry_signal_score_id')) {
     db.exec(`ALTER TABLE positions ADD COLUMN entry_signal_score_id INTEGER REFERENCES signal_scores(id)`);
     logger.info('db_migration', { table: 'positions', added_column: 'entry_signal_score_id' });
+  }
+}
+
+/**
+ * Tambah kolom `mode` (dry_run/live) ke positions dan trades — supaya data
+ * dari dua rezim pengukuran yang sangat berbeda karakteristiknya (khususnya
+ * exit price: dry-run cuma approximation dari polling, live bisa pakai fill
+ * price asli lewat getStrategyOrderHistory) tidak pernah tercampur tanpa
+ * bisa dipisahkan lagi.
+ *
+ * BACKFILL: baris yang sudah ada SEBELUM migrasi ini dibackfill sebagai
+ * 'dry_run' secara eksplisit (bukan default schema 'live') — karena semua
+ * data historis sejauh ini memang berasal dari test dengan DRY_RUN=true.
+ * Kalau ternyata ada histori live tercampur di masa lalu (seharusnya tidak,
+ * tapi tidak ada cara memverifikasi ini dari data itu sendiri), backfill ini
+ * akan salah — flag ini secara eksplisit sebagai asumsi, bukan fakta terverifikasi.
+ */
+function migrateModeColumn(db: Database.Database): void {
+  const positionsColumns = db.prepare(`PRAGMA table_info(positions)`).all() as Array<{ name: string }>;
+  const positionsHasMode = positionsColumns.some((c) => c.name === 'mode');
+
+  if (!positionsHasMode) {
+    db.exec(`ALTER TABLE positions ADD COLUMN mode TEXT DEFAULT 'live'`);
+    const result = db.prepare(`UPDATE positions SET mode = 'dry_run' WHERE mode = 'live'`).run();
+    logger.info('db_migration', {
+      table: 'positions',
+      added_column: 'mode',
+      backfilled_as: 'dry_run',
+      rows_backfilled: result.changes,
+    });
+  }
+
+  const tradesColumns = db.prepare(`PRAGMA table_info(trades)`).all() as Array<{ name: string }>;
+  const tradesHasMode = tradesColumns.some((c) => c.name === 'mode');
+
+  if (!tradesHasMode) {
+    db.exec(`ALTER TABLE trades ADD COLUMN mode TEXT DEFAULT 'live'`);
+    const result = db.prepare(`UPDATE trades SET mode = 'dry_run' WHERE mode = 'live'`).run();
+    logger.info('db_migration', {
+      table: 'trades',
+      added_column: 'mode',
+      backfilled_as: 'dry_run',
+      rows_backfilled: result.changes,
+    });
   }
 }

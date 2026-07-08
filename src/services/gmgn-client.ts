@@ -112,6 +112,22 @@ export interface OrderStatus {
   report?: OrderReport;
 }
 
+export interface StrategyOrderRecord {
+  order_id: string;
+  base_token: string;
+  status: string;             // 'open' | 'closed'
+  open_price: string;
+  open_amount: string;
+  close_price: string;        // empty string kalau masih open
+  close_amount: string;       // empty string kalau masih open
+  close_time: number;         // ms, 0 kalau masih open
+  reason_by: string;          // entitas yang men-trigger close; empty kalau open
+  reason_code: string;        // empty kalau open
+  loss_stop: string;          // trigger price stop-loss; empty kalau tidak diset
+  profit_stop: string;        // trigger price take-profit; empty kalau tidak diset
+  record_high_price: string;  // untuk trailing stop
+}
+
 export interface KlineCandle {
   time: number;              // milliseconds
   open: string;
@@ -393,6 +409,28 @@ export class GmgnClient {
       from_address: config.walletAddress,
       order_id: orderId,
     });
+  }
+
+  /**
+   * Query strategy order (condition order — stop-loss/take-profit/trailing)
+   * history to get the ACTUAL fill price once one has triggered on-chain.
+   * Digunakan untuk menggantikan approximation (currentPrice saat poll) di
+   * position-manager.ts dengan close_price/close_amount asli — approximation
+   * bisa meleset jauh dari harga fill sesungguhnya di token yang sangat
+   * volatile, karena kita cuma tahu "sudah closed" lewat polling, bukan
+   * lewat notifikasi instan.
+   */
+  async getStrategyOrderHistory(baseToken?: string, limit = 10): Promise<StrategyOrderRecord[]> {
+    const query: Record<string, string | number> = {
+      chain: CHAIN,
+      group_tag: 'STMix',
+      type: 'history',
+      limit,
+    };
+    if (baseToken) query['base_token'] = baseToken;
+
+    const data = await this.criticalRequest('GET', '/v1/trade/strategy/orders', query, null) as any;
+    return (data?.list ?? []) as StrategyOrderRecord[];
   }
 
   // ── Internal ───────────────────────────────────────────────────────────────
