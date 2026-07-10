@@ -3,8 +3,8 @@ import { minutesSince } from '../utils/math.ts';
 
 // ── Entry window tiers (minutes since trade timestamp) ────────────────────
 const ENTRY_WINDOW_HOT_MIN   = 5;  // < 5m  → hot signal
-const ENTRY_WINDOW_FRESH_MIN = 20; // < 20m → fresh signal
-const ENTRY_WINDOW_VALID_MIN = 40; // < 40m → still valid, weaker
+const ENTRY_WINDOW_FRESH_MIN = 15; // < 15m → fresh signal
+const ENTRY_WINDOW_VALID_MIN = 30; // < 30m → still valid, weaker
 
 const CLUSTER_HIGH_CONVICTION = 3; // 3+ distinct followed wallets → high conviction
 const CLUSTER_GOOD_SIGNAL     = 2; // 2  distinct followed wallets → good signal
@@ -21,8 +21,8 @@ export interface SmartMoneySignal {
 
   // Timing — HANYA dihitung dari wallet yang masih hold
   hotEntryCount: number;            // distinct wallets holding, trade < 5m ago
-  freshEntryCount: number;          // distinct wallets holding, trade 5–20m ago
-  validEntryCount: number;          // distinct wallets holding, trade 20–40m ago
+  freshEntryCount: number;          // distinct wallets holding, trade 5–15m ago
+  validEntryCount: number;          // distinct wallets holding, trade 15–30m ago
   bestEntryWindow: EntryWindow;
 
   // Conviction — HANYA dari wallet yang masih hold
@@ -160,30 +160,30 @@ export function scoreSmartMoney(trades: FollowWalletTrade[]): SmartMoneySignal {
 
   // ── Scoring ──────────────────────────────────────────────────────────
   //
-  // Cluster strength (recent distinct wallet entries) → 40 pts
-  // Entry window tightness                            → 20 pts
+  // Cluster strength (recent distinct wallet entries) → 30 pts
+  // Entry window tightness                            → 30 pts
   // Conviction — full position open ratio              → 25 pts
   // Capital commitment — totalSolInvested               → 15 pts
   // Exit penalty — dikurangi dari total, bukan komponen positif
 
   let score = 0;
 
-  // 1. Cluster strength (40 pts)
+  // 1. Cluster strength (30 pts)
   if (recentEntryCount >= CLUSTER_HIGH_CONVICTION) {
-    score += 40;
+    score += 30;
   } else if (recentEntryCount >= CLUSTER_GOOD_SIGNAL) {
-    score += 27;
+    score += 23;
   } else if (recentEntryCount === 1) {
-    score += 13;
+    score += 16;
   }
 
-  // 2. Entry window tightness (20 pts)
+  // 2. Entry window tightness (30 pts)
   if (hotEntryCount > 0) {
-    score += 20;
+    score += 30;
   } else if (freshEntryCount > 0) {
-    score += 13;
+    score += 23;
   } else if (validEntryCount > 0) {
-    score += 6;
+    score += 16;
   }
 
   // 3. Conviction — full open ratio (25 pts)

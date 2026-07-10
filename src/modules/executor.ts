@@ -146,6 +146,20 @@ export async function executeBuy(enriched: EnrichedToken): Promise<boolean> {
     condition_orders: conditionOrders.length,
   });
 
+  // Kalau kita minta condition orders (stop-loss/trailing) tapi GMGN tidak
+  // pernah balikin strategy_order_id, posisi ini TIDAK PUNYA proteksi on-chain
+  // sama sekali — cuma polling mirror check kita yang jaga, dengan segala
+  // keterbatasan latency yang sama seperti kasus dry-run. Ini harus loud &
+  // jelas di log, bukan baru ketahuan lewat analisis data belakangan.
+  if (hasConditionOrders && !swapResponse.strategy_order_id) {
+    logger.error('condition_order_not_attached', {
+      mint: candidate.mintAddress,
+      symbol: candidate.symbol,
+      order_id: swapResponse.order_id,
+      note: 'swap berhasil tapi strategy_order_id kosong — posisi ini TIDAK ada proteksi on-chain, hanya mirror check polling yang aktif',
+    });
+  }
+
   // Save trade as pending
   insertTrade({
     mintAddress: candidate.mintAddress,

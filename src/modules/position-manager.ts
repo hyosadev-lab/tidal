@@ -189,8 +189,20 @@ async function processPosition(position: Position, solPriceUsd: number): Promise
     //       (race condition — sistem GMGN belum selesai proses)
     let exitPriceUsd = currentPrice;
     let solReceived = position.sol_invested * (currentPrice / position.entry_price_usd);
-    let exitHandler = config.dryRun ? 'condition_order_simulated' : 'condition_order_live';
+    let exitHandler = config.dryRun ? 'condition_order_simulated' : 'condition_order_live_no_order';
     let usedRealFill = false;
+
+    if (!config.dryRun && !position.strategy_order_id) {
+      // Live tapi tidak pernah punya strategy_order_id sama sekali — berarti
+      // condition order gagal ter-attach saat buy (lihat log
+      // 'condition_order_not_attached' di executor.ts). Posisi ini tidak
+      // pernah punya proteksi on-chain, dan real-fill-price query di bawah
+      // tidak mungkin dicoba karena tidak ada order_id untuk di-query.
+      logger.error('mirror_exit_no_strategy_order', {
+        mint: position.mint_address,
+        note: 'Posisi tidak punya strategy_order_id — exit ini murni dari polling mirror check, sama seperti dry-run. Kemungkinan overshoot dari threshold yang dikonfigurasi.',
+      });
+    }
 
     if (!config.dryRun && position.strategy_order_id) {
       try {
