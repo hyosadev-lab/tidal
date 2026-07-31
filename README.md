@@ -1,15 +1,18 @@
 # tidal-trading-agent
 
-To install dependencies:
+Agent loop dengan tool calling, LLM lewat [OpenRouter](https://openrouter.ai).
+Cuma pakai `fetch` + stdlib — jalan di Node 22+, Bun, atau Deno.
 
 ```bash
-bun install
+cp .env.example .env   # isi OPENROUTER_API_KEY
+
+node --env-file-if-exists=.env index.ts   # chat interaktif, /reset & /exit
+node --test
+
+# atau: bun index.ts  /  bun test
 ```
 
-To run:
+- [agent.ts](agent.ts) — loop-nya: kirim messages → kalau model minta tool, jalankan, balikin hasilnya → ulang sampai model jawab tanpa tool call.
+- [index.ts](index.ts) — contoh tool (`get_price`) + entry point.
 
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.3.11. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+Nambah tool = nambah entry di object `tools`: `description`, `parameters` (JSON Schema), `run`.
