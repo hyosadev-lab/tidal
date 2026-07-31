@@ -1,30 +1,52 @@
 import * as readline from "node:readline/promises";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { runAgent, type Message, type Tool } from "./agent.ts";
+import { loadSkills, skillIndex, skillTool } from "./skills.ts";
+
+const execAsync = promisify(exec);
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+let closed = false;
+rl.on("close", () => (closed = true)); // Ctrl+C / EOF
 
 const tools: Record<string, Tool> = {
-  get_price: {
-    description: "Get the current spot price of a crypto ticker in USD",
+  bash: {
+    description: "Run a shell command and return its stdout and stderr.",
     parameters: {
       type: "object",
-      properties: { symbol: { type: "string", description: "e.g. BTC, ETH" } },
-      required: ["symbol"],
+      properties: { command: { type: "string" } },
+      required: ["command"],
     },
-    run: async ({ symbol }: { symbol: string }) => {
-      const res = await fetch(`https://api.coinbase.com/v2/prices/${symbol}-USD/spot`);
-      const { data } = await res.json();
-      return data;
+    run: async ({ command }: { command: string }) => {
+      console.log(["  $", command].join(" "));
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          timeout: 120_000,
+          maxBuffer: 32 * 1024 * 1024,
+        });
+        return (stdout + (stderr ? `\n[stderr]\n${stderr}` : "")).slice(0, 120_000) || "(no output)";
+      } catch (e: any) {
+        return `exit ${e.code ?? "?"}: ${(e.stderr || e.stdout || e.message).slice(0, 4000)}`;
+      }
     },
   },
 };
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const skills = await loadSkills();
+Object.assign(tools, skillTool(skills));
+const system =
+  "You are a concise crypto trading assistant. You have a bash tool; the skills below tell you which commands to run." +
+  skillIndex(skills);
+
 let history: Message[] | undefined;
 
-console.log("Agent ready. Type a message (Ctrl+C or /exit to quit).");
-while (true) {
-  const input = (await rl.question("> ")).trim();
+console.log(
+  `Agent ready — skills: ${skills.map((s) => s.name).join(", ") || "none"}\nType a message (Ctrl+C or /exit to quit).`,
+);
+while (!closed) {
+  const input = ((await rl.question("> ")) ?? "").trim();
+  if (closed || input === "/exit") break;
   if (!input) continue;
-  if (input === "/exit") break;
   if (input === "/reset") {
     history = undefined;
     console.log("(history cleared)\n");
@@ -32,11 +54,7 @@ while (true) {
   }
 
   try {
-    const res = await runAgent(input, {
-      tools,
-      history,
-      system: "You are a concise trading assistant.",
-    });
+    const res = await runAgent(input, { tools, history, system, maxSteps: 25 });
     history = res.messages;
     console.log(res.text);
   } catch (e) {
