@@ -16,6 +16,15 @@ export const NATIVE: Record<Chain, { symbol: string; address: string; decimals: 
   eth: { symbol: "ETH", address: "0x0000000000000000000000000000000000000000", decimals: 18 },
 };
 
+/**
+ * Smallest position worth opening per chain. Driven by round-trip friction:
+ * SOL gas is fractions of a cent, ETH mainnet gas is not.
+ */
+export const MIN_POSITION_USD: Record<Chain, number> = { sol: 3, bsc: 5, base: 5, eth: 25 };
+
+/** Native units kept aside for gas. Without this, a full deployment cannot pay to exit. */
+export const GAS_RESERVE: Record<Chain, number> = { sol: 0.02, bsc: 0.004, base: 0.0015, eth: 0.004 };
+
 export const EXPLORER: Record<Chain, string> = {
   sol: "https://solscan.io/tx/",
   bsc: "https://bscscan.com/tx/",
@@ -54,9 +63,14 @@ export const DEFAULT_CONFIG: TradeConfig = {
   maxTokenAgeMinutes: 0,
   slippagePct: 20,
 
+  minPositionUsd: 0,
+  gasReserveNative: 0,
   paperStartEquityUsd: 1000,
   walletAddress: "",
 };
+
+export const minPosition = (cfg: TradeConfig): number => cfg.minPositionUsd || MIN_POSITION_USD[cfg.chain];
+export const gasReserve = (cfg: TradeConfig): number => cfg.gasReserveNative || GAS_RESERVE[cfg.chain];
 
 const CONFIG_PATH = join(DATA_DIR, "config.json");
 
@@ -108,6 +122,8 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     maxTokenAgeMinutes: clamp(input.maxTokenAgeMinutes, 0, 1_000_000, base.maxTokenAgeMinutes),
     slippagePct: Math.round(clamp(input.slippagePct, 1, 100, base.slippagePct)),
 
+    minPositionUsd: clamp(input.minPositionUsd, 0, 100_000, base.minPositionUsd),
+    gasReserveNative: clamp(input.gasReserveNative, 0, 10, base.gasReserveNative),
     paperStartEquityUsd: clamp(input.paperStartEquityUsd, 10, 10_000_000, base.paperStartEquityUsd),
     walletAddress: typeof input.walletAddress === "string" ? input.walletAddress.trim().slice(0, 80) : base.walletAddress,
   };

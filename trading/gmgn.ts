@@ -195,6 +195,52 @@ export async function nativeUsdPrice(chain: Chain): Promise<number> {
   return num(r?.native_token_usd_price ?? r?.nativeTokenUsdPrice);
 }
 
+/**
+ * Native balance of the API-key-bound wallet, in whole units (SOL / BNB / ETH).
+ *
+ * The gmgn-portfolio skill documents that `portfolio info` returns "wallets and main
+ * currency balances" but not the field names, so this walks the response looking for
+ * the matching wallet and a balance-shaped number. Returns null rather than a guess —
+ * sizing a real trade off an invented balance is worse than not trading.
+ */
+export async function nativeBalance(chain: Chain, wallet: string): Promise<number | null> {
+  const r = await cli(["portfolio", "info"], 1, 40_000);
+  const target = wallet.trim().toLowerCase();
+
+  const balanceOf = (o: Record<string, any>): number | null => {
+    for (const k of ["balance", "native_balance", "sol_balance", "amount", "available_balance"]) {
+      const v = num(o[k], -1);
+      if (v >= 0) return v;
+    }
+    return null;
+  };
+
+  const walk = (node: unknown, depth = 0): number | null => {
+    if (depth > 5 || !node || typeof node !== "object") return null;
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const hit = walk(item, depth + 1);
+        if (hit !== null) return hit;
+      }
+      return null;
+    }
+    const o = node as Record<string, any>;
+    const addr = String(o.address ?? o.wallet ?? o.wallet_address ?? "").toLowerCase();
+    const nodeChain = String(o.chain ?? "").toLowerCase();
+    if (addr === target && (!nodeChain || nodeChain === chain)) {
+      const b = balanceOf(o);
+      if (b !== null) return b;
+    }
+    for (const v of Object.values(o)) {
+      const hit = walk(v, depth + 1);
+      if (hit !== null) return hit;
+    }
+    return null;
+  };
+
+  return walk(r);
+}
+
 /** Live price for a held position. Falls back to the pool price if info is thin. */
 export async function currentPrice(chain: Chain, address: string): Promise<number> {
   const info = await tokenInfo(chain, address);

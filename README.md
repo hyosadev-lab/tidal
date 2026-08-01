@@ -72,6 +72,18 @@ Model balikin JSON: `entries`, `exits`, `notes`. Conviction di bawah 40 otomatis
 `riskPerTradePct` dari equity (default 4%), diskalakan sama conviction, maksimal 5 posisi
 bareng, dan gak pernah pakai lebih dari 90% cash yang tersisa.
 
+**Di live mode, saldo dibaca dari dompet asli** lewat `gmgn-cli portfolio info` tiap siklus —
+bukan dari paper bankroll. Kalau saldonya gak kebaca, entry di-skip siklus itu; sizing dari
+angka karangan cuma bikin swap ditolak GMGN, dan error `insufficient token balance` punya
+rate limiter sendiri. Sebagian saldo native disisihkan buat gas (SOL 0.02) dan gak pernah
+ikut dihitung — kalau semua SOL masuk posisi, kamu gak punya ongkos buat keluar.
+
+**Lantai ukuran posisi per chain:** SOL $3, BSC/Base $5, ETH $25. Di bawah itu, fee dan
+slippage lebih besar dari trade-nya. Kalau `equity x riskPerTradePct` gak pernah nyampe
+lantai, agent nolak start dan bilang kenapa — daripada bikin log "skipped" tiap siklus
+selamanya. Contoh: bankroll $45 dengan risk 5% cuma bisa bikin posisi $2.25, di bawah
+lantai SOL, jadi butuh minimal 7%.
+
 ### 6. Exit — mekanis, tiap 30 detik
 
 Dicek berurutan, yang pertama cocok yang jalan:

@@ -105,8 +105,11 @@
         <label class="mini"><span>Trail giveback %</span><input type="number" id="in-trailgive" min="5" max="80" step="1" /></label>
         <label class="mini"><span>Time stop (min)</span><input type="number" id="in-timestop" min="5" max="1440" step="5" /></label>
         <label class="mini"><span>Cooldown (min)</span><input type="number" id="in-cooldown" min="0" max="1440" step="5" /></label>
+        <label class="mini"><span>Min position $ <span class="muted">0 = auto</span></span><input type="number" id="in-minpos" min="0" step="1" /></label>
+        <label class="mini"><span>Gas reserve <span class="muted">0 = auto</span></span><input type="number" id="in-gasres" min="0" step="0.001" /></label>
       </div>
       <p class="hint">Take-profit ladder is fixed in <code>data/config.json</code>: <span id="lbl-ladder">—</span></p>
+      <p class="hint">Largest position these settings allow: <b id="lbl-ceiling">—</b>. Anything under the <b id="lbl-floor">—</b> floor is skipped, because fees and slippage would outweigh the trade.</p>
     </details>
 
     <details class="fold">

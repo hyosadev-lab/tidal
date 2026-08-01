@@ -109,7 +109,7 @@ const server = createServer(async (req, res) => {
 
       if (path === "/api/start") {
         if (body?.config) store.updateConfig(body.config);
-        const r = engine.start();
+        const r = await engine.start();
         return json(res, r.ok ? 200 : 400, r);
       }
 

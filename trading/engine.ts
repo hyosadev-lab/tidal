@@ -1,6 +1,6 @@
 import { runAgent, type Tool } from "../agent.ts";
 import { loadSkills, skillIndex, skillTool } from "../skills.ts";
-import { liveReady } from "./config.ts";
+import { gasReserve, liveReady, minPosition } from "./config.ts";
 import * as broker from "./broker.ts";
 import * as gmgn from "./gmgn.ts";
 import { num } from "./gmgn.ts";
@@ -199,6 +199,46 @@ async function gatherCandidates(): Promise<Candidate[]> {
   return all.sort((a, b) => b.score - a.score);
 }
 
+/**
+ * In live mode the ledger must reflect the actual wallet, not the paper bankroll.
+ * Without this, sizing is computed against an invented balance and GMGN rejects the
+ * swap with `insufficient token balance` — an error that has its own rate limiter,
+ * so repeatedly guessing wrong gets the key throttled.
+ *
+ * Returns false when the balance could not be read; callers must then skip entries
+ * rather than fall back to a number they made up.
+ */
+async function syncLiveBalance(): Promise<boolean> {
+  const cfg = store.config;
+  if (cfg.mode !== "live") return true;
+  try {
+    const [bal, px] = await Promise.all([
+      gmgn.nativeBalance(cfg.chain, cfg.walletAddress),
+      gmgn.nativeUsdPrice(cfg.chain),
+    ]);
+    if (bal === null) {
+      store.log("warn", "Could not read the wallet balance from gmgn-cli — skipping entries this cycle.");
+      return false;
+    }
+    if (!(px > 0)) {
+      store.log("warn", "Could not read the native token price — skipping entries this cycle.");
+      return false;
+    }
+    const spendable = Math.max(0, bal - gasReserve(cfg));
+    store.cash = spendable * px;
+    store.log(
+      "info",
+      `Wallet: ${bal.toFixed(4)} ${NATIVE_SYMBOL[cfg.chain]} · $${store.cash.toFixed(2)} spendable (${gasReserve(cfg)} held back for gas).`,
+    );
+    return true;
+  } catch (e) {
+    store.log("warn", `Wallet balance check failed: ${short(e)} — skipping entries this cycle.`);
+    return false;
+  }
+}
+
+const NATIVE_SYMBOL: Record<string, string> = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
+
 async function runScan(): Promise<void> {
   if (scanning) return;
   scanning = true;
@@ -207,6 +247,7 @@ async function runScan(): Promise<void> {
 
   try {
     store.rollDay();
+    const balanceOk = await syncLiveBalance();
     const cycle = store.bumpCycle();
     store.lastRunAt = Date.now();
     store.phase = "scanning";
@@ -254,6 +295,11 @@ async function runScan(): Promise<void> {
       return;
     }
 
+    if (!balanceOk) {
+      store.log("warn", "No entries this cycle — the wallet balance is unknown, so sizing cannot be trusted.");
+      return;
+    }
+
     store.phase = "entering";
     const byAddress = new Map(eligible.map((c) => [c.address.toLowerCase(), c]));
     let opened = 0;
@@ -274,8 +320,13 @@ async function runScan(): Promise<void> {
       const mult = Math.max(0.5, Math.min(1.5, num(e.sizeMultiplier, 1)));
       const stop = Math.max(10, Math.min(60, num(e.stopLossPct, cfg.stopLossPct)));
       const size = positionSize(cfg, store.equity, store.cash, conviction) * mult;
-      if (size < 5) {
-        store.log("warn", `${c.symbol} skipped — only $${size.toFixed(2)} of cash available for it.`);
+      const floor = minPosition(cfg);
+      if (size < floor) {
+        const capped = store.cash * 0.9 < store.equity * (cfg.riskPerTradePct / 100) ? "cash" : "the risk budget";
+        store.log(
+          "warn",
+          `${c.symbol} skipped — position would be $${size.toFixed(2)}, under the $${floor} floor (limited by ${capped}; cash $${store.cash.toFixed(2)}).`,
+        );
         continue;
       }
       await openPosition(c, size, String(e.thesis ?? "").slice(0, 400), conviction, stop);
@@ -489,15 +540,34 @@ function short(e: unknown): string {
 
 // ── lifecycle ─────────────────────────────────────────────────────────
 
-export function start(): { ok: boolean; error?: string } {
+export async function start(): Promise<{ ok: boolean; error?: string }> {
   if (store.runState === "running") return { ok: true };
   const cfg = store.config;
 
   if (cfg.mode === "live") {
     const ready = liveReady(cfg);
     if (!ready.ok) return { ok: false, error: `Live mode needs setup: ${ready.reason}.` };
+    // Size against the real wallet before deciding whether the settings can work at all.
+    if (!(await syncLiveBalance()))
+      return { ok: false, error: "Could not read your wallet balance from gmgn-cli. Check `gmgn-cli portfolio info` and your wallet address." };
   }
   if (!process.env.OPENROUTER_API_KEY) return { ok: false, error: "OPENROUTER_API_KEY is missing from .env." };
+
+  // The best case is conviction 100 with no size multiplier. If even that lands under
+  // the floor, every candidate will be skipped forever — say so now, not next cycle.
+  const ceiling = store.equity * (cfg.riskPerTradePct / 100);
+  const floor = minPosition(cfg);
+  if (ceiling < floor) {
+    const needed = Math.ceil((floor / Math.max(1, store.equity)) * 100);
+    return {
+      ok: false,
+      error:
+        `With $${store.equity.toFixed(2)} and ${cfg.riskPerTradePct}% risk per trade, the largest position is $${ceiling.toFixed(2)} — under the $${floor} minimum for ${cfg.chain.toUpperCase()}. ` +
+        (needed <= 25
+          ? `Raise risk per trade to at least ${needed}%, or trade a larger balance.`
+          : `Reaching the floor would need ${needed}% of the balance in a single position, which the ${cfg.chain.toUpperCase()} settings cannot support. Trade a larger balance or a cheaper chain.`),
+    };
+  }
 
   store.rollDay();
   store.runState = "running";

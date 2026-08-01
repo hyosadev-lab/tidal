@@ -49,6 +49,11 @@ export type TradeConfig = {
   slippagePct: number;
 
   // ── Wallet / accounting ─────────────────────────────────────────────
+  /** Smallest position worth opening, USD. 0 = per-chain default. */
+  minPositionUsd: number;
+  /** Native units held back for gas and never sized into. 0 = per-chain default. */
+  gasReserveNative: number;
+
   /** Starting balance for the paper ledger, USD. */
   paperStartEquityUsd: number;
   /** Wallet address for live mode. Must be bound to the GMGN API key. */

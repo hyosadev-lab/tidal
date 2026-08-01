@@ -17,6 +17,8 @@ const PRESETS = {
     "Capital preservation first. Require deep liquidity relative to market cap, a dev who has fully exited, and top-10 concentration under 20%. Size down to a 0.6 multiplier on everything. Ask to exit early at the first sign of smart money distributing.",
 };
 
+const FLOORS = { sol: 3, bsc: 5, base: 5, eth: 25 };
+
 let state = null;
 let dirty = false; // don't stomp on fields the operator is mid-edit
 let pendingMode = null;
@@ -183,6 +185,8 @@ function fillForm(c, s) {
   set("in-trailgive", c.trailGivebackPct);
   set("in-timestop", c.timeStopMinutes);
   set("in-cooldown", c.cooldownMinutes);
+  set("in-minpos", c.minPositionUsd);
+  set("in-gasres", c.gasReserveNative);
   set("in-liq", c.minLiquidityUsd);
   set("in-vol", c.minVolume1hUsd);
   set("in-rug", c.maxRugRatio);
@@ -194,6 +198,14 @@ function fillForm(c, s) {
   set("in-wallet", c.walletAddress);
 
   $("lbl-ladder").textContent = c.takeProfit.map((r) => `sell ${r.sell}% at +${r.at}%`).join(", ");
+
+  // Make the floor visible before it silently eats every candidate.
+  const floor = c.minPositionUsd || FLOORS[c.chain] || 5;
+  const ceiling = (s.stats?.equity ?? 0) * (c.riskPerTradePct / 100);
+  $("lbl-floor").textContent = usd(floor);
+  const ceilEl = $("lbl-ceiling");
+  ceilEl.textContent = usd(ceiling);
+  ceilEl.className = ceiling < floor ? "down" : "";
   $("live-status").textContent = s.liveReady
     ? "Armed. Live swaps will execute without further confirmation."
     : "Not armed. Live entries will be refused until GMGN_ALLOW_AUTOMATED_TRADES=1 is set and a wallet is saved.";
@@ -314,6 +326,8 @@ function collectConfig() {
     trailGivebackPct: n("in-trailgive", 25),
     timeStopMinutes: n("in-timestop", 180),
     cooldownMinutes: n("in-cooldown", 120),
+    minPositionUsd: n("in-minpos", 0),
+    gasReserveNative: n("in-gasres", 0),
     minLiquidityUsd: n("in-liq", 30000),
     minVolume1hUsd: n("in-vol", 20000),
     maxRugRatio: n("in-rug", 0.25),

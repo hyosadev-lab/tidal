@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_CONFIG, sanitizeConfig, liveReady } from "./trading/config.ts";
+import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, sanitizeConfig } from "./trading/config.ts";
 import { evaluateExit, healthExit, positionSize, runGates, score, toCandidate } from "./trading/plan.ts";
 import { store } from "./trading/store.ts";
 import * as broker from "./trading/broker.ts";
-import { _internals } from "./trading/engine.ts";
+import { _internals, start, stop } from "./trading/engine.ts";
 import type { Candidate, Position, TradeConfig } from "./trading/types.ts";
 
 const cfg: TradeConfig = { ...DEFAULT_CONFIG };
@@ -269,4 +269,39 @@ test("a rank row maps onto a candidate", () => {
   assert.equal(c.devHolding, false);
   assert.ok(Math.abs(c.change1hPct - 42) < 0.01, "ratio converted to percent");
   assert.ok(c.ageMinutes > 55 && c.ageMinutes < 65);
+});
+
+// ── minimum position size ─────────────────────────────────────────────
+
+test("the position floor tracks the chain's round-trip cost", () => {
+  assert.equal(minPosition({ ...cfg, chain: "sol", minPositionUsd: 0 }), 3);
+  assert.equal(minPosition({ ...cfg, chain: "eth", minPositionUsd: 0 }), 25);
+  assert.equal(minPosition({ ...cfg, chain: "sol", minPositionUsd: 10 }), 10, "an explicit value wins");
+});
+
+test("gas is held back so a fully deployed wallet can still pay to exit", () => {
+  assert.ok(gasReserve({ ...cfg, chain: "sol", gasReserveNative: 0 }) > 0);
+  assert.equal(gasReserve({ ...cfg, chain: "sol", gasReserveNative: 0.05 }), 0.05);
+});
+
+test("a risk envelope that can never clear the floor is refused at start", async () => {
+  const saved = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "test";
+  store.updateConfig({ chain: "sol", mode: "paper", paperStartEquityUsd: 45, riskPerTradePct: 5 });
+  store.reset();
+  const bad = await start();
+  stop();
+  assert.equal(bad.ok, false);
+  assert.match(bad.error ?? "", /under the \$3 minimum/);
+
+  store.updateConfig({ riskPerTradePct: 25 });
+  store.reset();
+  const good = await start();
+  stop();
+  assert.equal(good.ok, true, "25% of $45 clears the SOL floor");
+
+  store.updateConfig({ ...DEFAULT_CONFIG });
+  store.reset();
+  if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = saved;
 });
