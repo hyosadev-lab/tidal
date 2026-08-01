@@ -447,7 +447,10 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .log-error .log-m { color: var(--ebb); }
 
 /* ── dialog ─────────────────────────────────────────────────────── */
-.veil {
+/* `display` here would otherwise beat the UA's [hidden] rule, so state it explicitly. */
+.veil { display: none; }
+
+.veil:not([hidden]) {
   position: fixed; inset: 0;
   background: rgba(3, 10, 12, .82);
   display: grid; place-items: center;

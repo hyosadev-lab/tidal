@@ -359,15 +359,28 @@ $("in-confirm").addEventListener("input", (e) => {
   $("btn-confirm-live").disabled = e.target.value.trim().toUpperCase() !== "LIVE";
 });
 
-$("btn-cancel-live").addEventListener("click", () => {
+function closeVeil() {
   pendingMode = null;
   $("veil").hidden = true;
+  $("in-confirm").value = "";
+  $("btn-confirm-live").disabled = true;
+}
+
+$("btn-cancel-live").addEventListener("click", closeVeil);
+
+// Clicking the backdrop or pressing Escape are the two things people try first.
+$("veil").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) closeVeil();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("veil").hidden) closeVeil();
 });
 
 $("btn-confirm-live").addEventListener("click", async () => {
-  $("veil").hidden = true;
-  if (pendingMode !== "live") return;
-  pendingMode = null;
+  const wanted = pendingMode;
+  closeVeil();
+  if (wanted !== "live") return;
   for (const x of $("seg-mode").children) x.setAttribute("aria-pressed", String(x.dataset.v === "live"));
   await save();
 });
