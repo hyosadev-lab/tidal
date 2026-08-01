@@ -34,8 +34,9 @@ export function toCandidate(r: Record<string, any>, source: string): Candidate {
     marketCapUsd: num(r.market_cap ?? r.usd_market_cap) || price * supply,
     liquidityUsd: num(r.liquidity),
     volume1hUsd: num(r.volume ?? r.volume_1h ?? r.volume_24h),
-    change5mPct: num(r.price_change_percent5m) * 100,
-    change1hPct: num(r.price_change_percent1h ?? r.price_change_percent) * 100,
+    // GMGN sends these already in percent (16.6 = +16.6%), unlike rug_ratio / top_10_holder_rate.
+    change5mPct: num(r.price_change_percent5m),
+    change1hPct: num(r.price_change_percent1h ?? r.price_change_percent),
     swaps1h: num(r.swaps ?? r.swaps_1h),
     holderCount: num(r.holder_count),
     smartDegenCount: num(r.smart_degen_count),

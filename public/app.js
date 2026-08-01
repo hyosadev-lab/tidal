@@ -1,10 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const EXPLORER = {
-  sol: "https://solscan.io/token/",
-  bsc: "https://bscscan.com/token/",
-  base: "https://basescan.org/token/",
-  eth: "https://etherscan.io/token/",
-};
+const tokenUrl = (chain, address) => `https://gmgn.ai/${chain || "sol"}/token/${address}`;
 
 const PRESETS = {
   smart:
@@ -223,7 +218,7 @@ function renderPositions(s) {
       const rungs = p.filledRungs.length ? `<span class="pill">${p.filledRungs.length} rung${p.filledRungs.length > 1 ? "s" : ""}</span>` : "";
       const trail = p.trailArmed ? `<span class="pill pill-armed">trailing</span>` : "";
       return `<tr>
-        <td class="sym"><a class="linkish" href="${EXPLORER[p.chain] || ""}${esc(p.address)}" target="_blank" rel="noopener">${esc(p.symbol)}</a>
+        <td class="sym"><a class="linkish" href="${esc(tokenUrl(p.chain, p.address))}" target="_blank" rel="noopener">${esc(p.symbol)}</a>
           <small title="${esc(p.thesis)}">${esc(p.thesis).slice(0, 46)}${p.thesis.length > 46 ? "…" : ""}</small></td>
         <td class="r">${usd(value)}</td>
         <td class="r">${price(p.entryPrice)}</td>
@@ -248,7 +243,7 @@ function renderCandidates(s) {
     .map((c) => {
       const pass = !c.gateFailures.length;
       return `<tr>
-        <td class="sym"><a class="linkish" href="${EXPLORER[s.config.chain] || ""}${esc(c.address)}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
+        <td class="sym"><a class="linkish" href="${esc(tokenUrl(s.config.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
           <small>${esc(c.source)}</small></td>
         <td class="r">${pass ? c.score : "—"}</td>
         <td class="r">${usd(c.liquidityUsd, 0)}</td>

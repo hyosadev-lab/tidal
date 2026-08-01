@@ -259,7 +259,7 @@ test("a rank row maps onto a candidate", () => {
       rug_ratio: 0.04,
       top_10_holder_rate: 0.15,
       creator_token_status: "creator_close",
-      price_change_percent1h: 0.42,
+      price_change_percent1h: 42,
       creation_timestamp: Math.floor(Date.now() / 1000) - 3600,
     },
     "trending",
@@ -267,7 +267,7 @@ test("a rank row maps onto a candidate", () => {
   assert.equal(c.symbol, "WIF");
   assert.equal(c.liquidityUsd, 120_000);
   assert.equal(c.devHolding, false);
-  assert.ok(Math.abs(c.change1hPct - 42) < 0.01, "ratio converted to percent");
+  assert.ok(Math.abs(c.change1hPct - 42) < 0.01, "percent passed through, not rescaled");
   assert.ok(c.ageMinutes > 55 && c.ageMinutes < 65);
 });
 
