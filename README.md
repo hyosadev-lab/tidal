@@ -1,23 +1,181 @@
 # tidal-trading-agent
 
-Agent loop dengan tool calling, LLM lewat [OpenRouter](https://openrouter.ai).
+Agent trading otomatis untuk memecoin, jalan di atas [GMGN](https://gmgn.ai) lewat `gmgn-cli`,
+dengan dashboard buat ngeliat semua aktivitasnya. LLM lewat [OpenRouter](https://openrouter.ai).
 Cuma pakai `fetch` + stdlib — jalan di Node 22+, Bun, atau Deno.
 
 ```bash
-cp .env.example .env   # isi OPENROUTER_API_KEY
+cp .env.example .env         # isi OPENROUTER_API_KEY
+npm install -g gmgn-cli      # dibutuhin semua skill gmgn-*
+gmgn-cli config              # setup GMGN API key
 
-node --env-file-if-exists=.env index.ts   # chat interaktif, /reset & /exit
-node --test
-
-# atau: bun index.ts  /  bun test
+npm run dash                 # dashboard di http://127.0.0.1:3111
+npm start                    # chat interaktif (mode lama, /reset & /exit)
+npm test
 ```
 
-- [agent.ts](agent.ts) — loop-nya: kirim messages → kalau model minta tool, jalankan, balikin hasilnya → ulang sampai model jawab tanpa tool call.
-- [index.ts](index.ts) — contoh tool (`get_price`) + entry point.
+Default-nya **paper mode**: harga beneran, uang bohongan. Dompet kamu gak kesentuh sama sekali.
 
-- [skills.ts](skills.ts) — baca `skills/<nama>/SKILL.md`. Nama + deskripsi doang yang masuk system prompt; isi lengkapnya baru dikirim kalau agent manggil tool `load_skill`.
+---
 
-Nambah tool = nambah entry di object `tools`: `description`, `parameters` (JSON Schema), `run`.
+## Cara agent-nya mikir
+
+Pembagiannya disengaja:
+
+- **Gate, sizing, dan exit itu kode biasa.** Deterministik, jalan tiap 30 detik, gak peduli
+  modelnya lagi lemot, kena rate limit, atau lagi ngaco. Posisi yang udah kebuka gak pernah
+  bergantung sama panggilan LLM buat bisa ditutup.
+- **Model cuma milih dan nulis tesis.** Dia me-ranking kandidat yang *udah* lolos semua gate,
+  boleh nolak, boleh minta exit lebih awal — tapi gak bisa melonggarkan satu pun batas risiko.
+
+### 1. Scan (tiap `interval` menit)
+
+Tiga feed digabung: `market trending` 1 jam, `market trending` 5 menit, dan `market trenches`
+(token yang udah graduate). Filter awal didorong ke server GMGN biar hemat rate limit.
+
+### 2. Gate — gagal satu, gugur
+
+| Gate | Default |
+|---|---|
+| honeypot / wash trading | tolak langsung |
+| `rug_ratio` | <= 0.25 |
+| top-10 holder | <= 40% |
+| likuiditas | >= $30k |
+| volume 1 jam | >= $20k |
+| smart money | >= 1 wallet |
+| umur token | >= 20 menit |
+| buy/sell tax | < 10% |
+| likuiditas / market cap | >= 2% |
+
+Yang terakhir itu yang sering bikin orang kejebak: market cap $50M tapi kolam cuma $80k
+artinya pintu keluarnya sempit.
+
+### 3. Skor struktural (0-100)
+
+Smart money bobotnya paling besar. Momentum dihargai **sampai titik tertentu** — token yang
+udah naik 400% dalam sejam justru dikurangi skornya, karena masuk di situ artinya kamu jadi
+likuiditas buat orang yang keluar. Ditambah kedalaman kolam, turnover, konsentrasi holder,
+status dev, dan umur token.
+
+### 4. Analis (LLM)
+
+Kandidat yang lolos dikirim ke model bareng posisi terbuka dan instruksi kamu. Model punya
+tool read-only: `token_detail`, `token_security`, `top_holders`, `price_history`,
+`smart_money_flow`, plus semua skill `gmgn-*`. **Sengaja gak ada tool bash dan gak ada tool
+swap** — analis yang gak bisa belanja gak bisa dibujuk buat belanja sama teks yang dia baca
+di nama token.
+
+Model balikin JSON: `entries`, `exits`, `notes`. Conviction di bawah 40 otomatis ditolak kode.
+
+### 5. Sizing
+
+`riskPerTradePct` dari equity (default 4%), diskalakan sama conviction, maksimal 5 posisi
+bareng, dan gak pernah pakai lebih dari 90% cash yang tersisa.
+
+### 6. Exit — mekanis, tiap 30 detik
+
+Dicek berurutan, yang pertama cocok yang jalan:
+
+1. **Stop loss** -25%
+2. **Trailing stop** — aktif setelah +45%, keluar kalau turun 25% dari puncak
+3. **Take-profit bertingkat** — jual 40% di +60%, 30% di +150%, 20% di +400%
+4. **Time stop** — 180 menit masih di bawah +8% -> tutup, uangnya dipindah ke ide lain
+5. **Health check** — likuiditas anjlok >55% dari waktu masuk, atau token berubah honeypot
+
+Di live mode, take-profit dan stop-loss juga **ditempelkan ke transaksi beli** lewat
+`--condition-orders`, jadi posisinya tetap punya proteksi di sisi GMGN walaupun proses ini mati.
+
+### 7. Kill switch
+
+Rugi harian nembus `maxDailyLossPct` (default 15%) -> agent berhenti sendiri dan gak bisa
+jalan lagi sampai besok atau sampai kamu start manual. Reset otomatis tengah malam.
+
+---
+
+## Dashboard
+
+`npm run dash` -> http://127.0.0.1:3111
+
+- **Chain** — SOL / BSC / BASE / ETH
+- **Mode** — paper atau live (live minta konfirmasi ketik, lihat di bawah)
+- **Start / Stop** — posisi terbuka sengaja dibiarkan pas stop; tutup manual kalau mau keluar
+- **Instructions** — prompt opsional buat ngarahin analis, plus 4 preset siap pakai
+- **Interval** — menit antar scan; exit tetap dicek tiap 30 detik
+- **Risk envelope & Entry gates** — semua angka di atas bisa diubah dari UI
+- **Scan now** — paksa satu siklus tanpa nunggu timer
+
+Yang bisa dilihat: kurva equity (garis pasang tertinggi & surut terendah), posisi terbuka
+dengan P&L jalan, **Soundings** — semua token hasil scan terakhir lengkap sama alasan kenapa
+ditolak, riwayat fill, dan log streaming. Update lewat SSE, gak ada polling.
+
+State disimpan di `data/` — ledger dan setelan tetap ada setelah restart.
+
+### Prompt: contoh yang bagus
+
+```
+Cuma masuk kalau minimal 3 wallet smart money beda beli dalam sejam terakhir dan belum ada
+yang mulai jual. Cek top holders dulu sebelum commit. Kalau smart money-nya udah distribusi,
+lewatin — sebagus apa pun chart-nya.
+```
+
+Prompt kamu bisa **memperketat** seleksi, gak bisa melonggarkan batas risiko. Minta agent
+"pakai 50% modal per trade" tetap ditolak kode.
+
+---
+
+## Live mode
+
+Live mode kirim swap on-chain beneran yang gak bisa dibatalin.
+
+`gmgn-cli` punya penghalang di level kode: `--yes` ditolak kecuali `GMGN_ALLOW_AUTOMATED_TRADES=1`
+ada di environment. **Kode ini sengaja gak pernah nge-set variabel itu sendiri** — itu bentuk
+persetujuan kamu buat eksekusi tanpa konfirmasi, dan bukan hak proses ini buat ngasih izin
+atas nama kamu. Jadi kamu harus set sendiri:
+
+```bash
+export GMGN_ALLOW_AUTOMATED_TRADES=1
+npm run dash
+```
+
+Plus: isi alamat wallet di panel **Live wallet** (harus wallet yang terikat ke GMGN API key kamu),
+dan `GMGN_PRIVATE_KEY` sudah terkonfigurasi di `~/.config/gmgn/.env`. Tanpa ketiganya, entry
+live ditolak dan dicatat di log.
+
+Saran: jalanin paper mode dulu beberapa hari. Kalau equity-nya gak naik di paper, live cuma
+bikin rugi lebih cepat.
+
+> Memecoin trading risikonya sangat tinggi. Sebagian besar token akan ke nol. Ini alat, bukan
+> saran finansial — kamu yang menanggung semua hasilnya.
+
+---
+
+## Struktur
+
+```
+server.ts              HTTP + SSE, API kontrol
+public/                dashboard (vanilla, tanpa build step)
+trading/
+  types.ts             tipe bersama
+  config.ts            default + sanitasi (semua input dari UI diclamp di sini)
+  store.ts             state, persistensi, event bus
+  gmgn.ts              wrapper gmgn-cli + leaky bucket rate limiter
+  plan.ts              gate, skor, sizing, aturan exit, prompt analis
+  broker.ts            eksekusi paper & live
+  engine.ts            loop scan + monitor
+agent.ts               loop tool-calling (dipakai analis)
+skills.ts              loader skills/<nama>/SKILL.md
+index.ts               chat CLI (mode lama, punya tool bash)
+```
+
+`trading.test.ts` nutupin gate, skor, sizing, tiap aturan exit, round trip paper, clamping
+config, penolakan live mode, dan parsing output model. `npm test` buat jalanin semuanya.
+
+---
+
+## Nambah tool / skill
+
+Nambah tool analis = tambah entry di `analystTools` (`trading/engine.ts`): `description`,
+`parameters` (JSON Schema), `run`. Read-only aja.
 
 Nambah skill = bikin `skills/<nama>/SKILL.md`:
 
@@ -30,15 +188,16 @@ description: kapan skill ini dipakai — ini yang dibaca model buat mutusin
 Instruksi lengkapnya di sini.
 ```
 
-File pendukung (script dll) taro di folder yang sama; `load_skill` ngasih path absolut folder-nya
-ke model, jadi path `~/.claude/skills/...` di dalam SKILL.md gak masalah.
+Nama + deskripsi doang yang masuk system prompt; isi lengkapnya baru dikirim kalau model
+manggil tool `load_skill`. File pendukung taro di folder yang sama — `load_skill` ngasih path
+absolut folder-nya ke model.
 
-## Tool `bash`
+## Environment
 
-Skill gmgn semuanya nyuruh jalanin `gmgn-cli` / `python3`, jadi agent punya tool `bash`.
-Command jalan langsung tanpa konfirmasi, cuma di-echo ke terminal — termasuk `gmgn-swap`
-yang eksekusi transaksi on-chain beneran.
-
-```bash
-npm install -g gmgn-cli   # dibutuhin skill gmgn-*
+```
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.5
+PORT=3111                          # opsional
+HOST=127.0.0.1                     # opsional
+GMGN_ALLOW_AUTOMATED_TRADES=1      # HANYA kalau kamu mau live trading otomatis
 ```

@@ -1,0 +1,552 @@
+import { runAgent, type Tool } from "../agent.ts";
+import { loadSkills, skillIndex, skillTool } from "../skills.ts";
+import { liveReady } from "./config.ts";
+import * as broker from "./broker.ts";
+import * as gmgn from "./gmgn.ts";
+import { num } from "./gmgn.ts";
+import {
+  evaluateExit,
+  healthExit,
+  pnlPct,
+  positionSize,
+  runGates,
+  score,
+  systemPrompt,
+  toCandidate,
+  userPromptBlock,
+} from "./plan.ts";
+import { store } from "./store.ts";
+import type { Candidate, Decision, Position } from "./types.ts";
+
+let monitorTimer: NodeJS.Timeout | null = null;
+let scanTimer: NodeJS.Timeout | null = null;
+let scanning = false;
+let monitoring = false;
+
+// ── model plumbing ────────────────────────────────────────────────────
+
+const skills = await loadSkills(new URL("../skills", import.meta.url).pathname).catch(() => []);
+
+/**
+ * Read-only tools for the analyst. There is deliberately no bash and no swap tool
+ * here: execution is the engine's job, and an analyst that cannot spend money
+ * cannot be talked into spending money by something it read in a token name.
+ */
+const analystTools: Record<string, Tool> = {
+  token_detail: {
+    description: "Full detail for one token: price, liquidity, holders, socials, dev status, smart money counts.",
+    parameters: {
+      type: "object",
+      properties: { address: { type: "string" } },
+      required: ["address"],
+    },
+    run: async ({ address }: { address: string }) => {
+      const info = await gmgn.tokenInfo(store.config.chain, address);
+      return {
+        symbol: info?.symbol,
+        price: info?.price?.price,
+        liquidity: info?.liquidity,
+        holder_count: info?.holder_count,
+        market_cap: num(info?.price?.price) * num(info?.circulating_supply),
+        volume_1h: info?.price?.volume_1h,
+        volume_24h: info?.price?.volume_24h,
+        buys_1h: info?.price?.buys_1h,
+        sells_1h: info?.price?.sells_1h,
+        smart_wallets: info?.wallet_tags_stat?.smart_wallets,
+        renowned_wallets: info?.wallet_tags_stat?.renowned_wallets,
+        sniper_wallets: info?.wallet_tags_stat?.sniper_wallets,
+        top_10_holder_rate: info?.stat?.top_10_holder_rate,
+        dev_status: info?.dev?.creator_token_status,
+        fresh_wallet_rate: info?.stat?.fresh_wallet_rate,
+        twitter: info?.link?.twitter_username,
+        website: info?.link?.website,
+        created_at: info?.creation_timestamp,
+      };
+    },
+  },
+  token_security: {
+    description: "Security audit for a token: honeypot, taxes, rug ratio, holder concentration, dev holdings.",
+    parameters: { type: "object", properties: { address: { type: "string" } }, required: ["address"] },
+    run: ({ address }: { address: string }) => gmgn.tokenSecurity(store.config.chain, address),
+  },
+  top_holders: {
+    description: "Top holders for a token. Optional tag filter: smart_degen, renowned, sniper, dev, bundler.",
+    parameters: {
+      type: "object",
+      properties: { address: { type: "string" }, tag: { type: "string" }, limit: { type: "number" } },
+      required: ["address"],
+    },
+    run: async ({ address, tag, limit }: { address: string; tag?: string; limit?: number }) => {
+      const rows = await gmgn.tokenHolders(store.config.chain, address, Math.min(30, limit ?? 15), tag);
+      return rows.map((h) => ({
+        addr: String(h.address ?? "").slice(0, 8),
+        pct: num(h.amount_percentage) * 100,
+        avg_cost: h.avg_cost,
+        unrealized_pnl: h.unrealized_pnl,
+        sold_pct: num(h.sell_amount_percentage) * 100,
+        buys: h.buy_tx_count_cur,
+        sells: h.sell_tx_count_cur,
+        tags: h.tags,
+      }));
+    },
+  },
+  price_history: {
+    description: "Recent candles for a token. resolution: 1m, 5m, 15m, 1h. Returns the last `bars` candles.",
+    parameters: {
+      type: "object",
+      properties: { address: { type: "string" }, resolution: { type: "string" }, bars: { type: "number" } },
+      required: ["address"],
+    },
+    run: async ({ address, resolution, bars }: { address: string; resolution?: string; bars?: number }) => {
+      const res = resolution ?? "5m";
+      const n = Math.min(60, bars ?? 24);
+      const perBar = res === "1m" ? 60 : res === "5m" ? 300 : res === "15m" ? 900 : 3600;
+      const to = Math.floor(Date.now() / 1000);
+      const rows = await gmgn.kline(store.config.chain, address, res, to - perBar * n, to);
+      return rows.slice(-n).map((c) => ({ t: c.time, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume }));
+    },
+  },
+  smart_money_flow: {
+    description: "Recent buys and sells from wallets GMGN tags as smart money on this chain.",
+    parameters: { type: "object", properties: { limit: { type: "number" } } },
+    run: async ({ limit }: { limit?: number }) => {
+      const rows = await gmgn.smartMoney(store.config.chain, Math.min(100, limit ?? 50));
+      return rows.slice(0, 60).map((t) => ({
+        sym: t.base_token?.symbol,
+        addr: t.base_address,
+        side: t.side,
+        usd: t.amount_usd,
+        full_position: t.is_open_or_close,
+        at: t.timestamp,
+      }));
+    },
+  },
+};
+
+Object.assign(analystTools, skillTool(skills));
+
+function extractJson(text: string): Decision | null {
+  const cleaned = text.replace(/```(?:json)?/gi, "").trim();
+  const start = cleaned.indexOf("{");
+  if (start < 0) return null;
+  // Walk back from the end so trailing commentary doesn't break the parse.
+  for (let end = cleaned.lastIndexOf("}"); end > start; end = cleaned.lastIndexOf("}", end - 1)) {
+    try {
+      const o = JSON.parse(cleaned.slice(start, end + 1));
+      return {
+        entries: Array.isArray(o.entries) ? o.entries : [],
+        exits: Array.isArray(o.exits) ? o.exits : [],
+        notes: typeof o.notes === "string" ? o.notes : "",
+      };
+    } catch {
+      /* try the next closing brace */
+    }
+  }
+  return null;
+}
+
+// ── scan ──────────────────────────────────────────────────────────────
+
+async function gatherCandidates(): Promise<Candidate[]> {
+  const cfg = store.config;
+  const seen = new Map<string, Candidate>();
+
+  const add = (rows: Record<string, any>[], source: string) => {
+    for (const r of rows) {
+      const c = toCandidate(r, source);
+      if (!c.address) continue;
+      const key = c.address.toLowerCase();
+      const prior = seen.get(key);
+      // A token surfacing in more than one feed is a mild confirmation, so keep both labels.
+      if (prior) prior.source = `${prior.source}+${source}`;
+      else seen.set(key, c);
+    }
+  };
+
+  const feeds: Promise<void>[] = [
+    gmgn
+      .trending(cfg.chain, {
+        interval: "1h",
+        limit: 50,
+        minLiquidity: cfg.minLiquidityUsd,
+        minVolume: cfg.minVolume1hUsd,
+        minSmartDegen: cfg.minSmartDegenCount || undefined,
+      })
+      .then((r) => add(r, "trending-1h"))
+      .catch((e) => {
+        store.log("warn", `Trending feed failed: ${short(e)}`);
+      }),
+    gmgn
+      .trending(cfg.chain, { interval: "5m", limit: 30, minLiquidity: cfg.minLiquidityUsd })
+      .then((r) => add(r, "trending-5m"))
+      .catch(() => undefined),
+  ];
+  if (cfg.chain === "sol" || cfg.chain === "bsc")
+    feeds.push(
+      gmgn
+        .trenches(cfg.chain, "completed", 40)
+        .then((r) => add(r, "graduated"))
+        .catch(() => undefined),
+    );
+
+  await Promise.all(feeds);
+
+  const all = [...seen.values()];
+  for (const c of all) {
+    c.gateFailures = runGates(c, cfg);
+    c.score = c.gateFailures.length ? 0 : score(c);
+  }
+  return all.sort((a, b) => b.score - a.score);
+}
+
+async function runScan(): Promise<void> {
+  if (scanning) return;
+  scanning = true;
+  store.busy = true;
+  const cfg = store.config;
+
+  try {
+    store.rollDay();
+    const cycle = store.bumpCycle();
+    store.lastRunAt = Date.now();
+    store.phase = "scanning";
+    store.push();
+
+    const all = await gatherCandidates();
+    const held = new Set(store.positions.map((p) => p.address.toLowerCase()));
+    const eligible = all.filter(
+      (c) =>
+        !c.gateFailures.length &&
+        !held.has(c.address.toLowerCase()) &&
+        !store.onCooldown(c.address) &&
+        !store.isBlacklisted(c.address),
+    );
+    store.lastCandidates = all.slice(0, 40);
+    store.log(
+      "info",
+      `Cycle ${cycle}: ${all.length} tokens scanned, ${eligible.length} through the gates.`,
+      eligible.length ? eligible.slice(0, 8).map((c) => `${c.symbol} ${c.score}`).join("  ") : undefined,
+    );
+
+    if (!eligible.length && !store.positions.length) {
+      store.phase = "idle";
+      return;
+    }
+
+    store.phase = "analysing";
+    store.push();
+
+    const decision = await askAnalyst(eligible.slice(0, 18), cfg.maxOpenPositions - store.positions.length);
+    if (!decision) return;
+    if (decision.notes) store.log("model", decision.notes);
+
+    // Model-requested exits first — freeing a slot may enable an entry below.
+    for (const x of decision.exits ?? []) {
+      const p = store.position(String(x.address ?? ""));
+      if (!p) continue;
+      const pct = Math.max(1, Math.min(100, num(x.percent, 100)));
+      await closePosition(p, pct, `analyst: ${String(x.reason ?? "thesis changed").slice(0, 140)}`);
+    }
+
+    const slots = cfg.maxOpenPositions - store.positions.length;
+    if (slots <= 0) {
+      if (decision.entries?.length) store.log("info", "Entries skipped — position limit reached.");
+      return;
+    }
+
+    store.phase = "entering";
+    const byAddress = new Map(eligible.map((c) => [c.address.toLowerCase(), c]));
+    let opened = 0;
+
+    for (const e of decision.entries ?? []) {
+      if (opened >= slots) break;
+      const c = byAddress.get(String(e.address ?? "").toLowerCase());
+      if (!c) {
+        store.log("warn", `Analyst picked ${String(e.symbol ?? e.address).slice(0, 20)}, which is not on the eligible list. Skipped.`);
+        continue;
+      }
+      if (store.position(c.address)) continue;
+      const conviction = Math.max(0, Math.min(100, num(e.conviction, c.score)));
+      if (conviction < 40) {
+        store.log("info", `${c.symbol} skipped — conviction ${conviction} below the 40 floor.`);
+        continue;
+      }
+      const mult = Math.max(0.5, Math.min(1.5, num(e.sizeMultiplier, 1)));
+      const stop = Math.max(10, Math.min(60, num(e.stopLossPct, cfg.stopLossPct)));
+      const size = positionSize(cfg, store.equity, store.cash, conviction) * mult;
+      if (size < 5) {
+        store.log("warn", `${c.symbol} skipped — only $${size.toFixed(2)} of cash available for it.`);
+        continue;
+      }
+      await openPosition(c, size, String(e.thesis ?? "").slice(0, 400), conviction, stop);
+      opened++;
+    }
+    if (!opened && decision.entries?.length === 0) store.log("info", "No entry this cycle.");
+  } catch (e) {
+    store.log("error", `Scan failed: ${short(e)}`);
+  } finally {
+    scanning = false;
+    store.busy = false;
+    store.phase = "idle";
+    store.nextRunAt = Date.now() + store.config.intervalMinutes * 60_000;
+    store.markEquity();
+    store.push();
+  }
+}
+
+async function askAnalyst(candidates: Candidate[], slots: number): Promise<Decision | null> {
+  const cfg = store.config;
+  if (!process.env.OPENROUTER_API_KEY) {
+    store.log("error", "No OPENROUTER_API_KEY — the analyst can't run. Set it in .env and restart.");
+    return null;
+  }
+
+  const book = store.positions.map((p) => ({
+    address: p.address,
+    symbol: p.symbol,
+    pnl_pct: Number(pnlPct(p).toFixed(1)),
+    age_minutes: Math.round((Date.now() - p.openedAt) / 60_000),
+    size_usd: Number((p.qty * p.lastPrice).toFixed(2)),
+    rungs_filled: p.filledRungs.length,
+    thesis: p.thesis,
+  }));
+
+  const brief = {
+    chain: cfg.chain,
+    mode: cfg.mode,
+    equity_usd: Number(store.equity.toFixed(2)),
+    cash_usd: Number(store.cash.toFixed(2)),
+    free_slots: slots,
+    day_pnl_pct: Number(store.stats().dayPnlPct.toFixed(2)),
+    open_positions: book,
+    candidates: candidates.map((c) => ({
+      address: c.address,
+      symbol: c.symbol,
+      structure_score: c.score,
+      price: c.priceUsd,
+      mcap_usd: Math.round(c.marketCapUsd),
+      liquidity_usd: Math.round(c.liquidityUsd),
+      volume_1h_usd: Math.round(c.volume1hUsd),
+      change_5m_pct: Number(c.change5mPct.toFixed(1)),
+      change_1h_pct: Number(c.change1hPct.toFixed(1)),
+      swaps_1h: c.swaps1h,
+      holders: c.holderCount,
+      smart_money: c.smartDegenCount,
+      kols: c.renownedCount,
+      rug_ratio: c.rugRatio,
+      top10_rate: c.top10HolderRate,
+      dev_still_holding: c.devHolding,
+      age_minutes: Math.round(c.ageMinutes),
+      launchpad: c.launchpad,
+      seen_in: c.source,
+    })),
+  };
+
+  const system = systemPrompt(cfg) + userPromptBlock(cfg) + skillIndex(skills);
+  const prompt = `Cycle brief:\n\n${JSON.stringify(brief, null, 1)}\n\nReturn the JSON decision.`;
+
+  try {
+    const res = await runAgent(prompt, { tools: analystTools, system, maxSteps: 14 });
+    const decision = extractJson(res.text);
+    if (!decision) {
+      store.log("warn", "Analyst reply wasn't valid JSON — no action this cycle.", res.text.slice(0, 400));
+      return null;
+    }
+    return decision;
+  } catch (e) {
+    store.log("error", `Analyst call failed: ${short(e)}`);
+    return null;
+  }
+}
+
+// ── execution ─────────────────────────────────────────────────────────
+
+async function openPosition(
+  c: Candidate,
+  usd: number,
+  thesis: string,
+  conviction: number,
+  stopLossPct: number,
+): Promise<void> {
+  const cfg = store.config;
+  if (cfg.mode === "live") {
+    const ready = liveReady(cfg);
+    if (!ready.ok) {
+      store.log("error", `Live entry blocked — ${ready.reason}.`);
+      return;
+    }
+  }
+  try {
+    const res = await broker.buy(store, cfg, c, usd, thesis, conviction, stopLossPct);
+    if ("error" in res) {
+      store.log("warn", `Buy ${c.symbol} failed: ${res.error}`);
+      if (/honeypot/i.test(res.error)) store.blacklist(c.address);
+      return;
+    }
+    store.addPosition(res.position);
+    store.addTrade(res.trade);
+    store.log(
+      "trade",
+      `BUY ${c.symbol} — $${res.trade.usd.toFixed(2)} at $${res.trade.price.toPrecision(4)} (conviction ${conviction})`,
+      thesis,
+    );
+  } catch (e) {
+    store.log("error", `Buy ${c.symbol} errored: ${short(e)}`);
+  }
+}
+
+async function closePosition(p: Position, percentOfOriginal: number, reason: string): Promise<void> {
+  const cfg = store.config;
+  try {
+    const res = await broker.sell(store, cfg, p, percentOfOriginal, reason, p.entryLiquidityUsd);
+    if ("error" in res) {
+      store.log("error", `Sell ${p.symbol} failed: ${res.error}`);
+      return;
+    }
+    p.qty = Math.max(0, p.qty - res.qtySold);
+    p.realisedUsd += res.proceeds;
+    store.addTrade(res.trade);
+
+    const pnl = res.trade.pnlUsd ?? 0;
+    store.log(
+      "trade",
+      `SELL ${p.symbol} ${percentOfOriginal}% — $${res.proceeds.toFixed(2)} · ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)} (${(res.trade.pnlPct ?? 0).toFixed(1)}%)`,
+      reason,
+    );
+
+    const dust = p.qty * p.lastPrice < 1 || p.qty <= p.originalQty * 0.02;
+    if (dust) {
+      store.removePosition(p.id);
+      store.cooldown(p.address, cfg.cooldownMinutes);
+    } else {
+      store.save();
+    }
+    checkDailyLoss();
+  } catch (e) {
+    store.log("error", `Sell ${p.symbol} errored: ${short(e)}`);
+  }
+}
+
+function checkDailyLoss(): void {
+  const s = store.stats();
+  if (store.runState === "running" && s.dayPnlPct <= -store.config.maxDailyLossPct) {
+    store.runState = "halted";
+    store.haltReason = `Daily loss limit hit (${s.dayPnlPct.toFixed(1)}%). Trading halted until tomorrow or a manual restart.`;
+    stop(true);
+    store.log("warn", store.haltReason);
+    store.push();
+  }
+}
+
+// ── monitor ───────────────────────────────────────────────────────────
+
+async function runMonitor(): Promise<void> {
+  if (monitoring || !store.positions.length) return;
+  monitoring = true;
+  try {
+    const cfg = store.config;
+    for (const p of [...store.positions]) {
+      let info: Record<string, any> | null = null;
+      try {
+        info = await gmgn.tokenInfo(p.chain, p.address);
+      } catch (e) {
+        store.log("warn", `Price refresh failed for ${p.symbol}: ${short(e)}`);
+        continue;
+      }
+      const price = num(info?.price?.price);
+      if (price > 0) {
+        p.lastPrice = price;
+        p.peakPrice = Math.max(p.peakPrice, price);
+      }
+
+      const health = healthExit(p, info ?? {}, p.entryLiquidityUsd);
+      if (health) {
+        await closePosition(p, health.percent, health.reason);
+        continue;
+      }
+
+      const exit = evaluateExit(p, cfg);
+      if (exit) {
+        const rung = /^tp(\d+)$/.exec(exit.kind);
+        if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
+        await closePosition(p, exit.percent, exit.reason);
+      }
+    }
+    store.save();
+    store.markEquity();
+    store.push();
+  } catch (e) {
+    store.log("error", `Monitor tick failed: ${short(e)}`);
+  } finally {
+    monitoring = false;
+  }
+}
+
+function short(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  return m.replace(/\s+/g, " ").slice(0, 220);
+}
+
+// ── lifecycle ─────────────────────────────────────────────────────────
+
+export function start(): { ok: boolean; error?: string } {
+  if (store.runState === "running") return { ok: true };
+  const cfg = store.config;
+
+  if (cfg.mode === "live") {
+    const ready = liveReady(cfg);
+    if (!ready.ok) return { ok: false, error: `Live mode needs setup: ${ready.reason}.` };
+  }
+  if (!process.env.OPENROUTER_API_KEY) return { ok: false, error: "OPENROUTER_API_KEY is missing from .env." };
+
+  store.rollDay();
+  store.runState = "running";
+  store.haltReason = "";
+  store.log(
+    "info",
+    `Started on ${cfg.chain.toUpperCase()} in ${cfg.mode} mode — scanning every ${cfg.intervalMinutes}m, checking exits every ${cfg.monitorSeconds}s.`,
+  );
+
+  monitorTimer = setInterval(() => void runMonitor(), cfg.monitorSeconds * 1000);
+  scanTimer = setInterval(() => void runScan(), cfg.intervalMinutes * 60_000);
+  store.nextRunAt = Date.now() + 1500;
+  setTimeout(() => void runScan(), 1500);
+  store.push();
+  return { ok: true };
+}
+
+export function stop(keepState = false): void {
+  if (monitorTimer) clearInterval(monitorTimer);
+  if (scanTimer) clearInterval(scanTimer);
+  monitorTimer = scanTimer = null;
+  if (!keepState && store.runState === "running") {
+    store.runState = "stopped";
+    store.log("info", "Stopped. Open positions are left untouched — close them from the dashboard if you want out.");
+  }
+  store.nextRunAt = 0;
+  store.push();
+}
+
+/** Restart the timers so a changed interval takes effect immediately. */
+export function reschedule(): void {
+  if (store.runState !== "running") return;
+  if (monitorTimer) clearInterval(monitorTimer);
+  if (scanTimer) clearInterval(scanTimer);
+  monitorTimer = setInterval(() => void runMonitor(), store.config.monitorSeconds * 1000);
+  scanTimer = setInterval(() => void runScan(), store.config.intervalMinutes * 60_000);
+  store.nextRunAt = Date.now() + store.config.intervalMinutes * 60_000;
+  store.push();
+}
+
+export async function scanNow(): Promise<void> {
+  await runScan();
+}
+
+export async function manualClose(positionId: string, percent = 100): Promise<{ ok: boolean; error?: string }> {
+  const p = store.positions.find((x) => x.id === positionId);
+  if (!p) return { ok: false, error: "position not found" };
+  await closePosition(p, Math.max(1, Math.min(100, percent)), "closed by hand from the dashboard");
+  return { ok: true };
+}
+
+export const _internals = { runScan, runMonitor, gatherCandidates, extractJson };

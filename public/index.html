@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tidal · trading station</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🌊</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<header class="station">
+  <div class="mark">
+    <span class="mark-name">Tidal</span>
+    <span class="mark-sub">trading station</span>
+  </div>
+  <div class="station-meta">
+    <span class="chip" id="chip-chain">SOL</span>
+    <span class="chip" id="chip-mode">PAPER</span>
+    <span class="chip" id="chip-cycle">cycle 0</span>
+  </div>
+  <div class="station-run">
+    <span class="beacon" id="beacon" data-state="stopped"></span>
+    <span class="run-label" id="run-label">stopped</span>
+    <button class="btn btn-primary" id="btn-run">Start agent</button>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<!-- signature: the tide gauge -->
+<section class="gauge" aria-label="Equity tide gauge">
+  <div class="gauge-read">
+    <div class="gauge-eq" id="eq-value">$0.00</div>
+    <div class="gauge-day"><span id="eq-day">0.00%</span> <span class="muted">today</span></div>
+  </div>
+  <svg class="gauge-svg" id="tide" viewBox="0 0 1000 200" preserveAspectRatio="none" role="img" aria-label="equity over time"></svg>
+  <div class="gauge-marks">
+    <span><i class="mk mk-high"></i> high water <b id="mk-high">—</b></span>
+    <span><i class="mk mk-low"></i> low water <b id="mk-low">—</b></span>
+    <span class="muted" id="mk-span">no soundings yet</span>
+  </div>
+</section>
+
+<div class="readout">
+  <div class="cell"><span class="cell-k">cash</span><span class="cell-v" id="s-cash">—</span></div>
+  <div class="cell"><span class="cell-k">in market</span><span class="cell-v" id="s-exposure">—</span></div>
+  <div class="cell"><span class="cell-k">realised</span><span class="cell-v" id="s-realised">—</span></div>
+  <div class="cell"><span class="cell-k">unrealised</span><span class="cell-v" id="s-unrealised">—</span></div>
+  <div class="cell"><span class="cell-k">win rate</span><span class="cell-v" id="s-winrate">—</span></div>
+  <div class="cell"><span class="cell-k">max drawdown</span><span class="cell-v" id="s-dd">—</span></div>
+  <div class="cell"><span class="cell-k">next scan</span><span class="cell-v" id="s-next">—</span></div>
+</div>
+
+<main class="deck">
+
+  <!-- ── controls ─────────────────────────────────────────────── -->
+  <aside class="panel rail">
+    <h2 class="eyebrow">Controls</h2>
+
+    <label class="field">
+      <span class="field-k">Chain</span>
+      <div class="seg" id="seg-chain">
+        <button data-v="sol">SOL</button><button data-v="bsc">BSC</button><button data-v="base">BASE</button><button data-v="eth">ETH</button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span class="field-k">Trading mode</span>
+      <div class="seg seg-mode" id="seg-mode">
+        <button data-v="paper">Paper</button><button data-v="live">Live</button>
+      </div>
+      <span class="hint" id="mode-hint">Paper trades against live prices. Nothing leaves your wallet.</span>
+    </label>
+
+    <label class="field">
+      <span class="field-k">Scan interval <b id="lbl-interval">15 min</b></span>
+      <input type="range" id="in-interval" min="1" max="120" step="1" value="15" />
+      <span class="hint">How often the agent re-scans for tokens and re-runs analysis. Exits are checked every <b id="lbl-monitor">30</b>s regardless.</span>
+    </label>
+
+    <label class="field">
+      <span class="field-k">Instructions to the agent <span class="muted">optional</span></span>
+      <textarea id="in-prompt" rows="6" spellcheck="false"
+        placeholder="e.g. Only take tokens where at least 3 smart-money wallets bought in the last hour and the dev has fully exited. Skip anything already up more than 80% today. Size down after two losses in a row."></textarea>
+      <div class="presets" id="presets">
+        <button data-preset="smart">Smart-money only</button>
+        <button data-preset="patient">Patient / low churn</button>
+        <button data-preset="momentum">Early momentum</button>
+        <button data-preset="defensive">Defensive</button>
+      </div>
+    </label>
+
+    <details class="fold">
+      <summary>Risk envelope</summary>
+      <div class="grid2">
+        <label class="mini"><span>Risk per trade %</span><input type="number" id="in-risk" min="0.5" max="25" step="0.5" /></label>
+        <label class="mini"><span>Max open</span><input type="number" id="in-maxpos" min="1" max="20" step="1" /></label>
+        <label class="mini"><span>Stop loss %</span><input type="number" id="in-stop" min="5" max="90" step="1" /></label>
+        <label class="mini"><span>Daily loss cap %</span><input type="number" id="in-daily" min="1" max="90" step="1" /></label>
+        <label class="mini"><span>Trail arms at %</span><input type="number" id="in-trailarm" min="5" max="500" step="5" /></label>
+        <label class="mini"><span>Trail giveback %</span><input type="number" id="in-trailgive" min="5" max="80" step="1" /></label>
+        <label class="mini"><span>Time stop (min)</span><input type="number" id="in-timestop" min="5" max="1440" step="5" /></label>
+        <label class="mini"><span>Cooldown (min)</span><input type="number" id="in-cooldown" min="0" max="1440" step="5" /></label>
+      </div>
+      <p class="hint">Take-profit ladder is fixed in <code>data/config.json</code>: <span id="lbl-ladder">—</span></p>
+    </details>
+
+    <details class="fold">
+      <summary>Entry gates</summary>
+      <div class="grid2">
+        <label class="mini"><span>Min liquidity $</span><input type="number" id="in-liq" min="0" step="1000" /></label>
+        <label class="mini"><span>Min 1h volume $</span><input type="number" id="in-vol" min="0" step="1000" /></label>
+        <label class="mini"><span>Max rug ratio</span><input type="number" id="in-rug" min="0" max="1" step="0.05" /></label>
+        <label class="mini"><span>Max top-10 %</span><input type="number" id="in-top10" min="0" max="100" step="1" /></label>
+        <label class="mini"><span>Min smart money</span><input type="number" id="in-smart" min="0" max="50" step="1" /></label>
+        <label class="mini"><span>Min age (min)</span><input type="number" id="in-minage" min="0" step="5" /></label>
+        <label class="mini"><span>Slippage %</span><input type="number" id="in-slip" min="1" max="100" step="1" /></label>
+        <label class="mini"><span>Paper bankroll $</span><input type="number" id="in-bankroll" min="10" step="100" /></label>
+      </div>
+    </details>
+
+    <details class="fold" id="fold-live">
+      <summary>Live wallet</summary>
+      <label class="mini"><span>Wallet address (bound to your GMGN API key)</span><input type="text" id="in-wallet" spellcheck="false" placeholder="…" /></label>
+      <p class="hint" id="live-status">—</p>
+    </details>
+
+    <div class="rail-actions">
+      <button class="btn" id="btn-save">Save settings</button>
+      <button class="btn" id="btn-scan">Scan now</button>
+      <button class="btn btn-quiet" id="btn-reset">Clear ledger</button>
+    </div>
+  </aside>
+
+  <!-- ── the book ─────────────────────────────────────────────── -->
+  <div class="stack">
+
+    <section class="panel">
+      <h2 class="eyebrow">Holdings <span class="count" id="c-pos">0</span></h2>
+      <div class="table-wrap">
+        <table class="tbl" id="tbl-positions">
+          <thead><tr>
+            <th>Token</th><th class="r">Size</th><th class="r">Entry</th><th class="r">Now</th><th class="r">P&amp;L</th><th class="r">Peak</th><th class="r">Age</th><th>State</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="e-pos">Nothing open. The agent buys only when a candidate clears every gate and the analyst backs it.</p>
+    </section>
+
+    <section class="panel">
+      <h2 class="eyebrow">Soundings <span class="count" id="c-cand">0</span><span class="eyebrow-note">last scan</span></h2>
+      <div class="table-wrap">
+        <table class="tbl" id="tbl-candidates">
+          <thead><tr>
+            <th>Token</th><th class="r">Score</th><th class="r">Liq</th><th class="r">Vol 1h</th><th class="r">1h</th><th class="r">SM</th><th class="r">Rug</th><th>Verdict</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="e-cand">No scan yet. Start the agent, or run one scan by hand.</p>
+    </section>
+
+    <section class="panel">
+      <h2 class="eyebrow">Tide table <span class="eyebrow-note">every fill, newest first</span></h2>
+      <div class="table-wrap">
+        <table class="tbl" id="tbl-trades">
+          <thead><tr>
+            <th>Time</th><th>Side</th><th>Token</th><th class="r">Price</th><th class="r">USD</th><th class="r">P&amp;L</th><th>Why</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="e-trades">No fills yet.</p>
+    </section>
+
+    <section class="panel">
+      <h2 class="eyebrow">Log</h2>
+      <div class="log" id="log"></div>
+    </section>
+
+  </div>
+</main>
+
+<!-- live-mode confirmation -->
+<div class="veil" id="veil" hidden>
+  <div class="dialog">
+    <h3>Switch to live trading</h3>
+    <p>Live mode sends real, irreversible swaps from your wallet using the GMGN API. Positions can go to zero. Only trade funds you can afford to lose entirely.</p>
+    <p class="fine">The CLI also requires <code>GMGN_ALLOW_AUTOMATED_TRADES=1</code> in the shell you started this server from. That variable is your consent to headless execution — set it yourself, deliberately.</p>
+    <label class="mini"><span>Type <b>LIVE</b> to confirm</span><input type="text" id="in-confirm" autocomplete="off" spellcheck="false" /></label>
+    <div class="dialog-actions">
+      <button class="btn btn-quiet" id="btn-cancel-live">Stay on paper</button>
+      <button class="btn btn-danger" id="btn-confirm-live" disabled>Enable live mode</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
