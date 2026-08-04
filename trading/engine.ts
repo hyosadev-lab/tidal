@@ -5,6 +5,7 @@ import * as broker from "./broker.ts";
 import * as gmgn from "./gmgn.ts";
 import { num } from "./gmgn.ts";
 import {
+  buyableSet,
   evaluateExit,
   healthExit,
   pnlPct,
@@ -28,11 +29,103 @@ let monitoring = false;
 const skills = await loadSkills(new URL("../skills", import.meta.url).pathname).catch(() => []);
 
 /**
+ * Candidates the analyst turned up itself via `find_tokens`, keyed by lowercased
+ * address. Reset each cycle. Gates have already been run on every entry — being in
+ * here is not permission to buy, only permission to be considered.
+ */
+let discovered = new Map<string, Candidate>();
+
+/**
  * Read-only tools for the analyst. There is deliberately no bash and no swap tool
  * here: execution is the engine's job, and an analyst that cannot spend money
  * cannot be talked into spending money by something it read in a token name.
  */
 const analystTools: Record<string, Tool> = {
+  find_tokens: {
+    description:
+      "Search for tokens the pre-scan did not surface. feed: trending (rank by volume), " +
+      "trenches (launchpad graduates), signals (smart-money buys, price spikes, ATH), " +
+      "hot_searches (most searched). Returns each token with the entry gates already applied — " +
+      "rows with gate_failures cannot be bought no matter how good they look. Call this more than " +
+      "once with different parameters if the operator's instructions call for it.",
+    parameters: {
+      type: "object",
+      properties: {
+        feed: { type: "string", enum: ["trending", "trenches", "signals", "hot_searches"] },
+        interval: { type: "string", description: "trending/hot_searches only: 1m, 5m, 1h, 6h, 24h. Default 1h." },
+        trench_type: { type: "string", enum: ["completed", "near_completion", "new_creation"] },
+        signal_types: { type: "array", items: { type: "number" }, description: "signals only: 12 = smart money buy, 6 = price spike, 7 = ATH." },
+        platforms: { type: "array", items: { type: "string" }, description: "trending only: launchpad names, e.g. Pump.fun, letsbonk, fourmeme." },
+        min_liquidity_usd: { type: "number" },
+        min_volume_usd: { type: "number" },
+        min_smart_money: { type: "number" },
+        min_kols: { type: "number" },
+        max_age: { type: "string", description: "trending only: max token age with a unit, e.g. 30m, 6h, 7d." },
+        min_age: { type: "string", description: "trending only: min token age with a unit." },
+        limit: { type: "number", description: "Max 50." },
+      },
+      required: ["feed"],
+    },
+    run: async (a: Record<string, any>) => {
+      const cfg = store.config;
+      const limit = Math.min(50, Math.max(1, num(a.limit, 30)));
+      let rows: Record<string, any>[] = [];
+      const feed = String(a.feed);
+
+      // The floors here are the config's, not the model's: a request for looser
+      // liquidity than the operator configured is silently clamped back up.
+      if (feed === "trending")
+        rows = await gmgn.trending(cfg.chain, {
+          interval: String(a.interval ?? "1h"),
+          limit,
+          minLiquidity: Math.max(cfg.minLiquidityUsd, num(a.min_liquidity_usd)),
+          minVolume: Math.max(cfg.minVolume1hUsd, num(a.min_volume_usd)),
+          minSmartDegen: Math.max(cfg.minSmartDegenCount, num(a.min_smart_money)) || undefined,
+          minRenowned: num(a.min_kols) || undefined,
+          maxCreated: a.max_age ? String(a.max_age) : undefined,
+          minCreated: a.min_age ? String(a.min_age) : undefined,
+          platforms: Array.isArray(a.platforms) ? a.platforms.map(String).slice(0, 12) : undefined,
+        });
+      else if (feed === "trenches") rows = await gmgn.trenches(cfg.chain, String(a.trench_type ?? "completed"), limit);
+      else if (feed === "signals")
+        rows = await gmgn.signals(cfg.chain, Array.isArray(a.signal_types) ? a.signal_types.map(Number) : undefined);
+      else if (feed === "hot_searches") rows = await gmgn.hotSearches(cfg.chain, String(a.interval ?? "1h"), limit);
+      else return { error: `unknown feed: ${feed}` };
+
+      const held = new Set(store.positions.map((p) => p.address.toLowerCase()));
+      const out = rows.slice(0, limit).map((r) => {
+        const c = toCandidate(r, `find:${feed}`);
+        c.gateFailures = runGates(c, cfg);
+        c.score = c.gateFailures.length ? 0 : score(c);
+        const key = c.address.toLowerCase();
+        if (c.address) discovered.set(key, c);
+        const blocked = held.has(key)
+          ? "already held"
+          : store.onCooldown(c.address)
+            ? "on cooldown"
+            : store.isBlacklisted(c.address)
+              ? "blacklisted"
+              : "";
+        return {
+          address: c.address,
+          symbol: c.symbol,
+          structure_score: c.score,
+          mcap_usd: Math.round(c.marketCapUsd),
+          liquidity_usd: Math.round(c.liquidityUsd),
+          volume_1h_usd: Math.round(c.volume1hUsd),
+          change_1h_pct: Number(c.change1hPct.toFixed(1)),
+          holders: c.holderCount,
+          smart_money: c.smartDegenCount,
+          kols: c.renownedCount,
+          age_minutes: Math.round(c.ageMinutes),
+          launchpad: c.launchpad,
+          gate_failures: c.gateFailures,
+          blocked,
+        };
+      });
+      return { feed, returned: out.length, tokens: out };
+    },
+  },
   token_detail: {
     description: "Full detail for one token: price, liquidity, holders, socials, dev status, smart money counts.",
     parameters: {
@@ -277,6 +370,7 @@ async function runScan(): Promise<void> {
     store.phase = "analysing";
     store.push();
 
+    discovered = new Map();
     const decision = await askAnalyst(eligible.slice(0, 18), cfg.maxOpenPositions - store.positions.length);
     if (!decision) return;
     if (decision.notes) store.log("model", decision.notes);
@@ -301,14 +395,22 @@ async function runScan(): Promise<void> {
     }
 
     store.phase = "entering";
-    const byAddress = new Map(eligible.map((c) => [c.address.toLowerCase(), c]));
+    const blocked = new Set(held);
+    for (const c of discovered.values()) {
+      const key = c.address.toLowerCase();
+      if (store.onCooldown(c.address) || store.isBlacklisted(c.address)) blocked.add(key);
+    }
+    const byAddress = buyableSet(eligible, [...discovered.values()], blocked);
     let opened = 0;
 
     for (const e of decision.entries ?? []) {
       if (opened >= slots) break;
       const c = byAddress.get(String(e.address ?? "").toLowerCase());
       if (!c) {
-        store.log("warn", `Analyst picked ${String(e.symbol ?? e.address).slice(0, 20)}, which is not on the eligible list. Skipped.`);
+        store.log(
+          "warn",
+          `Analyst picked ${String(e.symbol ?? e.address).slice(0, 20)}, which is not eligible — it failed a gate, is on cooldown, or was never scanned. Skipped.`,
+        );
         continue;
       }
       if (store.position(c.address)) continue;
@@ -397,7 +499,9 @@ async function askAnalyst(candidates: Candidate[], slots: number): Promise<Decis
   const prompt = `Cycle brief:\n\n${JSON.stringify(brief, null, 1)}\n\nReturn the JSON decision.`;
 
   try {
-    const res = await runAgent(prompt, { tools: analystTools, system, maxSteps: 14 });
+    // Discovery calls come out of the same budget as research, so the ceiling went up
+    // with find_tokens. Raise it further only if logs show the analyst running out.
+    const res = await runAgent(prompt, { tools: analystTools, system, maxSteps: 22 });
     const decision = extractJson(res.text);
     if (!decision) {
       store.log("warn", "Analyst reply wasn't valid JSON — no action this cycle.", res.text.slice(0, 400));
@@ -619,4 +723,4 @@ export async function manualClose(positionId: string, percent = 100): Promise<{ 
   return { ok: true };
 }
 
-export const _internals = { runScan, runMonitor, gatherCandidates, extractJson };
+export const _internals = { runScan, runMonitor, gatherCandidates, extractJson, analystTools };

@@ -188,19 +188,37 @@ export async function trending(
     maxRugRatio?: number;
     minSmartDegen?: number;
     maxCreated?: string;
+    minCreated?: string;
+    minRenowned?: number;
+    maxTop10Rate?: number;
+    orderBy?: string;
+    platforms?: string[];
   } = {},
 ): Promise<RankItem[]> {
   const q: Query = {
     chain,
     interval: opts.interval ?? "1h",
-    order_by: "volume",
+    order_by: opts.orderBy ?? "volume",
     limit: opts.limit ?? 50,
   };
   if (opts.minLiquidity) q["min_liquidity"] = Math.round(opts.minLiquidity);
   if (opts.minVolume) q["min_volume"] = Math.round(opts.minVolume);
   if (opts.minSmartDegen) q["min_smart_degen_count"] = opts.minSmartDegen;
+  if (opts.minRenowned) q["min_renowned_count"] = opts.minRenowned;
+  if (opts.maxTop10Rate) q["max_top10_holder_rate"] = opts.maxTop10Rate;
   if (opts.maxCreated) q["max_created"] = opts.maxCreated;
+  if (opts.minCreated) q["min_created"] = opts.minCreated;
+  if (opts.platforms?.length) q["platforms"] = opts.platforms;
   return list(await api("GET", "/v1/market/rank", q), "rank");
+}
+
+/**
+ * Most-searched tokens on GMGN. A crowd-attention feed, not a quality signal.
+ * The response nests the real rows one level down, per requested chain/interval.
+ */
+export async function hotSearches(chain: Chain, interval = "1h", limit = 30): Promise<RankItem[]> {
+  const r = await api("POST", "/v1/market/hot_searches", {}, { params: [{ chain, interval, limit }] }, { weight: 2 });
+  return list(r, "list", "rank").flatMap((g: any) => list(g, "tokens"));
 }
 
 /** Mirrors the CLI's `--filter-preset strict`. */
@@ -234,7 +252,9 @@ const TRENCHES_QUOTE_TYPES: Partial<Record<Chain, number[]>> = {
   bsc: [6, 7, 1, 16, 8, 3, 9, 10, 2, 17, 18, 0],
 };
 
-export async function trenches(chain: Chain, type = "completed", limit = 40): Promise<RankItem[]> {
+export type TrenchType = "completed" | "near_completion" | "new_creation";
+
+export async function trenches(chain: Chain, type: TrenchType | string = "completed", limit = 40): Promise<RankItem[]> {
   const section: Record<string, unknown> = {
     filters: ["offchain", "onchain"],
     launchpad_platform_v2: true,
@@ -247,14 +267,17 @@ export async function trenches(chain: Chain, type = "completed", limit = 40): Pr
   if (quoteTypes?.length) section["quote_address_type"] = quoteTypes;
 
   const r = await api("POST", "/v1/trenches", { chain }, { version: "v2", [type]: section }, { weight: 3 });
-  return [...list(r, "completed"), ...list(r, "pump"), ...list(r, "new_creation")];
+  return [...list(r, "completed"), ...list(r, "near_completion"), ...list(r, "pump"), ...list(r, "new_creation")];
 }
 
-export async function signals(chain: Chain): Promise<RankItem[]> {
-  // 12 = smart money buy, 6 = price spike, 7 = ATH
-  const groups = [{ signal_type: [12] }, { signal_type: [6, 7] }];
+/**
+ * Signal types: 12 = smart money buy, 6 = price spike, 7 = ATH.
+ * Each row wraps the token payload in `data`; unwrap it so callers see one row shape.
+ */
+export async function signals(chain: Chain, signalTypes?: number[]): Promise<RankItem[]> {
+  const groups = signalTypes?.length ? [{ signal_type: signalTypes }] : [{ signal_type: [12] }, { signal_type: [6, 7] }];
   const r = await api("POST", "/v1/market/token_signal", {}, { chain, groups }, { weight: 3 });
-  return list(r, "list", "signals");
+  return list(r, "list", "signals").map((s: any) => ({ ...(s.data ?? {}), signal_type: s.signal_type, trigger_mc: s.trigger_mc }));
 }
 
 export async function tokenInfo(chain: Chain, address: string): Promise<Record<string, any>> {

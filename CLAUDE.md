@@ -68,9 +68,16 @@ risk logic in `plan.ts`/`config.ts` — not in prompts.
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), analyst tool definitions, lifecycle |
 
 Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
-top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) → `broker.buy/sell` →
-`store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs independently and
-never touches the LLM.
+top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) → `buyableSet` →
+`broker.buy/sell` → `store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs
+independently and never touches the LLM.
+
+`gatherCandidates` is the **floor**, not the whole search. During `askAnalyst` the model can call
+`find_tokens` (trending / trenches / signals / hot_searches) to look where the fixed sweep does not,
+steered by the operator's dashboard prompt — that is the only way `cfg.prompt` reaches scanning,
+since the sweep itself runs before the model is called. Rows it finds land in the module-level
+`discovered` map, already gated. If the model calls nothing, or the call fails, the cycle degrades
+to exactly the pre-scan behaviour.
 
 ## Invariants worth knowing before you edit
 
@@ -82,6 +89,11 @@ never touches the LLM.
 - **`analystTools` in `engine.ts` is read-only by design** — no bash tool, no swap tool. An analyst
   that cannot spend money cannot be talked into spending money by a token name. Keep new analyst
   tools read-only.
+- **Discovery widens the search, never the risk envelope.** `find_tokens` clamps every threshold
+  back up to `store.config` (asking for `min_liquidity_usd: 1` still returns nothing under
+  `cfg.minLiquidityUsd`), runs `runGates` on every row before returning it, and `buyableSet` in
+  `plan.ts` re-checks gates, cooldown, blacklist and open positions before an address can be bought.
+  A token being in `discovered` is permission to be *considered*, not to be bought.
 - **Token names/symbols are attacker-controlled data.** The system prompt says so; don't add code
   paths that treat scanned text as instructions.
 - **GMGN percent conventions differ per field.** `rug_ratio` and `top_10_holder_rate` are ratios

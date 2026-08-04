@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, sanitizeConfig } from "./trading/config.ts";
-import { evaluateExit, healthExit, positionSize, runGates, score, toCandidate } from "./trading/plan.ts";
+import { buyableSet, evaluateExit, healthExit, positionSize, runGates, score, toCandidate } from "./trading/plan.ts";
 import { store } from "./trading/store.ts";
 import * as broker from "./trading/broker.ts";
 import { _internals, start, stop } from "./trading/engine.ts";
@@ -63,6 +63,37 @@ function position(over: Partial<Position> = {}): Position {
     ...over,
   };
 }
+
+// ── what the analyst is allowed to buy ────────────────────────────────
+
+const at = (addr: string, over: Partial<Candidate> = {}) => candidate({ address: addr, ...over });
+
+test("a token the analyst found itself is buyable once it clears the gates", () => {
+  const set = buyableSet([], [at("DiscoveredAddr")], new Set());
+  assert.deepEqual([...set.keys()], ["discoveredaddr"]);
+});
+
+test("a discovered token that failed a gate is never buyable", () => {
+  const set = buyableSet([], [at("RuggyAddr", { gateFailures: ["rug 0.80 > 0.3"] })], new Set());
+  assert.equal(set.size, 0);
+});
+
+test("discovery does not bypass cooldown, blacklist or an open position", () => {
+  const set = buyableSet([], [at("BlockedAddr")], new Set(["blockedaddr"]));
+  assert.equal(set.size, 0);
+});
+
+test("the pre-scan entry wins when both feeds surface the same token", () => {
+  const scanned = at("SameAddr", { symbol: "FROM_SCAN" });
+  const found = at("sameaddr", { symbol: "FROM_TOOL" });
+  const set = buyableSet([scanned], [found], new Set());
+  assert.equal(set.size, 1);
+  assert.equal(set.get("sameaddr")?.symbol, "FROM_SCAN");
+});
+
+test("a candidate with no address cannot slip into the buyable set", () => {
+  assert.equal(buyableSet([], [at("")], new Set()).size, 0);
+});
 
 // ── gates ─────────────────────────────────────────────────────────────
 
