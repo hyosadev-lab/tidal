@@ -46,7 +46,15 @@ Two entry points share `agent.ts` + `skills.ts`:
 
 `skills.ts` implements progressive disclosure: only each skill's `name` + `description` go into
 the system prompt (`skillIndex`); the full `SKILL.md` body is returned by the `load_skill` tool.
-Skills live in `skills/<name>/SKILL.md` with flat `key: value` frontmatter.
+Skills live in `<root>/<name>/SKILL.md` with flat `key: value` frontmatter.
+
+**There are two skill roots, and they are not interchangeable.** `skills/` holds the seven
+vendored `gmgn-*` skills: they are written for an interactive assistant with a shell, they open
+by telling the model to run `gmgn-cli config --check` and to ask the user for an API key, and
+`index.ts` loads them — correctly, since it has a bash tool and a human at the prompt.
+`trading/skills/` holds `scanning` and `analysis`, written for the headless analyst: they
+describe `analystTools`, not shell commands, and there is no user in that loop to ask.
+`engine.ts` loads only the latter. Don't point the engine at `skills/`.
 
 ### The central split (`trading/plan.ts` header states it; respect it)
 
@@ -89,6 +97,13 @@ to exactly the pre-scan behaviour.
 - **`analystTools` in `engine.ts` is read-only by design** — no bash tool, no swap tool. An analyst
   that cannot spend money cannot be talked into spending money by a token name. Keep new analyst
   tools read-only.
+- **`securityRisk` is a pre-trade refusal, not a gate, and that is deliberate.** It runs once per
+  entry in `openPosition` (paper and live alike) against `token_security`, because only that route
+  answers reliably — `trenches` rows report `renounced_*: false` on tokens the security route
+  reports as `true`, so gating on a feed row would kill the whole feed. Solana-only: mint/freeze
+  authority do not exist on EVM and EVM liquidity is locked rather than burned. Fails closed.
+  Measured on live candidates: the authority half never fires (launchpads revoke at creation),
+  the burn half refuses about 1 in 14 otherwise-clean candidates.
 - **Discovery widens the search, never the risk envelope.** `find_tokens` clamps every threshold
   back up to `store.config` (asking for `min_liquidity_usd: 1` still returns nothing under
   `cfg.minLiquidityUsd`), runs `runGates` on every row before returning it, and `buyableSet` in
@@ -117,6 +132,8 @@ to exactly the pre-scan behaviour.
 
 - **New analyst tool**: add an entry to `analystTools` in `trading/engine.ts` (`description`,
   `parameters`, `run`). Read-only.
-- **New skill**: `skills/<name>/SKILL.md` with `name` + `description` frontmatter. Supporting files
-  go in the same directory; `load_skill` hands the model the absolute directory path.
+- **New skill**: `trading/skills/<name>/SKILL.md` for the trading analyst, `skills/<name>/SKILL.md`
+  for the interactive CLI — see the two-roots note above. `name` + `description` frontmatter;
+  supporting files go in the same directory and `load_skill` hands the model the absolute path.
+  A skill for the analyst must describe tools, never shell commands, and must never address a user.
 - **New config knob**: `types.ts` → `DEFAULT_CONFIG` → a clamp in `sanitizeConfig` → the UI.

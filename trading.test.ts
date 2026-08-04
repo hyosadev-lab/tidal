@@ -1,7 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, sanitizeConfig } from "./trading/config.ts";
-import { buyableSet, evaluateExit, healthExit, positionSize, runGates, score, toCandidate } from "./trading/plan.ts";
+import {
+  buyableSet,
+  evaluateExit,
+  healthExit,
+  positionSize,
+  runGates,
+  score,
+  securityRisk,
+  toCandidate,
+} from "./trading/plan.ts";
 import { store } from "./trading/store.ts";
 import * as broker from "./trading/broker.ts";
 import { _internals, start, stop } from "./trading/engine.ts";
@@ -63,6 +72,48 @@ function position(over: Partial<Position> = {}): Position {
     ...over,
   };
 }
+
+// ── pre-trade security refusal ────────────────────────────────────────
+
+const safeSec = { renounced_mint: true, renounced_freeze_account: true, burn_status: "burn", burn_ratio: 1 };
+
+test("a renounced Solana token with burned liquidity clears the check", () => {
+  assert.equal(securityRisk(safeSec, "sol"), "");
+  // GMGN sends 1 on some routes and true on others; both mean renounced.
+  assert.equal(securityRisk({ ...safeSec, renounced_mint: 1, renounced_freeze_account: 1 }, "sol"), "");
+});
+
+test("a live mint or freeze authority is named, not merely flagged", () => {
+  assert.match(securityRisk({ ...safeSec, renounced_mint: false }, "sol"), /mint authority/);
+  assert.match(securityRisk({ ...safeSec, renounced_freeze_account: false }, "sol"), /freeze authority/);
+  const both = securityRisk({ ...safeSec, renounced_mint: 0, renounced_freeze_account: 0 }, "sol");
+  assert.match(both, /mint authority/);
+  assert.match(both, /freeze authority/);
+});
+
+test("unburned liquidity blocks entry — the deployer can still pull the pool", () => {
+  assert.match(securityRisk({ ...safeSec, burn_status: "none", burn_ratio: 0 }, "sol"), /not burned/);
+  assert.match(securityRisk({ ...safeSec, burn_status: "", burn_ratio: 0 }, "sol"), /not burned/);
+});
+
+test("either burn field alone is enough to prove the pool was burned", () => {
+  assert.equal(securityRisk({ ...safeSec, burn_status: "burn", burn_ratio: 0 }, "sol"), "");
+  assert.equal(securityRisk({ ...safeSec, burn_status: "", burn_ratio: 1 }, "sol"), "");
+});
+
+test("an unreadable or silent security response fails closed rather than passing", () => {
+  assert.notEqual(securityRisk(null, "sol"), "");
+  assert.notEqual(securityRisk({}, "sol"), "");
+  // Renounce answered, burn not — still a refusal, not a partial pass.
+  assert.match(securityRisk({ renounced_mint: true, renounced_freeze_account: true }, "sol"), /burn status unknown/);
+});
+
+test("the check does not apply on EVM chains, where neither property means the same thing", () => {
+  for (const chain of ["bsc", "base", "eth"]) {
+    assert.equal(securityRisk(null, chain), "");
+    assert.equal(securityRisk({ renounced_mint: false, burn_status: "none" }, chain), "");
+  }
+});
 
 // ── what the analyst is allowed to buy ────────────────────────────────
 

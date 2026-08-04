@@ -12,6 +12,7 @@ import {
   positionSize,
   runGates,
   score,
+  securityRisk,
   systemPrompt,
   toCandidate,
   userPromptBlock,
@@ -26,7 +27,13 @@ let monitoring = false;
 
 // ── model plumbing ────────────────────────────────────────────────────
 
-const skills = await loadSkills(new URL("../skills", import.meta.url).pathname).catch(() => []);
+/**
+ * The engine loads `trading/skills/`, not the top-level `skills/`. Those are written for an
+ * interactive assistant with a shell — they open by telling the model to run `gmgn-cli config`
+ * and to ask the user for an API key. There is no user in this loop and no shell to run them
+ * in. `index.ts` still loads them; they are correct there.
+ */
+const skills = await loadSkills(new URL("skills", import.meta.url).pathname).catch(() => []);
 
 /**
  * Candidates the analyst turned up itself via `find_tokens`, keyed by lowercased
@@ -531,6 +538,25 @@ async function openPosition(
       return;
     }
   }
+
+  // Checked here rather than in runGates because only token_security answers it reliably,
+  // and one call per actual entry is affordable where one per scanned token is not. Runs in
+  // paper mode too, so paper results stay comparable to live ones. Fails closed.
+  if (cfg.chain === "sol") {
+    let sec: Record<string, any> | null = null;
+    try {
+      sec = await gmgn.tokenSecurity(cfg.chain, c.address);
+    } catch (e) {
+      store.log("warn", `${c.symbol} skipped — security check failed: ${short(e)}`);
+      return;
+    }
+    const risk = securityRisk(sec, cfg.chain);
+    if (risk) {
+      store.log("warn", `${c.symbol} skipped — ${risk}.`);
+      return;
+    }
+  }
+
   try {
     const res = await broker.buy(store, cfg, c, usd, thesis, conviction, stopLossPct);
     if ("error" in res) {

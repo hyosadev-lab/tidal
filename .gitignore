@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # runtime trading state (ledger, config, equity history)
 data/
+
+# reference clone of the gmgn-cli source, read-only (see CLAUDE.md)
+gmgn-skills/

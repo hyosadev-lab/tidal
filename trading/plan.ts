@@ -80,6 +80,46 @@ export function buyableSet(eligible: Candidate[], discovered: Candidate[], block
 }
 
 /**
+ * The pre-trade security refusal, checked once per entry against `token_security` — the only
+ * route that answers these reliably. Feed rows carry the same field names but `trenches`
+ * leaves them unpopulated, and reading its `false` as a failure would kill the whole feed.
+ *
+ * Solana-scoped on purpose. Neither property means the same thing on EVM: mint and freeze
+ * authority do not exist there, and EVM liquidity is usually *locked* rather than burned,
+ * which the burn fields do not describe. Returns "" (allow) on every other chain.
+ *
+ * Two things are checked:
+ *   • mint / freeze authority — a live mint authority lets the creator print supply on top
+ *     of you; a live freeze authority lets them freeze the account so you can never sell.
+ *     Solana launchpads revoke both at creation, so in practice this only catches tokens
+ *     that were not launched that way. Cheap backstop, not a filter.
+ *   • liquidity burn — `burn_status: "burn"` means the LP tokens are gone and the deployer
+ *     cannot pull the pool out from under the position. This one genuinely varies.
+ *
+ * Unknown is not a pass. If the response cannot be read or carries neither answer, the
+ * caller refuses the entry: these are exactly the properties worth being sure about.
+ */
+export function securityRisk(sec: Record<string, any> | null, chain: string): string {
+  if (chain !== "sol") return "";
+  if (!sec) return "could not read token security";
+
+  const reasons: string[] = [];
+  const { renounced_mint: mint, renounced_freeze_account: freeze } = sec;
+  if (mint === undefined && freeze === undefined) reasons.push("security response carried no renounce status");
+  else {
+    if (!truthy(mint)) reasons.push("mint authority still live");
+    if (!truthy(freeze)) reasons.push("freeze authority still live");
+  }
+
+  const status = String(sec.burn_status ?? "").toLowerCase();
+  const ratio = num(sec.burn_ratio, -1);
+  if (!status && ratio < 0) reasons.push("liquidity burn status unknown");
+  else if (status !== "burn" && !(ratio > 0)) reasons.push("liquidity not burned — the deployer can still pull the pool");
+
+  return reasons.join(", ");
+}
+
+/**
  * Hard gates. Any failure disqualifies — no weighting, no model override.
  * Percentages here are ratios (0–1) as GMGN returns them.
  */
@@ -98,6 +138,8 @@ export function runGates(c: Candidate, cfg: TradeConfig): string[] {
     f.push(`only ${Math.round(c.ageMinutes)}m old`);
   if (cfg.maxTokenAgeMinutes && c.ageMinutes > cfg.maxTokenAgeMinutes)
     f.push(`${Math.round(c.ageMinutes / 60)}h old, past window`);
+  // is_honeypot is EVM-only. On Solana it arrives empty, so this gate is inert there by
+  // design — securityRisk covers the equivalent Solana failure modes before entry.
   if (c.buyTax > 0.1 || c.sellTax > 0.1) f.push("tax > 10%");
   if (c.priceUsd <= 0) f.push("no price");
   // Liquidity that is a rounding error next to market cap means the exit is the trap.

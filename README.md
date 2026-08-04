@@ -175,8 +175,10 @@ trading/
   plan.ts              gate, skor, sizing, aturan exit, prompt analis
   broker.ts            eksekusi paper & live
   engine.ts            loop scan + monitor
+  skills/              skill analis: scanning + analysis
 agent.ts               loop tool-calling (dipakai analis)
-skills.ts              loader skills/<nama>/SKILL.md
+skills.ts              loader <root>/<nama>/SKILL.md
+skills/                skill gmgn-* bawaan, buat chat CLI (butuh bash)
 index.ts               chat CLI (mode lama, punya tool bash)
 ```
 
@@ -190,7 +192,10 @@ config, penolakan live mode, dan parsing output model. `npm test` buat jalanin s
 Nambah tool analis = tambah entry di `analystTools` (`trading/engine.ts`): `description`,
 `parameters` (JSON Schema), `run`. Read-only aja.
 
-Nambah skill = bikin `skills/<nama>/SKILL.md`:
+Ada **dua root skill** dan gak bisa ditukar. `trading/skills/` buat analis headless — isinya
+harus ngomongin tool, bukan perintah shell, dan gak boleh nyapa user (di loop itu gak ada user).
+`skills/` buat chat CLI di `index.ts` yang punya bash. Nambah skill = bikin
+`trading/skills/<nama>/SKILL.md` atau `skills/<nama>/SKILL.md`:
 
 ```md
 ---
