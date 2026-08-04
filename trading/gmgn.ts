@@ -1,11 +1,20 @@
-import { execFile } from "node:child_process";
+import { constants, createPrivateKey, randomUUID, sign as cryptoSign } from "node:crypto";
 import type { Chain } from "./types.ts";
 
 /**
- * Thin wrapper over `gmgn-cli`. Every call goes through a shared leaky bucket
+ * Thin client for the GMGN OpenAPI. Every call goes through a shared leaky bucket
  * (rate 20, capacity 20, per-route weights) because GMGN extends the cooldown by
  * 5s each time you hit a 429 — spamming retries makes the ban worse, not better.
+ *
+ * Two auth modes, matching the server:
+ *   exist  — X-APIKEY + timestamp + client_id. Every read route.
+ *   signed — the above plus X-Signature over the request. Only swap and query_order.
+ *
+ * GMGN_PRIVATE_KEY is a request-signing key for this API, not a wallet key, but it is
+ * still spend authority: it is only ever read on the two signed routes below.
  */
+
+const HOST = "https://openapi.gmgn.ai";
 
 const RATE = 20;
 const CAPACITY = 20;
@@ -37,52 +46,106 @@ export class GmgnError extends Error {
   }
 }
 
-function exec(args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "gmgn-cli",
-      args,
-      { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, ...env } },
-      (err, stdout, stderr) => {
-        if (err) {
-          const text = `${stderr || ""}${stdout || ""}`.trim();
-          if (/ENOENT/.test(String(err)))
-            return reject(new GmgnError("gmgn-cli not found — run: npm install -g gmgn-cli"));
-          const reset = /"?reset_at"?\s*:\s*(\d+)/.exec(text);
-          const is429 = /429|RATE_LIMIT/.test(text);
-          return reject(
-            new GmgnError(text.slice(0, 1200) || String(err), is429 ? 429 : 1, reset ? Number(reset[1]) : 0),
-          );
-        }
-        resolve(stdout);
-      },
-    );
-  });
+type Query = Record<string, string | number | string[]>;
+
+function apiKey(): string {
+  const k = process.env.GMGN_API_KEY?.trim();
+  if (!k) throw new GmgnError("GMGN_API_KEY is missing — set it in .env");
+  return k;
 }
 
+/**
+ * The string the server verifies: `{path}:{sorted query}:{body}:{timestamp}`. Keys sorted
+ * alphabetically, array values sorted by value, encoded exactly as they go on the wire.
+ * Any drift here and every trade request is rejected — hence the test.
+ */
+export function signedMessage(path: string, query: Query, body: string, timestamp: number): string {
+  const qs = Object.keys(query)
+    .sort()
+    .flatMap((k) => {
+      const ek = encodeURIComponent(k);
+      const v = query[k];
+      return Array.isArray(v)
+        ? [...v].sort().map((i) => `${ek}=${encodeURIComponent(i)}`)
+        : [`${ek}=${encodeURIComponent(String(v))}`];
+    })
+    .join("&");
+  return `${path}:${qs}:${body}:${timestamp}`;
+}
+
+/** Ed25519 signs the raw message; RSA uses PSS/SHA-256 with a 32-byte salt. */
+export function signMessage(message: string, pem: string): string {
+  const msg = Buffer.from(message, "utf8");
+  const kind = createPrivateKey(pem).asymmetricKeyType;
+  if (kind === "ed25519") return cryptoSign(null, msg, pem).toString("base64");
+  if (kind === "rsa")
+    return cryptoSign("sha256", msg, {
+      key: pem,
+      padding: constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: 32,
+    }).toString("base64");
+  throw new GmgnError(`unsupported GMGN_PRIVATE_KEY type: ${kind} (need Ed25519 or RSA)`);
+}
+
+function signature(path: string, query: Query, body: string, timestamp: number): string {
+  const pem = process.env.GMGN_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
+  if (!pem) throw new GmgnError("GMGN_PRIVATE_KEY is missing — required to sign trade requests");
+  return signMessage(signedMessage(path, query, body, timestamp), pem);
+}
+
+type ApiOpts = { weight?: number; timeoutMs?: number; signed?: boolean };
+
 /** Serialised so the bucket accounting stays honest under concurrency. */
-async function cli<T = any>(args: string[], weight = 1, timeoutMs = 60_000, env?: NodeJS.ProcessEnv): Promise<T> {
+async function api<T = any>(
+  method: "GET" | "POST",
+  path: string,
+  query: Query = {},
+  body: unknown = null,
+  { weight = 1, timeoutMs = 60_000, signed = false }: ApiOpts = {},
+): Promise<T> {
   const run = async (): Promise<T> => {
     await takeTokens(weight);
-    const out = await exec([...args, "--raw"], timeoutMs, env);
-    const text = out.trim();
-    if (!text) return {} as T;
-    try {
-      const parsed = JSON.parse(text);
-      return (parsed && typeof parsed === "object" && "data" in parsed ? (parsed as any).data : parsed) as T;
-    } catch {
-      // some subcommands print a human line before the JSON payload
-      const brace = Math.min(...[text.indexOf("{"), text.indexOf("[")].filter((i) => i >= 0));
-      if (Number.isFinite(brace) && brace >= 0) {
-        try {
-          const parsed = JSON.parse(text.slice(brace));
-          return (parsed && typeof parsed === "object" && "data" in parsed ? (parsed as any).data : parsed) as T;
-        } catch {
-          /* fall through */
-        }
-      }
-      throw new GmgnError(`could not parse gmgn-cli output: ${text.slice(0, 300)}`);
+
+    // timestamp is validated within ±5s and client_id replay-checked, so both are
+    // built here rather than at call time — a queued request may wait a while.
+    const q: Query = { ...query, timestamp: Math.floor(Date.now() / 1000), client_id: randomUUID() };
+    const bodyStr = body !== null ? JSON.stringify(body) : signed ? "" : null;
+
+    const headers: Record<string, string> = { "X-APIKEY": apiKey(), "Content-Type": "application/json" };
+    if (signed) headers["X-Signature"] = signature(path, q, bodyStr ?? "", Number(q["timestamp"]));
+
+    const url = new URL(HOST + path);
+    for (const [k, v] of Object.entries(q)) {
+      if (Array.isArray(v)) for (const i of v) url.searchParams.append(k, i);
+      else url.searchParams.append(k, String(v));
     }
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        body: bodyStr || undefined,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (e) {
+      throw new GmgnError(`${method} ${path} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    const resetAt = Number(res.headers.get("x-ratelimit-reset")) || 0;
+    const text = await res.text();
+    let env: { code?: number | string; data?: unknown; message?: string; error?: string };
+    try {
+      env = JSON.parse(text);
+    } catch {
+      throw new GmgnError(`${method} ${path}: HTTP ${res.status}, non-JSON body: ${text.slice(0, 300)}`, res.status, resetAt);
+    }
+
+    if (!res.ok || (env.code !== 0 && env.code !== undefined)) {
+      const msg = env.error || env.message || text.slice(0, 300);
+      throw new GmgnError(`${method} ${path}: ${msg}`.slice(0, 1200), res.status === 429 ? 429 : res.status || 1, resetAt);
+    }
+    return (env.data ?? env) as T;
   };
   const result = queue.then(run, run);
   queue = result.catch(() => undefined);
@@ -103,9 +166,10 @@ const list = (r: any, ...keys: string[]): any[] => {
 
 // ── read-only routes ──────────────────────────────────────────────────
 
-export async function configOk(): Promise<boolean> {
+/** Cheapest authenticated route — proves the API key works. */
+export async function apiReady(): Promise<boolean> {
   try {
-    await exec(["config", "--check"], 20_000);
+    await api("GET", "/v1/user/info", {}, null, { timeoutMs: 20_000 });
     return true;
   } catch {
     return false;
@@ -126,85 +190,118 @@ export async function trending(
     maxCreated?: string;
   } = {},
 ): Promise<RankItem[]> {
-  const a = ["market", "trending", "--chain", chain, "--interval", opts.interval ?? "1h", "--order-by", "volume"];
-  a.push("--limit", String(opts.limit ?? 50));
-  if (opts.minLiquidity) a.push("--min-liquidity", String(Math.round(opts.minLiquidity)));
-  if (opts.minVolume) a.push("--min-volume", String(Math.round(opts.minVolume)));
-  if (opts.minSmartDegen) a.push("--min-smart-degen-count", String(opts.minSmartDegen));
-  if (opts.maxCreated) a.push("--max-created", opts.maxCreated);
-  return list(await cli(a, 1), "rank");
+  const q: Query = {
+    chain,
+    interval: opts.interval ?? "1h",
+    order_by: "volume",
+    limit: opts.limit ?? 50,
+  };
+  if (opts.minLiquidity) q["min_liquidity"] = Math.round(opts.minLiquidity);
+  if (opts.minVolume) q["min_volume"] = Math.round(opts.minVolume);
+  if (opts.minSmartDegen) q["min_smart_degen_count"] = opts.minSmartDegen;
+  if (opts.maxCreated) q["max_created"] = opts.maxCreated;
+  return list(await api("GET", "/v1/market/rank", q), "rank");
 }
 
+/** Mirrors the CLI's `--filter-preset strict`. */
+const TRENCHES_STRICT = {
+  max_rug_ratio: 0.3,
+  max_bundler_rate: 0.3,
+  max_insider_ratio: 0.3,
+  min_smart_degen_count: 1,
+  min_volume_24h: 1000,
+};
+
+// launchpad_platform and quote_address_type are allow-lists: sending an empty array
+// filters everything out, so a chain we have no list for omits the field and takes the
+// server default. ponytail: only the two chains gatherCandidates calls trenches for —
+// add base/eth here when a caller needs them.
+const TRENCHES_PLATFORMS: Partial<Record<Chain, string[]>> = {
+  sol: [
+    "Pump.fun", "pump_mayhem", "pump_mayhem_agent", "pump_agent", "letsbonk", "bonkers",
+    "bags", "memoo", "liquid", "bankr", "zora", "surge", "anoncoin", "moonshot_app",
+    "wendotdev", "heaven", "sugar", "token_mill", "believe", "trendsfun", "trends_fun",
+    "jup_studio", "Moonshot", "boop", "ray_launchpad", "meteora_virtual_curve", "xstocks",
+  ],
+  bsc: [
+    "fourmeme", "fourmeme_agent", "bn_fourmeme", "four_xmode_agent", "cubepeg", "likwid",
+    "goplus_creator", "goplus_skills", "openfour", "flap", "flap_stocks", "flap_aioracle",
+    "clanker", "lunafun",
+  ],
+};
+const TRENCHES_QUOTE_TYPES: Partial<Record<Chain, number[]>> = {
+  sol: [4, 5, 3, 1, 13, 0],
+  bsc: [6, 7, 1, 16, 8, 3, 9, 10, 2, 17, 18, 0],
+};
+
 export async function trenches(chain: Chain, type = "completed", limit = 40): Promise<RankItem[]> {
-  const r = await cli(
-    ["market", "trenches", "--chain", chain, "--type", type, "--filter-preset", "strict", "--limit", String(limit)],
-    3,
-  );
+  const section: Record<string, unknown> = {
+    filters: ["offchain", "onchain"],
+    launchpad_platform_v2: true,
+    limit,
+    ...TRENCHES_STRICT,
+  };
+  const platforms = TRENCHES_PLATFORMS[chain];
+  const quoteTypes = TRENCHES_QUOTE_TYPES[chain];
+  if (platforms?.length) section["launchpad_platform"] = platforms;
+  if (quoteTypes?.length) section["quote_address_type"] = quoteTypes;
+
+  const r = await api("POST", "/v1/trenches", { chain }, { version: "v2", [type]: section }, { weight: 3 });
   return [...list(r, "completed"), ...list(r, "pump"), ...list(r, "new_creation")];
 }
 
 export async function signals(chain: Chain): Promise<RankItem[]> {
   // 12 = smart money buy, 6 = price spike, 7 = ATH
-  const r = await cli(["market", "signal", "--chain", chain, "--groups", '[{"signal_type":[12]},{"signal_type":[6,7]}]'], 3);
+  const groups = [{ signal_type: [12] }, { signal_type: [6, 7] }];
+  const r = await api("POST", "/v1/market/token_signal", {}, { chain, groups }, { weight: 3 });
   return list(r, "list", "signals");
 }
 
 export async function tokenInfo(chain: Chain, address: string): Promise<Record<string, any>> {
-  return cli(["token", "info", "--chain", chain, "--address", address], 1, 40_000);
+  return api("GET", "/v1/token/info", { chain, address }, null, { timeoutMs: 40_000 });
 }
 
 export async function tokenSecurity(chain: Chain, address: string): Promise<Record<string, any>> {
-  return cli(["token", "security", "--chain", chain, "--address", address], 1, 40_000);
+  return api("GET", "/v1/token/security", { chain, address }, null, { timeoutMs: 40_000 });
 }
 
 export async function tokenHolders(chain: Chain, address: string, limit = 20, tag?: string): Promise<any[]> {
-  const a = ["token", "holders", "--chain", chain, "--address", address, "--limit", String(limit)];
-  if (tag) a.push("--tag", tag);
-  return list(await cli(a, 5), "list");
+  const q: Query = { chain, address, limit, order_by: "amount_percentage", direction: "desc" };
+  if (tag) q["tag"] = tag;
+  return list(await api("GET", "/v1/market/token_top_holders", q, null, { weight: 5 }), "list");
 }
 
 export async function kline(chain: Chain, address: string, resolution: string, fromSec: number, toSec: number) {
-  return list(
-    await cli(
-      [
-        "market",
-        "kline",
-        "--chain",
-        chain,
-        "--address",
-        address,
-        "--resolution",
-        resolution,
-        "--from",
-        String(Math.floor(fromSec)),
-        "--to",
-        String(Math.floor(toSec)),
-      ],
-      2,
-    ),
-    "list",
-  );
+  // The API takes milliseconds here; every other timestamp in this file is seconds.
+  const q: Query = {
+    chain,
+    address,
+    resolution,
+    from: Math.floor(fromSec) * 1000,
+    to: Math.floor(toSec) * 1000,
+  };
+  return list(await api("GET", "/v1/market/token_kline", q, null, { weight: 2 }), "list");
 }
 
 export async function smartMoney(chain: Chain, limit = 60): Promise<any[]> {
-  return list(await cli(["track", "smartmoney", "--chain", chain, "--limit", String(limit)], 1), "list");
+  return list(await api("GET", "/v1/user/smartmoney", { chain, limit }), "list");
 }
 
 export async function nativeUsdPrice(chain: Chain): Promise<number> {
-  const r = await cli(["gas-price", "--chain", chain], 1, 30_000);
+  const r = await api("GET", "/v1/trade/gas_price", { chain }, null, { timeoutMs: 30_000 });
   return num(r?.native_token_usd_price ?? r?.nativeTokenUsdPrice);
 }
 
 /**
  * Native balance of the API-key-bound wallet, in whole units (SOL / BNB / ETH).
  *
- * The gmgn-portfolio skill documents that `portfolio info` returns "wallets and main
- * currency balances" but not the field names, so this walks the response looking for
- * the matching wallet and a balance-shaped number. Returns null rather than a guess —
- * sizing a real trade off an invented balance is worse than not trading.
+ * `/v1/user/info` returns the key's wallets and their main-currency balances, but the
+ * field names are not documented, so this walks the response looking for the matching
+ * wallet and a balance-shaped number. Returns null rather than a guess — sizing a real
+ * trade off an invented balance is worse than not trading.
  */
 export async function nativeBalance(chain: Chain, wallet: string): Promise<number | null> {
-  const r = await cli(["portfolio", "info"], 1, 40_000);
+  const r = await api("GET", "/v1/user/info", {}, null, { timeoutMs: 40_000 });
   const target = wallet.trim().toLowerCase();
 
   const balanceOf = (o: Record<string, any>): number | null => {
@@ -246,7 +343,7 @@ export async function currentPrice(chain: Chain, address: string): Promise<numbe
   const info = await tokenInfo(chain, address);
   const p = num(info?.price?.price ?? info?.price);
   if (p > 0) return p;
-  const pool = await cli<Record<string, any>>(["token", "pool", "--chain", chain, "--address", address], 1, 30_000);
+  const pool = await api<Record<string, any>>("GET", "/v1/token/pool_info", { chain, address }, null, { timeoutMs: 30_000 });
   return num(pool?.price ?? pool?.[0]?.price);
 }
 
@@ -277,63 +374,56 @@ export type SwapArgs = {
   sellRatioType?: "buy_amount" | "hold_amount";
 };
 
+/** Wallets are case-sensitive on Solana and lowercased everywhere else. */
+const fromAddress = (chain: Chain, from: string) => (chain === "sol" ? from : from.toLowerCase());
+
 export async function quote(a: Omit<SwapArgs, "conditionOrders" | "sellRatioType">): Promise<Record<string, any>> {
-  const args = [
-    "order",
-    "quote",
-    "--chain",
-    a.chain,
-    "--from",
-    a.from,
-    "--input-token",
-    a.inputToken,
-    "--output-token",
-    a.outputToken,
-    "--slippage",
-    String(a.slippage),
-  ];
-  if (a.amount) args.push("--amount", a.amount);
-  return cli(args, 2, 45_000);
+  const q: Query = {
+    chain: a.chain,
+    from_address: fromAddress(a.chain, a.from),
+    input_token: a.inputToken,
+    output_token: a.outputToken,
+    input_amount: a.amount ?? "0",
+    slippage: a.slippage,
+  };
+  return api("GET", "/v1/trade/quote", q, null, { weight: 2, timeoutMs: 45_000 });
 }
 
 /**
  * Submits a real, irreversible on-chain swap.
  *
- * `--yes` is passed, but the CLI rejects it unless GMGN_ALLOW_AUTOMATED_TRADES=1 is
- * already present in the operator's own environment. We deliberately do not inject
- * that variable: it is the human's standing consent to headless execution, and this
- * process is not entitled to grant it on their behalf.
+ * This process now signs trade requests itself, so this check is the only thing standing
+ * between a bug — or a token name the analyst was talked into trusting — and real money.
+ * GMGN_ALLOW_AUTOMATED_TRADES is the operator's standing consent to headless execution:
+ * read it, never write it, and do not add a config knob that can substitute for it.
  */
 export async function swap(a: SwapArgs): Promise<SwapResult> {
   if (process.env.GMGN_ALLOW_AUTOMATED_TRADES !== "1")
     throw new GmgnError("live trade refused: GMGN_ALLOW_AUTOMATED_TRADES=1 is not set in this shell");
 
-  const args = [
-    "swap",
-    "--chain",
-    a.chain,
-    "--from",
-    a.from,
-    "--input-token",
-    a.inputToken,
-    "--output-token",
-    a.outputToken,
-    "--slippage",
-    String(a.slippage),
-  ];
-  if (a.amount) args.push("--amount", a.amount);
-  else if (a.percent) args.push("--percent", String(a.percent));
-  if (a.antiMev && a.chain !== "base") args.push("--anti-mev");
+  const body: Record<string, unknown> = {
+    chain: a.chain,
+    from_address: fromAddress(a.chain, a.from),
+    input_token: a.inputToken,
+    output_token: a.outputToken,
+    // With a percent sell the amount field is a placeholder; bps carries the real size.
+    input_amount: a.percent != null ? (a.amount ?? "0") : a.amount,
+    slippage: a.slippage,
+  };
+  if (a.percent != null) body["input_amount_bps"] = String(Math.round(a.percent * 100));
+  if (a.antiMev && a.chain !== "base") body["is_anti_mev"] = true;
   if (a.conditionOrders?.length) {
-    args.push("--condition-orders", JSON.stringify(a.conditionOrders));
-    args.push("--sell-ratio-type", a.sellRatioType ?? "hold_amount");
+    body["condition_orders"] = a.conditionOrders;
+    body["sell_ratio_type"] = a.sellRatioType ?? "hold_amount";
   }
-  args.push("--yes");
-  return cli<SwapResult>(args, 5, 120_000);
+  return api<SwapResult>("POST", "/v1/trade/swap", {}, body, { weight: 5, timeoutMs: 120_000, signed: true });
 }
 
 export async function orderStatus(chain: Chain, orderId: string): Promise<SwapResult> {
-  return cli<SwapResult>(["order", "get", "--chain", chain, "--order-id", orderId], 1, 30_000);
+  return api<SwapResult>("GET", "/v1/trade/query_order", { chain, order_id: orderId }, null, {
+    timeoutMs: 30_000,
+    signed: true,
+  });
 }
 
 /** Polls until the order settles; GMGN moves pending → processed → confirmed. */

@@ -23,12 +23,16 @@ node --test --test-name-pattern="stop-loss"   # one test by name
 npx tsc --noEmit                              # type check
 ```
 
-`gmgn-cli` must be installed globally (`npm install -g gmgn-cli`) and configured
-(`gmgn-cli config`) — every market read shells out to it.
+`GMGN_API_KEY` is required — every market read is an HTTP call to the GMGN OpenAPI.
+`GMGN_PRIVATE_KEY` (a request-signing key, not a wallet key) is only needed for live mode:
+it signs `swap` and `query_order`, the two routes GMGN requires a signature on. There is no
+`gmgn-cli` dependency; `gmgn-skills/` is an untracked reference clone of its source, kept only
+to look up endpoint shapes and field semantics, and excluded from `tsconfig.json`.
 
 **Tests are not fully hermetic.** `trading.test.ts` calls `engine.start()`, which schedules a real
-scan 1.5s later; that scan shells out to the live `gmgn-cli` and writes `data/state.json` /
+scan 1.5s later; that scan hits the live GMGN API and writes `data/state.json` /
 `data/config.json`. Expect network calls, a few seconds of runtime, and mutated `data/` (gitignored).
+`gmgn.test.ts` is the exception — pure, no network. `npm test` loads `.env` so the key is present.
 
 ## Architecture
 
@@ -58,7 +62,7 @@ risk logic in `plan.ts`/`config.ts` — not in prompts.
 | `types.ts` | shared types, no logic |
 | `config.ts` | defaults, per-chain constants, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady` |
 | `store.ts` | **module-level singleton** `store`; reads `data/` on import, debounced atomic writes, pub/sub for SSE |
-| `gmgn.ts` | `gmgn-cli` wrapper; all calls serialized through one promise queue + leaky bucket (GMGN adds 5s to the cooldown per 429, so retry spam makes it worse) |
+| `gmgn.ts` | GMGN OpenAPI client (`fetch`); all calls serialized through one promise queue + leaky bucket (GMGN adds 5s to the cooldown per 429, so retry spam makes it worse). Two auth modes: *exist* (API key) for every read, *signed* (API key + `X-Signature`) for `swap` and `query_order` only |
 | `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`, prompts. No I/O — this is where tests concentrate |
 | `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), analyst tool definitions, lifecycle |
@@ -73,6 +77,8 @@ never touches the LLM.
 - **Never set `GMGN_ALLOW_AUTOMATED_TRADES` from code.** `gmgn.swap()` throws if it isn't already
   in the environment. That variable is the operator's standing consent to headless execution;
   the process is not entitled to grant it on their behalf. Same reasoning behind `liveReady()`.
+  This process signs its own trade requests, so that check is now the *entire* barrier — there is
+  no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
 - **`analystTools` in `engine.ts` is read-only by design** — no bash tool, no swap tool. An analyst
   that cannot spend money cannot be talked into spending money by a token name. Keep new analyst
   tools read-only.
@@ -80,9 +86,11 @@ never touches the LLM.
   paths that treat scanned text as instructions.
 - **GMGN percent conventions differ per field.** `rug_ratio` and `top_10_holder_rate` are ratios
   (0–1); `price_change_percent1h`/`5m` already arrive as percent. Mixing them silently breaks gates.
-- **Take-profit rungs sell a % of `originalQty`**, but live `--percent` is a % of the *current wallet
-  balance* — `broker.sell` converts between the two.
-- **In live mode, sizing comes from the real wallet** (`syncLiveBalance` → `gmgn-cli portfolio info`),
+- **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
+  wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes
+  `input_amount_bps` (basis points: 50% → `"5000"`) and `input_amount` is a `"0"` placeholder.
+- **`kline` takes milliseconds**; every other timestamp in `gmgn.ts` is seconds.
+- **In live mode, sizing comes from the real wallet** (`syncLiveBalance` → `/v1/user/info`),
   not the paper bankroll. If the balance can't be read, entries are skipped for that cycle rather
   than sized off a guess — GMGN rate-limits `insufficient token balance` errors specifically.
 - Per-chain floors exist for a reason: `MIN_POSITION_USD` (round-trip friction) and `GAS_RESERVE`

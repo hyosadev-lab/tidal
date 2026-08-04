@@ -27,5 +27,7 @@
     "noPropertyAccessFromIndexSignature": false,
 
     "types": ["node"]
-  }
+  },
+  // Reference clone of the gmgn-cli source — read for endpoint shapes, not built here.
+  "exclude": ["node_modules", "gmgn-skills"]
 }

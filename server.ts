@@ -4,7 +4,7 @@ import { join, extname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { store } from "./trading/store.ts";
 import * as engine from "./trading/engine.ts";
-import { configOk } from "./trading/gmgn.ts";
+import { apiReady } from "./trading/gmgn.ts";
 import { liveReady } from "./trading/config.ts";
 
 const PUBLIC = join(fileURLToPath(new URL(".", import.meta.url)), "public");
@@ -82,10 +82,9 @@ const server = createServer(async (req, res) => {
     if (path === "/api/state") return json(res, 200, store.snapshot());
 
     if (path === "/api/health") {
-      const cli = await configOk();
       const live = liveReady(store.config);
       return json(res, 200, {
-        gmgnCli: cli,
+        gmgnApi: await apiReady(),
         openrouter: Boolean(process.env.OPENROUTER_API_KEY),
         liveReady: live.ok,
         liveReason: live.reason,

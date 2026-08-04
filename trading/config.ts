@@ -144,13 +144,17 @@ export function saveConfig(cfg: TradeConfig): void {
 
 /**
  * Live trading needs an explicit opt-in the operator sets in their own shell.
- * We never set GMGN_ALLOW_AUTOMATED_TRADES ourselves — the CLI treats that variable
- * as the human's consent to headless execution, so setting it from here would
- * hollow out the confirmation barrier it exists to provide.
+ * We never set GMGN_ALLOW_AUTOMATED_TRADES ourselves — that variable is the human's
+ * consent to headless execution, so setting it from here would hollow out the barrier
+ * it exists to provide. Since this process signs its own trade requests, this check is
+ * the whole barrier; there is no second process left to refuse on our behalf.
  */
 export function liveReady(cfg: TradeConfig): { ok: boolean; reason: string } {
   if (process.env.GMGN_ALLOW_AUTOMATED_TRADES !== "1")
     return { ok: false, reason: "GMGN_ALLOW_AUTOMATED_TRADES=1 is not set in this shell" };
+  if (!process.env.GMGN_API_KEY?.trim()) return { ok: false, reason: "GMGN_API_KEY is not set" };
+  if (!process.env.GMGN_PRIVATE_KEY?.trim())
+    return { ok: false, reason: "GMGN_PRIVATE_KEY is not set — trade requests cannot be signed" };
   if (!cfg.walletAddress) return { ok: false, reason: "no wallet address configured" };
   return { ok: true, reason: "" };
 }

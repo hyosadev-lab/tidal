@@ -217,7 +217,7 @@ async function syncLiveBalance(): Promise<boolean> {
       gmgn.nativeUsdPrice(cfg.chain),
     ]);
     if (bal === null) {
-      store.log("warn", "Could not read the wallet balance from gmgn-cli — skipping entries this cycle.");
+      store.log("warn", "Could not read the wallet balance from the GMGN API — skipping entries this cycle.");
       return false;
     }
     if (!(px > 0)) {
@@ -549,7 +549,7 @@ export async function start(): Promise<{ ok: boolean; error?: string }> {
     if (!ready.ok) return { ok: false, error: `Live mode needs setup: ${ready.reason}.` };
     // Size against the real wallet before deciding whether the settings can work at all.
     if (!(await syncLiveBalance()))
-      return { ok: false, error: "Could not read your wallet balance from gmgn-cli. Check `gmgn-cli portfolio info` and your wallet address." };
+      return { ok: false, error: "Could not read your wallet balance from the GMGN API. Check GMGN_API_KEY and your wallet address." };
   }
   if (!process.env.OPENROUTER_API_KEY) return { ok: false, error: "OPENROUTER_API_KEY is missing from .env." };
 

@@ -1,13 +1,13 @@
 # tidal-trading-agent
 
-Agent trading otomatis untuk memecoin, jalan di atas [GMGN](https://gmgn.ai) lewat `gmgn-cli`,
+Agent trading otomatis untuk memecoin, jalan di atas [GMGN OpenAPI](https://gmgn.ai),
 dengan dashboard buat ngeliat semua aktivitasnya. LLM lewat [OpenRouter](https://openrouter.ai).
-Cuma pakai `fetch` + stdlib — jalan di Node 22+, Bun, atau Deno.
+Cuma pakai `fetch` + stdlib — jalan di Node 22+, Bun, atau Deno. Nol dependency runtime,
+nol binary eksternal.
 
 ```bash
-cp .env.example .env         # isi OPENROUTER_API_KEY
-npm install -g gmgn-cli      # dibutuhin semua skill gmgn-*
-gmgn-cli config              # setup GMGN API key
+cp .env.example .env         # isi OPENROUTER_API_KEY + GMGN_API_KEY
+                             # (GMGN_PRIVATE_KEY cuma perlu buat live mode)
 
 npm run dash                 # dashboard di http://127.0.0.1:3111
 npm start                    # chat interaktif (mode lama, /reset & /exit)
@@ -72,7 +72,7 @@ Model balikin JSON: `entries`, `exits`, `notes`. Conviction di bawah 40 otomatis
 `riskPerTradePct` dari equity (default 4%), diskalakan sama conviction, maksimal 5 posisi
 bareng, dan gak pernah pakai lebih dari 90% cash yang tersisa.
 
-**Di live mode, saldo dibaca dari dompet asli** lewat `gmgn-cli portfolio info` tiap siklus —
+**Di live mode, saldo dibaca dari dompet asli** lewat `/v1/user/info` tiap siklus —
 bukan dari paper bankroll. Kalau saldonya gak kebaca, entry di-skip siklus itu; sizing dari
 angka karangan cuma bikin swap ditolak GMGN, dan error `insufficient token balance` punya
 rate limiter sendiri. Sebagian saldo native disisihkan buat gas (SOL 0.02) dan gak pernah
@@ -139,10 +139,11 @@ Prompt kamu bisa **memperketat** seleksi, gak bisa melonggarkan batas risiko. Mi
 
 Live mode kirim swap on-chain beneran yang gak bisa dibatalin.
 
-`gmgn-cli` punya penghalang di level kode: `--yes` ditolak kecuali `GMGN_ALLOW_AUTOMATED_TRADES=1`
-ada di environment. **Kode ini sengaja gak pernah nge-set variabel itu sendiri** — itu bentuk
-persetujuan kamu buat eksekusi tanpa konfirmasi, dan bukan hak proses ini buat ngasih izin
-atas nama kamu. Jadi kamu harus set sendiri:
+`gmgn.swap()` nolak jalan kecuali `GMGN_ALLOW_AUTOMATED_TRADES=1` ada di environment.
+**Kode ini sengaja gak pernah nge-set variabel itu sendiri** — itu bentuk persetujuan kamu
+buat eksekusi tanpa konfirmasi, dan bukan hak proses ini buat ngasih izin atas nama kamu.
+Proses ini nandatangani sendiri request trade-nya, jadi cek itu satu-satunya penghalang
+yang tersisa — gak ada proses lain lagi yang bakal nolak buat kamu. Set sendiri:
 
 ```bash
 export GMGN_ALLOW_AUTOMATED_TRADES=1
@@ -170,7 +171,7 @@ trading/
   types.ts             tipe bersama
   config.ts            default + sanitasi (semua input dari UI diclamp di sini)
   store.ts             state, persistensi, event bus
-  gmgn.ts              wrapper gmgn-cli + leaky bucket rate limiter
+  gmgn.ts              client GMGN OpenAPI + leaky bucket rate limiter
   plan.ts              gate, skor, sizing, aturan exit, prompt analis
   broker.ts            eksekusi paper & live
   engine.ts            loop scan + monitor
