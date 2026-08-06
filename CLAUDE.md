@@ -38,8 +38,8 @@ scan 1.5s later; that scan hits the live GMGN API and writes `data/state.json` /
 
 Two entry points share `src/agent/llm.ts` + `src/agent/skills.ts`:
 
-- `server.ts` — the real product. Static file server + JSON control API + SSE stream, driving `trading/`.
-- `index.ts` — older readline chat loop. Has a `bash` tool; unrelated to the trading engine.
+- `src/index.ts` — the real product. Static file server + JSON control API + SSE stream, driving `trading/`.
+- `src/cli.ts` — older readline chat loop. Has a `bash` tool; unrelated to the trading engine.
 
 `src/agent/llm.ts` is a ~80-line OpenRouter tool-calling loop (`runAgent`): tools are
 `{description, parameters (JSON Schema), run}`, it loops until the model replies without tool calls.
@@ -51,7 +51,7 @@ Skills live in `<root>/<name>/SKILL.md` with flat `key: value` frontmatter.
 **There are two skill roots, and they are not interchangeable.** `skills/` holds the seven
 vendored `gmgn-*` skills: they are written for an interactive assistant with a shell, they open
 by telling the model to run `gmgn-cli config --check` and to ask the user for an API key, and
-`index.ts` loads them — correctly, since it has a bash tool and a human at the prompt.
+`src/cli.ts` loads them — correctly, since it has a bash tool and a human at the prompt.
 `trading/skills/` holds `scanning` and `analysis`, written for the headless analyst: they
 describe `analystTools`, not shell commands, and there is no user in that loop to ask.
 `engine.ts` loads only the latter. Don't point the engine at `skills/`.
@@ -135,7 +135,7 @@ to exactly the pre-scan behaviour.
 
 ## Frontend
 
-`public/` is vanilla HTML/CSS/JS with no build step — `server.ts` serves the directory as-is and
+`public/` is vanilla HTML/CSS/JS with no build step — `src/index.ts` serves the directory as-is and
 `app.js` consumes `/api/stream` (SSE). Keep it dependency-free.
 
 ## Extending

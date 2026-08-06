@@ -187,7 +187,7 @@ bikin rugi lebih cepat.
 ## Struktur
 
 ```
-server.ts              HTTP + SSE, API kontrol
+src/index.ts           HTTP + SSE, API kontrol
 public/                dashboard (vanilla, tanpa build step)
 trading/
   types.ts             tipe bersama
@@ -204,7 +204,7 @@ src/
     skills.ts          loader <root>/<nama>/SKILL.md
   gmgn/                client GMGN OpenAPI standalone (belum dipakai trading/)
 skills/                skill gmgn-* bawaan, buat chat CLI (butuh bash)
-index.ts               chat CLI (mode lama, punya tool bash)
+src/cli.ts             chat CLI (mode lama, punya tool bash)
 ```
 
 `trading.test.ts` nutupin gate, skor, sizing, tiap aturan exit, round trip paper, clamping
@@ -219,7 +219,7 @@ Nambah tool analis = tambah entry di `analystTools` (`trading/engine.ts`): `desc
 
 Ada **dua root skill** dan gak bisa ditukar. `trading/skills/` buat analis headless — isinya
 harus ngomongin tool, bukan perintah shell, dan gak boleh nyapa user (di loop itu gak ada user).
-`skills/` buat chat CLI di `index.ts` yang punya bash. Nambah skill = bikin
+`skills/` buat chat CLI di `src/cli.ts` yang punya bash. Nambah skill = bikin
 `trading/skills/<nama>/SKILL.md` atau `skills/<nama>/SKILL.md`:
 
 ```md
