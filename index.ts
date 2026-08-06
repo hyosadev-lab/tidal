@@ -1,8 +1,8 @@
 import * as readline from "node:readline/promises";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { runAgent, type Message, type Tool } from "./agent.ts";
-import { loadSkills, skillIndex, skillTool } from "./skills.ts";
+import { runAgent, type Message, type Tool } from "./src/agent/llm.ts";
+import { loadSkills, skillIndex, skillTool } from "./src/agent/skills.ts";
 
 const execAsync = promisify(exec);
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

@@ -36,15 +36,15 @@ scan 1.5s later; that scan hits the live GMGN API and writes `data/state.json` /
 
 ## Architecture
 
-Two entry points share `agent.ts` + `skills.ts`:
+Two entry points share `src/agent/llm.ts` + `src/agent/skills.ts`:
 
 - `server.ts` — the real product. Static file server + JSON control API + SSE stream, driving `trading/`.
 - `index.ts` — older readline chat loop. Has a `bash` tool; unrelated to the trading engine.
 
-`agent.ts` is a ~80-line OpenRouter tool-calling loop (`runAgent`): tools are
+`src/agent/llm.ts` is a ~80-line OpenRouter tool-calling loop (`runAgent`): tools are
 `{description, parameters (JSON Schema), run}`, it loops until the model replies without tool calls.
 
-`skills.ts` implements progressive disclosure: only each skill's `name` + `description` go into
+`src/agent/skills.ts` implements progressive disclosure: only each skill's `name` + `description` go into
 the system prompt (`skillIndex`); the full `SKILL.md` body is returned by the `load_skill` tool.
 Skills live in `<root>/<name>/SKILL.md` with flat `key: value` frontmatter.
 

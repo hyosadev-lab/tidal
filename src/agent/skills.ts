@@ -1,24 +1,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { Tool } from "./agent.ts";
+import type { Tool } from "./llm.ts";
 
 export type Skill = { name: string; description: string; body: string; dir: string };
-
-// ponytail: flat `key: value` frontmatter only — swap in a YAML parser if skills ever need lists/nesting
-export function parseSkill(md: string, fallbackName: string, dir = ""): Skill {
-  const fm = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(md);
-  const meta = new Map<string, string>();
-  for (const line of fm?.[1]?.split(/\r?\n/) ?? []) {
-    const i = line.indexOf(":");
-    if (i > 0) meta.set(line.slice(0, i).trim(), line.slice(i + 1).trim().replace(/^["']|["']$/g, ""));
-  }
-  return {
-    name: meta.get("name") ?? fallbackName,
-    description: meta.get("description") ?? "",
-    body: (fm ? md.slice(fm[0].length) : md).trim(),
-    dir,
-  };
-}
 
 /** Reads `skills/<name>/SKILL.md`. Missing directory, or a folder without SKILL.md, = skipped. */
 export async function loadSkills(root = "skills"): Promise<Skill[]> {
@@ -41,6 +25,22 @@ export async function loadSkills(root = "skills"): Promise<Skill[]> {
     }),
   );
   return skills.filter((s): s is Skill => s !== null);
+}
+
+// ponytail: flat `key: value` frontmatter only — swap in a YAML parser if skills ever need lists/nesting
+export function parseSkill(md: string, fallbackName: string, dir = ""): Skill {
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(md);
+  const meta = new Map<string, string>();
+  for (const line of fm?.[1]?.split(/\r?\n/) ?? []) {
+    const i = line.indexOf(":");
+    if (i > 0) meta.set(line.slice(0, i).trim(), line.slice(i + 1).trim().replace(/^["']|["']$/g, ""));
+  }
+  return {
+    name: meta.get("name") ?? fallbackName,
+    description: meta.get("description") ?? "",
+    body: (fm ? md.slice(fm[0].length) : md).trim(),
+    dir,
+  };
 }
 
 /** System-prompt suffix listing what's available, so the model knows what it can load. */

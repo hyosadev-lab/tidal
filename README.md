@@ -198,8 +198,11 @@ trading/
   broker.ts            eksekusi paper & live
   engine.ts            loop scan + monitor
   skills/              skill analis: scanning + analysis
-agent.ts               loop tool-calling (dipakai analis)
-skills.ts              loader <root>/<nama>/SKILL.md
+src/
+  agent/
+    llm.ts             loop tool-calling (dipakai analis)
+    skills.ts          loader <root>/<nama>/SKILL.md
+  gmgn/                client GMGN OpenAPI standalone (belum dipakai trading/)
 skills/                skill gmgn-* bawaan, buat chat CLI (butuh bash)
 index.ts               chat CLI (mode lama, punya tool bash)
 ```

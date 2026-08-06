@@ -1,5 +1,5 @@
-import { runAgent, type Tool } from "../agent.ts";
-import { loadSkills, skillIndex, skillTool } from "../skills.ts";
+import { runAgent, type Tool } from "../src/agent/llm.ts";
+import { loadSkills, skillIndex, skillTool } from "../src/agent/skills.ts";
 import { SKIP, gasReserve, liveReady, minPosition } from "./config.ts";
 import * as broker from "./broker.ts";
 import * as gmgn from "./gmgn.ts";
