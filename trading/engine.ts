@@ -7,6 +7,7 @@ import { num } from "./gmgn.ts";
 import {
   buyableSet,
   evaluateExit,
+  gateTally,
   healthExit,
   pnlPct,
   positionSize,
@@ -368,6 +369,12 @@ async function runScan(): Promise<void> {
       `Cycle ${cycle}: ${all.length} tokens scanned, ${eligible.length} through the gates.`,
       eligible.length ? eligible.slice(0, 8).map((c) => `${c.symbol} ${c.score}`).join("  ") : undefined,
     );
+    // Which gate did the killing. The thresholds are fixed now, so the only thing left worth
+    // measuring is which of them actually fires — a gate that never fires is dead weight, and
+    // one that rejects most of the sweep is quietly the whole strategy. Counts exceed the
+    // number of rejects: a token can fail several gates at once.
+    const tally = gateTally(all);
+    if (tally) store.log("info", `Gates: ${tally}`);
 
     if (!eligible.length && !store.positions.length) {
       store.phase = "idle";

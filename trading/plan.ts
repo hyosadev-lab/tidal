@@ -171,6 +171,27 @@ export function runGates(c: Candidate): string[] {
   return f;
 }
 
+/**
+ * How often each gate fired across one sweep, busiest first: `dev 71 · top10 22 · rug 18`.
+ *
+ * Grouped on the first word of the failure string, since the rest carries the token's own
+ * numbers. That merges `no address` and `no price` into one `no` bucket — acceptable, both are
+ * meant to be zero. A token failing several gates counts once per gate, so the numbers sum to
+ * more than the rejects. Sweep only; `find_tokens` rows are gated later in the cycle.
+ */
+export function gateTally(candidates: Candidate[]): string {
+  const counts = new Map<string, number>();
+  for (const c of candidates)
+    for (const f of c.gateFailures) {
+      const key = f.split(" ")[0] ?? f;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  return [...counts]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${k} ${n}`)
+    .join(" · ");
+}
+
 /** 0–100 conviction from structure alone, before the model looks at it. */
 export function score(c: Candidate): number {
   let s = 0;

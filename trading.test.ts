@@ -6,6 +6,7 @@ import {
   evaluateExit,
   healthExit,
   positionSize,
+  gateTally,
   runGates,
   score,
   securityRisk,
@@ -187,6 +188,19 @@ test("the Watch band passes; only the Skip band is gated", () => {
 // that is a rounding error next to mcap all pass now. Judging those is the analyst's job.
 test("nothing outside the criteria table gates any more", () => {
   assert.deepEqual(runGates(candidate({ volume1hUsd: 0, ageMinutes: 1, marketCapUsd: 100_000_000 })), []);
+});
+
+test("the gate tally counts every failure, busiest first", () => {
+  const swept = [
+    candidate({ devHolding: true }),
+    candidate({ devHolding: true }),
+    candidate({ devHolding: true, rugRatio: 0.9 }),
+    candidate(),
+  ].map((c) => ({ ...c, gateFailures: runGates(c) }));
+
+  // Three dev failures, one rug — and the token that failed both is counted in each.
+  assert.equal(gateTally(swept), "dev 3 · rug 1");
+  assert.equal(gateTally([candidate()].map((c) => ({ ...c, gateFailures: runGates(c) }))), "");
 });
 
 test("only data integrity survives as a non-table gate", () => {
