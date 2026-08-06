@@ -35,20 +35,42 @@ Tiga feed digabung: `market trending` 1 jam, `market trending` 5 menit, dan `mar
 
 ### 2. Gate — gagal satu, gugur
 
+Gate adalah salinan kolom 🔴 Skip dari tabel "Pass / Watch / Skip Criteria" di dokumentasi
+GMGN (`skills/gmgn-market/SKILL.md`). Tidak ada angka karangan sendiri di sini.
+
 | Gate | Default |
 |---|---|
-| honeypot / wash trading | tolak langsung |
-| `rug_ratio` | <= 0.25 |
-| top-10 holder | <= 40% |
-| likuiditas | >= $30k |
-| volume 1 jam | >= $20k |
 | smart money | >= 1 wallet |
-| umur token | >= 20 menit |
-| buy/sell tax | < 10% |
-| likuiditas / market cap | >= 2% |
+| `rug_ratio` | <= 0.3 |
+| `creator_token_status` | bukan `creator_hold` |
+| wash trading | tolak langsung |
+| top-10 holder | <= 50% |
+| likuiditas | >= $10k |
+| honeypot | tolak langsung |
 
-Yang terakhir itu yang sering bikin orang kejebak: market cap $50M tapi kolam cuma $80k
-artinya pintu keluarnya sempit.
+Ambang ini adalah batas "jangan disentuh sama sekali", bukan batas "layak dibeli". Pita
+🟡 Watch sengaja diloloskan — yang menghukumnya skor, bukan gate. Token dengan kolam $12k dan
+rug 0.28 akan lolos, lalu jadi urusan analis untuk menolaknya.
+
+**Tidak ada satu pun yang bisa diatur dari dashboard.** Angkanya ada di konstanta `SKIP`
+(`trading/config.ts`) dan bukan bagian dari `TradeConfig` — ini ambang yang dipublikasikan
+untuk hal yang didiskualifikasi, jadi tidak ada yang perlu ditala. Kalau mau berdagang lebih
+ketat dari lantai ini, tulis di kolom instruksi dashboard: di situ analis bisa menindaklanjutinya,
+tanpa membuat angka karangan yang menyandang nama tabel.
+
+Dua hal yang bukan kebijakan risiko juga masih menggugurkan kandidat: token tanpa alamat dan
+tanpa harga. Itu penjaga integritas data, supaya kandidat rusak tidak lolos ke sizing.
+
+Sisanya bukan gate, tapi **penolakan pre-trade** — sekali per entry, lewat `token_security`,
+karena cuma route itu yang jawabannya bisa dipercaya (baris feed sering mengosongkannya):
+
+- **buy/sell tax > 10%** — semua chain. Token yang bisa dibeli dan dijual tapi dipotong 40%
+  bukan honeypot, dan tabel kriteria di atas tidak punya barisnya. Ambang 10% diambil dari
+  band 🔴 milik `buy_tax`/`sell_tax` di `skills/gmgn-token/SKILL.md`.
+- **mint / freeze authority masih hidup, atau likuiditas belum dibakar** — Solana saja. Di EVM
+  kedua konsep itu tidak ada, dan likuiditasnya dikunci, bukan dibakar.
+
+Gagal baca = ditolak, di semua chain. Ini berlaku di paper mode juga, biar hasilnya sebanding.
 
 ### 3. Skor struktural (0-100)
 

@@ -100,10 +100,20 @@ to exactly the pre-scan behaviour.
 - **`securityRisk` is a pre-trade refusal, not a gate, and that is deliberate.** It runs once per
   entry in `openPosition` (paper and live alike) against `token_security`, because only that route
   answers reliably — `trenches` rows report `renounced_*: false` on tokens the security route
-  reports as `true`, so gating on a feed row would kill the whole feed. Solana-only: mint/freeze
-  authority do not exist on EVM and EVM liquidity is locked rather than burned. Fails closed.
+  reports as `true`, so gating on a feed row would kill the whole feed. Runs on every chain now:
+  the tax half (`buy_tax`/`sell_tax` > 10%) applies everywhere, the mint/freeze and burn halves
+  are Solana-only — those authorities do not exist on EVM and EVM liquidity is locked rather than
+  burned. Fails closed on all chains, so EVM entries now cost one `token_security` call each.
   Measured on live candidates: the authority half never fires (launchpads revoke at creation),
   the burn half refuses about 1 in 14 otherwise-clean candidates.
+- **`runGates` is a transcription of GMGN's 🔴 Skip column** (`skills/gmgn-market/SKILL.md`,
+  "Pass / Watch / Skip Criteria") plus two data-integrity checks. Nothing in it is a number
+  someone picked. The 🟡 Watch band passes on purpose — `score()` marks it down, the analyst
+  rejects it. The thresholds live in the `SKIP` constant in `config.ts`, deliberately *not* in
+  `TradeConfig` and not on the dashboard: `runGates(c)` takes no config, so there is no operator
+  input to clamp and no way for a stored `data/config.json` to drift off the table. Tightening
+  belongs in the dashboard prompt, where the analyst acts on it. Don't re-add a gate without a
+  row to cite, and don't turn these back into knobs.
 - **Discovery widens the search, never the risk envelope.** `find_tokens` clamps every threshold
   back up to `store.config` (asking for `min_liquidity_usd: 1` still returns nothing under
   `cfg.minLiquidityUsd`), runs `runGates` on every row before returning it, and `buyableSet` in

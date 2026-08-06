@@ -36,16 +36,9 @@ export type TradeConfig = {
   /** Don't re-enter a token for this long after exiting it. */
   cooldownMinutes: number;
 
-  // ── Entry gates ─────────────────────────────────────────────────────
-  minLiquidityUsd: number;
+  // ── Discovery / execution ───────────────────────────────────────────
+  /** Feed query filter, not a gate. The gate thresholds are fixed in `SKIP` (config.ts). */
   minVolume1hUsd: number;
-  maxRugRatio: number;
-  maxTop10HolderRate: number;
-  minSmartDegenCount: number;
-  /** Reject tokens younger than this (minutes). */
-  minTokenAgeMinutes: number;
-  /** Reject tokens older than this (minutes). 0 = no ceiling. */
-  maxTokenAgeMinutes: number;
   slippagePct: number;
 
   // ── Wallet / accounting ─────────────────────────────────────────────
@@ -79,8 +72,6 @@ export type Candidate = {
   devHolding: boolean;
   isWashTrading: boolean;
   isHoneypot: boolean;
-  buyTax: number;
-  sellTax: number;
   ageMinutes: number;
   launchpad: string;
   source: string;

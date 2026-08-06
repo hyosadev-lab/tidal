@@ -38,8 +38,6 @@ function candidate(over: Partial<Candidate> = {}): Candidate {
     devHolding: false,
     isWashTrading: false,
     isHoneypot: false,
-    buyTax: 0,
-    sellTax: 0,
     ageMinutes: 300,
     launchpad: "Pump.fun",
     source: "test",
@@ -108,11 +106,25 @@ test("an unreadable or silent security response fails closed rather than passing
   assert.match(securityRisk({ renounced_mint: true, renounced_freeze_account: true }, "sol"), /burn status unknown/);
 });
 
-test("the check does not apply on EVM chains, where neither property means the same thing", () => {
+test("the renounce and burn halves do not apply on EVM, where neither means the same thing", () => {
   for (const chain of ["bsc", "base", "eth"]) {
-    assert.equal(securityRisk(null, chain), "");
     assert.equal(securityRisk({ renounced_mint: false, burn_status: "none" }, chain), "");
   }
+});
+
+// Tax is the one half that applies everywhere — it lives here rather than in runGates because
+// only token_security answers it reliably. Threshold is GMGN's own 🔴 band (>0.10).
+test("a tax above 10% is refused on every chain", () => {
+  for (const chain of ["sol", "bsc", "base", "eth"]) {
+    assert.match(securityRisk({ ...safeSec, sell_tax: 0.4 }, chain), /tax 40% > 10%/);
+    assert.match(securityRisk({ ...safeSec, buy_tax: 0.11 }, chain), /tax 11% > 10%/);
+    // At the threshold, and absent entirely, both pass. Solana carries no tax fields at all.
+    assert.equal(securityRisk({ ...safeSec, buy_tax: 0.1, sell_tax: 0.1 }, chain), "");
+  }
+});
+
+test("an unreadable response fails closed on EVM too, not just Solana", () => {
+  assert.notEqual(securityRisk(null, "bsc"), "");
 });
 
 // ── what the analyst is allowed to buy ────────────────────────────────
@@ -149,27 +161,37 @@ test("a candidate with no address cannot slip into the buyable set", () => {
 // ── gates ─────────────────────────────────────────────────────────────
 
 test("a clean candidate passes every gate", () => {
-  assert.deepEqual(runGates(candidate(), cfg), []);
+  assert.deepEqual(runGates(candidate()), []);
 });
 
 test("honeypots and wash trading are rejected outright", () => {
-  assert.ok(runGates(candidate({ isHoneypot: true }), cfg).includes("honeypot"));
-  assert.ok(runGates(candidate({ isWashTrading: true }), cfg).includes("wash trading"));
+  assert.ok(runGates(candidate({ isHoneypot: true })).includes("honeypot"));
+  assert.ok(runGates(candidate({ isWashTrading: true })).includes("wash trading"));
 });
 
-test("thin liquidity, concentration and rug risk each block entry", () => {
-  assert.ok(runGates(candidate({ liquidityUsd: 5_000 }), cfg).some((f) => f.includes("too thin")));
-  assert.ok(runGates(candidate({ top10HolderRate: 0.7 }), cfg).some((f) => f.includes("top10")));
-  assert.ok(runGates(candidate({ rugRatio: 0.6 }), cfg).some((f) => f.includes("rug")));
+test("a dev still holding their allocation blocks entry", () => {
+  assert.ok(runGates(candidate({ devHolding: true })).includes("dev still holding"));
 });
 
-test("liquidity that is a rounding error next to market cap is blocked", () => {
-  const f = runGates(candidate({ liquidityUsd: 30_000, marketCapUsd: 100_000_000 }), cfg);
-  assert.ok(f.some((x) => x.includes("2% of mcap")));
+// The gate boundaries are GMGN's documented 🔴 Skip thresholds, not our own numbers:
+// skills/gmgn-market/SKILL.md. Watch-band values must still pass.
+test("the Watch band passes; only the Skip band is gated", () => {
+  assert.deepEqual(runGates(candidate({ rugRatio: 0.3, top10HolderRate: 0.5, liquidityUsd: 10_000, smartDegenCount: 1 })), []);
+  assert.ok(runGates(candidate({ rugRatio: 0.31 })).some((f) => f.includes("rug")));
+  assert.ok(runGates(candidate({ top10HolderRate: 0.51 })).some((f) => f.includes("top10")));
+  assert.ok(runGates(candidate({ liquidityUsd: 9_999 })).some((f) => f.includes("too thin")));
+  assert.ok(runGates(candidate({ smartDegenCount: 0 })).some((f) => f.includes("smart money")));
 });
 
-test("tokens younger than the age floor are blocked", () => {
-  assert.ok(runGates(candidate({ ageMinutes: 3 }), cfg).some((f) => f.includes("old")));
+// What the table has no row for is no longer a gate: thin volume, a young token, and a pool
+// that is a rounding error next to mcap all pass now. Judging those is the analyst's job.
+test("nothing outside the criteria table gates any more", () => {
+  assert.deepEqual(runGates(candidate({ volume1hUsd: 0, ageMinutes: 1, marketCapUsd: 100_000_000 })), []);
+});
+
+test("only data integrity survives as a non-table gate", () => {
+  assert.ok(runGates(candidate({ address: "" })).includes("no address"));
+  assert.ok(runGates(candidate({ priceUsd: 0 })).includes("no price"));
 });
 
 // ── scoring ───────────────────────────────────────────────────────────

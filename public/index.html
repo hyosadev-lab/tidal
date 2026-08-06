@@ -107,6 +107,8 @@
         <label class="mini"><span>Cooldown (min)</span><input type="number" id="in-cooldown" min="0" max="1440" step="5" /></label>
         <label class="mini"><span>Min position $ <span class="muted">0 = auto</span></span><input type="number" id="in-minpos" min="0" step="1" /></label>
         <label class="mini"><span>Gas reserve <span class="muted">0 = auto</span></span><input type="number" id="in-gasres" min="0" step="0.001" /></label>
+        <label class="mini"><span>Slippage %</span><input type="number" id="in-slip" min="1" max="100" step="1" /></label>
+        <label class="mini"><span>Paper bankroll $</span><input type="number" id="in-bankroll" min="10" step="100" /></label>
       </div>
       <p class="hint">Take-profit ladder is fixed in <code>data/config.json</code>: <span id="lbl-ladder">—</span></p>
       <p class="hint">Largest position these settings allow: <b id="lbl-ceiling">—</b>. Anything under the <b id="lbl-floor">—</b> floor is skipped, because fees and slippage would outweigh the trade.</p>
@@ -114,15 +116,14 @@
 
     <details class="fold">
       <summary>Entry gates</summary>
+      <p class="hint">Fixed, not tunable. A candidate is disqualified by GMGN's published
+        🔴 Skip thresholds: liquidity under $10k, <code>rug_ratio</code> above 0.3, top-10 holders
+        above 50%, no smart money, dev still holding, honeypot, or wash trading. Plus a pre-trade
+        refusal on tax above 10% and, on Solana, a live mint/freeze authority or an unburned pool.</p>
+      <p class="hint">Those are the floor, not a strategy — everything above them still has to earn
+        its place. To trade tighter than the floor, say so in the instructions above.</p>
       <div class="grid2">
-        <label class="mini"><span>Min liquidity $</span><input type="number" id="in-liq" min="0" step="1000" /></label>
-        <label class="mini"><span>Min 1h volume $</span><input type="number" id="in-vol" min="0" step="1000" /></label>
-        <label class="mini"><span>Max rug ratio</span><input type="number" id="in-rug" min="0" max="1" step="0.05" /></label>
-        <label class="mini"><span>Max top-10 %</span><input type="number" id="in-top10" min="0" max="100" step="1" /></label>
-        <label class="mini"><span>Min smart money</span><input type="number" id="in-smart" min="0" max="50" step="1" /></label>
-        <label class="mini"><span>Min age (min)</span><input type="number" id="in-minage" min="0" step="5" /></label>
-        <label class="mini"><span>Slippage %</span><input type="number" id="in-slip" min="1" max="100" step="1" /></label>
-        <label class="mini"><span>Paper bankroll $</span><input type="number" id="in-bankroll" min="10" step="100" /></label>
+        <label class="mini"><span>Min 1h volume $ <span class="muted">feed filter</span></span><input type="number" id="in-vol" min="0" step="1000" /></label>
       </div>
     </details>
 

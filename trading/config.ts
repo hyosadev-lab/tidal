@@ -32,6 +32,22 @@ export const EXPLORER: Record<Chain, string> = {
   eth: "https://etherscan.io/tx/",
 };
 
+/**
+ * GMGN's 🔴 Skip column, transcribed from the "Pass / Watch / Skip Criteria" table in
+ * `skills/gmgn-market/SKILL.md`. Not in `TradeConfig` and not on the dashboard: these are the
+ * published thresholds for what is disqualified, so there is nothing here for an operator to
+ * tune — a different number would just be an invented one wearing the table's name.
+ *
+ * They are a floor, not a strategy. Everything above them still has to earn its place through
+ * `score()` and the analyst. To trade something tighter, say so in the dashboard prompt.
+ */
+export const SKIP = {
+  minLiquidityUsd: 10_000,
+  maxRugRatio: 0.3,
+  maxTop10HolderRate: 0.5,
+  minSmartDegenCount: 1,
+} as const;
+
 export const DEFAULT_CONFIG: TradeConfig = {
   chain: "sol",
   mode: "paper",
@@ -54,13 +70,8 @@ export const DEFAULT_CONFIG: TradeConfig = {
   timeStopMinPnlPct: 8,
   cooldownMinutes: 120,
 
-  minLiquidityUsd: 30_000,
+  // Not a gate — pushed to the GMGN feeds as a query filter, so it shapes what gets fetched.
   minVolume1hUsd: 20_000,
-  maxRugRatio: 0.25,
-  maxTop10HolderRate: 0.4,
-  minSmartDegenCount: 1,
-  minTokenAgeMinutes: 20,
-  maxTokenAgeMinutes: 0,
   slippagePct: 20,
 
   minPositionUsd: 0,
@@ -113,13 +124,8 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     timeStopMinPnlPct: clamp(input.timeStopMinPnlPct, -50, 500, base.timeStopMinPnlPct),
     cooldownMinutes: clamp(input.cooldownMinutes, 0, 10080, base.cooldownMinutes),
 
-    minLiquidityUsd: clamp(input.minLiquidityUsd, 0, 100_000_000, base.minLiquidityUsd),
+    // The gate thresholds are not here — see SKIP. This one only narrows the feed query.
     minVolume1hUsd: clamp(input.minVolume1hUsd, 0, 100_000_000, base.minVolume1hUsd),
-    maxRugRatio: clamp(input.maxRugRatio, 0, 1, base.maxRugRatio),
-    maxTop10HolderRate: clamp(input.maxTop10HolderRate, 0, 1, base.maxTop10HolderRate),
-    minSmartDegenCount: Math.round(clamp(input.minSmartDegenCount, 0, 50, base.minSmartDegenCount)),
-    minTokenAgeMinutes: clamp(input.minTokenAgeMinutes, 0, 1_000_000, base.minTokenAgeMinutes),
-    maxTokenAgeMinutes: clamp(input.maxTokenAgeMinutes, 0, 1_000_000, base.maxTokenAgeMinutes),
     slippagePct: Math.round(clamp(input.slippagePct, 1, 100, base.slippagePct)),
 
     minPositionUsd: clamp(input.minPositionUsd, 0, 100_000, base.minPositionUsd),

@@ -1,6 +1,6 @@
 import { runAgent, type Tool } from "../agent.ts";
 import { loadSkills, skillIndex, skillTool } from "../skills.ts";
-import { gasReserve, liveReady, minPosition } from "./config.ts";
+import { SKIP, gasReserve, liveReady, minPosition } from "./config.ts";
 import * as broker from "./broker.ts";
 import * as gmgn from "./gmgn.ts";
 import { num } from "./gmgn.ts";
@@ -79,15 +79,15 @@ const analystTools: Record<string, Tool> = {
       let rows: Record<string, any>[] = [];
       const feed = String(a.feed);
 
-      // The floors here are the config's, not the model's: a request for looser
-      // liquidity than the operator configured is silently clamped back up.
+      // The floors here are the gate thresholds and the config's, not the model's: a request
+      // for looser liquidity than either allows is silently clamped back up.
       if (feed === "trending")
         rows = await gmgn.trending(cfg.chain, {
           interval: String(a.interval ?? "1h"),
           limit,
-          minLiquidity: Math.max(cfg.minLiquidityUsd, num(a.min_liquidity_usd)),
+          minLiquidity: Math.max(SKIP.minLiquidityUsd, num(a.min_liquidity_usd)),
           minVolume: Math.max(cfg.minVolume1hUsd, num(a.min_volume_usd)),
-          minSmartDegen: Math.max(cfg.minSmartDegenCount, num(a.min_smart_money)) || undefined,
+          minSmartDegen: Math.max(SKIP.minSmartDegenCount, num(a.min_smart_money)) || undefined,
           minRenowned: num(a.min_kols) || undefined,
           maxCreated: a.max_age ? String(a.max_age) : undefined,
           minCreated: a.min_age ? String(a.min_age) : undefined,
@@ -102,7 +102,7 @@ const analystTools: Record<string, Tool> = {
       const held = new Set(store.positions.map((p) => p.address.toLowerCase()));
       const out = rows.slice(0, limit).map((r) => {
         const c = toCandidate(r, `find:${feed}`);
-        c.gateFailures = runGates(c, cfg);
+        c.gateFailures = runGates(c);
         c.score = c.gateFailures.length ? 0 : score(c);
         const key = c.address.toLowerCase();
         if (c.address) discovered.set(key, c);
@@ -268,16 +268,16 @@ async function gatherCandidates(): Promise<Candidate[]> {
       .trending(cfg.chain, {
         interval: "1h",
         limit: 50,
-        minLiquidity: cfg.minLiquidityUsd,
+        minLiquidity: SKIP.minLiquidityUsd,
         minVolume: cfg.minVolume1hUsd,
-        minSmartDegen: cfg.minSmartDegenCount || undefined,
+        minSmartDegen: SKIP.minSmartDegenCount || undefined,
       })
       .then((r) => add(r, "trending-1h"))
       .catch((e) => {
         store.log("warn", `Trending feed failed: ${short(e)}`);
       }),
     gmgn
-      .trending(cfg.chain, { interval: "5m", limit: 30, minLiquidity: cfg.minLiquidityUsd })
+      .trending(cfg.chain, { interval: "5m", limit: 30, minLiquidity: SKIP.minLiquidityUsd })
       .then((r) => add(r, "trending-5m"))
       .catch(() => undefined),
   ];
@@ -293,7 +293,7 @@ async function gatherCandidates(): Promise<Candidate[]> {
 
   const all = [...seen.values()];
   for (const c of all) {
-    c.gateFailures = runGates(c, cfg);
+    c.gateFailures = runGates(c);
     c.score = c.gateFailures.length ? 0 : score(c);
   }
   return all.sort((a, b) => b.score - a.score);
@@ -495,7 +495,6 @@ async function askAnalyst(candidates: Candidate[], slots: number): Promise<Decis
       kols: c.renownedCount,
       rug_ratio: c.rugRatio,
       top10_rate: c.top10HolderRate,
-      dev_still_holding: c.devHolding,
       age_minutes: Math.round(c.ageMinutes),
       launchpad: c.launchpad,
       seen_in: c.source,
@@ -539,22 +538,21 @@ async function openPosition(
     }
   }
 
-  // Checked here rather than in runGates because only token_security answers it reliably,
-  // and one call per actual entry is affordable where one per scanned token is not. Runs in
+  // Checked here rather than in runGates because only token_security answers these reliably,
+  // and one call per actual entry is affordable where one per scanned token is not. Runs on
+  // every chain — the tax half applies everywhere, the Solana half no-ops elsewhere — and in
   // paper mode too, so paper results stay comparable to live ones. Fails closed.
-  if (cfg.chain === "sol") {
-    let sec: Record<string, any> | null = null;
-    try {
-      sec = await gmgn.tokenSecurity(cfg.chain, c.address);
-    } catch (e) {
-      store.log("warn", `${c.symbol} skipped — security check failed: ${short(e)}`);
-      return;
-    }
-    const risk = securityRisk(sec, cfg.chain);
-    if (risk) {
-      store.log("warn", `${c.symbol} skipped — ${risk}.`);
-      return;
-    }
+  let sec: Record<string, any> | null = null;
+  try {
+    sec = await gmgn.tokenSecurity(cfg.chain, c.address);
+  } catch (e) {
+    store.log("warn", `${c.symbol} skipped — security check failed: ${short(e)}`);
+    return;
+  }
+  const risk = securityRisk(sec, cfg.chain);
+  if (risk) {
+    store.log("warn", `${c.symbol} skipped — ${risk}.`);
+    return;
   }
 
   try {

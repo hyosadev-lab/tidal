@@ -182,12 +182,7 @@ function fillForm(c, s) {
   set("in-cooldown", c.cooldownMinutes);
   set("in-minpos", c.minPositionUsd);
   set("in-gasres", c.gasReserveNative);
-  set("in-liq", c.minLiquidityUsd);
   set("in-vol", c.minVolume1hUsd);
-  set("in-rug", c.maxRugRatio);
-  set("in-top10", Math.round(c.maxTop10HolderRate * 100));
-  set("in-smart", c.minSmartDegenCount);
-  set("in-minage", c.minTokenAgeMinutes);
   set("in-slip", c.slippagePct);
   set("in-bankroll", c.paperStartEquityUsd);
   set("in-wallet", c.walletAddress);
@@ -323,12 +318,7 @@ function collectConfig() {
     cooldownMinutes: n("in-cooldown", 120),
     minPositionUsd: n("in-minpos", 0),
     gasReserveNative: n("in-gasres", 0),
-    minLiquidityUsd: n("in-liq", 30000),
     minVolume1hUsd: n("in-vol", 20000),
-    maxRugRatio: n("in-rug", 0.25),
-    maxTop10HolderRate: n("in-top10", 40) / 100,
-    minSmartDegenCount: n("in-smart", 1),
-    minTokenAgeMinutes: n("in-minage", 20),
     slippagePct: n("in-slip", 20),
     paperStartEquityUsd: n("in-bankroll", 1000),
     walletAddress: $("in-wallet").value,

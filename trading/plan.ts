@@ -1,3 +1,4 @@
+import { SKIP } from "./config.ts";
 import { num } from "./gmgn.ts";
 import type { Candidate, Position, TradeConfig } from "./types.ts";
 
@@ -50,8 +51,6 @@ export function toCandidate(r: Record<string, any>, source: string): Candidate {
     devHolding: String(r.creator_token_status ?? "") === "creator_hold",
     isWashTrading: truthy(r.is_wash_trading),
     isHoneypot: truthy(r.is_honeypot),
-    buyTax: num(r.buy_tax),
-    sellTax: num(r.sell_tax),
     ageMinutes,
     launchpad: String(r.launchpad_platform ?? r.launchpad ?? ""),
     source,
@@ -84,26 +83,35 @@ export function buyableSet(eligible: Candidate[], discovered: Candidate[], block
  * route that answers these reliably. Feed rows carry the same field names but `trenches`
  * leaves them unpopulated, and reading its `false` as a failure would kill the whole feed.
  *
- * Solana-scoped on purpose. Neither property means the same thing on EVM: mint and freeze
- * authority do not exist there, and EVM liquidity is usually *locked* rather than burned,
- * which the burn fields do not describe. Returns "" (allow) on every other chain.
+ * Three things are checked:
+ *   • buy / sell tax above 10% — every chain. A token you can buy and sell but only at a 40%
+ *     haircut is not a honeypot and no gate in the GMGN criteria table covers it; the
+ *     threshold is that table's own 🔴 band for `buy_tax` / `sell_tax`
+ *     (skills/gmgn-token/SKILL.md). Absent fields read as 0, as they do on Solana, where the
+ *     concept does not exist.
+ *   • mint / freeze authority — Solana only. A live mint authority lets the creator print
+ *     supply on top of you; a live freeze authority lets them freeze the account so you can
+ *     never sell. Solana launchpads revoke both at creation, so in practice this only
+ *     catches tokens that were not launched that way. Cheap backstop, not a filter.
+ *   • liquidity burn — Solana only. `burn_status: "burn"` means the LP tokens are gone and
+ *     the deployer cannot pull the pool out from under the position. This one genuinely
+ *     varies.
  *
- * Two things are checked:
- *   • mint / freeze authority — a live mint authority lets the creator print supply on top
- *     of you; a live freeze authority lets them freeze the account so you can never sell.
- *     Solana launchpads revoke both at creation, so in practice this only catches tokens
- *     that were not launched that way. Cheap backstop, not a filter.
- *   • liquidity burn — `burn_status: "burn"` means the LP tokens are gone and the deployer
- *     cannot pull the pool out from under the position. This one genuinely varies.
+ * The last two are Solana-scoped on purpose: mint and freeze authority do not exist on EVM,
+ * and EVM liquidity is usually *locked* rather than burned, which the burn fields do not
+ * describe.
  *
  * Unknown is not a pass. If the response cannot be read or carries neither answer, the
  * caller refuses the entry: these are exactly the properties worth being sure about.
  */
 export function securityRisk(sec: Record<string, any> | null, chain: string): string {
-  if (chain !== "sol") return "";
   if (!sec) return "could not read token security";
 
   const reasons: string[] = [];
+  if (num(sec.buy_tax) > 0.1 || num(sec.sell_tax) > 0.1)
+    reasons.push(`tax ${Math.round(Math.max(num(sec.buy_tax), num(sec.sell_tax)) * 100)}% > 10%`);
+  if (chain !== "sol") return reasons.join(", ");
+
   const { renounced_mint: mint, renounced_freeze_account: freeze } = sec;
   if (mint === undefined && freeze === undefined) reasons.push("security response carried no renounce status");
   else {
@@ -122,28 +130,44 @@ export function securityRisk(sec: Record<string, any> | null, chain: string): st
 /**
  * Hard gates. Any failure disqualifies — no weighting, no model override.
  * Percentages here are ratios (0–1) as GMGN returns them.
+ *
+ * The first block is GMGN's own 🔴 Skip column, transcribed from the
+ * "Pass / Watch / Skip Criteria" table in `skills/gmgn-market/SKILL.md`. Each line is one
+ * row of that table, in table order, reading its threshold from SKIP. The 🟡 Watch band
+ * deliberately passes — score() marks it down instead.
+ *
+ * Takes no config: there is no operator input here, by design. The published thresholds are
+ * the whole policy, and an operator who wants to trade tighter says so in the dashboard
+ * prompt, where the analyst can act on it, rather than by moving a number that cites a source
+ * it no longer matches.
+ *
+ * Nothing else is a gate. The two remaining checks are data integrity, not policy. Tax moved
+ * to securityRisk, where the rest of the pre-trade refusals live; the invented thresholds
+ * (liquidity/mcap ratio, 1h volume, age window) are gone.
  */
-export function runGates(c: Candidate, cfg: TradeConfig): string[] {
+export function runGates(c: Candidate): string[] {
   const f: string[] = [];
-  if (!c.address) f.push("no address");
-  if (c.isHoneypot) f.push("honeypot");
+
+  // ── GMGN 🔴 Skip criteria ──
+  if (c.smartDegenCount < SKIP.minSmartDegenCount) f.push(`smart money ${c.smartDegenCount} < ${SKIP.minSmartDegenCount}`);
+  if (c.rugRatio > SKIP.maxRugRatio) f.push(`rug ${c.rugRatio.toFixed(2)} > ${SKIP.maxRugRatio}`);
+  if (c.devHolding) f.push("dev still holding");
   if (c.isWashTrading) f.push("wash trading");
-  if (c.rugRatio > cfg.maxRugRatio) f.push(`rug ${c.rugRatio.toFixed(2)} > ${cfg.maxRugRatio}`);
-  if (c.top10HolderRate > cfg.maxTop10HolderRate)
-    f.push(`top10 ${(c.top10HolderRate * 100).toFixed(0)}% > ${(cfg.maxTop10HolderRate * 100).toFixed(0)}%`);
-  if (c.liquidityUsd < cfg.minLiquidityUsd) f.push(`liq $${Math.round(c.liquidityUsd / 1000)}k too thin`);
-  if (c.volume1hUsd < cfg.minVolume1hUsd) f.push(`vol $${Math.round(c.volume1hUsd / 1000)}k too thin`);
-  if (c.smartDegenCount < cfg.minSmartDegenCount) f.push(`smart money ${c.smartDegenCount} < ${cfg.minSmartDegenCount}`);
-  if (cfg.minTokenAgeMinutes && c.ageMinutes > 0 && c.ageMinutes < cfg.minTokenAgeMinutes)
-    f.push(`only ${Math.round(c.ageMinutes)}m old`);
-  if (cfg.maxTokenAgeMinutes && c.ageMinutes > cfg.maxTokenAgeMinutes)
-    f.push(`${Math.round(c.ageMinutes / 60)}h old, past window`);
-  // is_honeypot is EVM-only. On Solana it arrives empty, so this gate is inert there by
-  // design — securityRisk covers the equivalent Solana failure modes before entry.
-  if (c.buyTax > 0.1 || c.sellTax > 0.1) f.push("tax > 10%");
+  if (c.top10HolderRate > SKIP.maxTop10HolderRate)
+    f.push(`top10 ${(c.top10HolderRate * 100).toFixed(0)}% > ${(SKIP.maxTop10HolderRate * 100).toFixed(0)}%`);
+  if (c.liquidityUsd < SKIP.minLiquidityUsd) f.push(`liq $${Math.round(c.liquidityUsd / 1000)}k too thin`);
+  // `has_social` is the table's seventh row, but it marks it a weak signal rather than a
+  // skip, and Candidate carries no social field. Left out on both counts.
+
+  // Part of the table's quick-disqualification rule. is_honeypot is EVM-only: on Solana it
+  // arrives empty, so this is inert there by design — securityRisk covers the equivalent
+  // Solana failure modes before entry.
+  if (c.isHoneypot) f.push("honeypot");
+
+  // ── data integrity, not policy ──
+  if (!c.address) f.push("no address");
   if (c.priceUsd <= 0) f.push("no price");
-  // Liquidity that is a rounding error next to market cap means the exit is the trap.
-  if (c.marketCapUsd > 0 && c.liquidityUsd / c.marketCapUsd < 0.02) f.push("liquidity < 2% of mcap");
+
   return f;
 }
 
@@ -172,7 +196,6 @@ export function score(c: Candidate): number {
   // Structure.
   s += (1 - Math.min(1, c.rugRatio / 0.3)) * 8;
   s += (1 - Math.min(1, c.top10HolderRate / 0.4)) * 6;
-  if (!c.devHolding) s += 4;
   if (c.holderCount > 500) s += 3;
 
   // Age: too new is unpriced, very old memecoins are usually done.
@@ -264,10 +287,14 @@ The candidate list is a starting point, not the whole market. It comes from a fi
 
 THE PLAN YOU ARE OPERATING INSIDE
 
-Entry gates (already applied in code — everything you see has passed them):
-  liquidity >= $${cfg.minLiquidityUsd.toLocaleString()}, 1h volume >= $${cfg.minVolume1hUsd.toLocaleString()},
-  rug_ratio <= ${cfg.maxRugRatio}, top-10 holders <= ${(cfg.maxTop10HolderRate * 100).toFixed(0)}%,
-  smart money >= ${cfg.minSmartDegenCount}, no honeypot, no wash trading, tax < 10%.
+Entry gates (already applied in code — everything you see has passed them). They are GMGN's own
+🔴 Skip thresholds, so passing means "not disqualified", not "good":
+  liquidity >= $${SKIP.minLiquidityUsd.toLocaleString()}, rug_ratio <= ${SKIP.maxRugRatio},
+  top-10 holders <= ${(SKIP.maxTop10HolderRate * 100).toFixed(0)}%, smart money >= ${SKIP.minSmartDegenCount},
+  dev has closed out, no honeypot, no wash trading.
+Anything above those floors but still weak — a $12k pool, rug_ratio 0.28, top-10 at 48% — is your
+job to reject, not the gates'. Before entry each pick also faces a security refusal on tax > 10%
+and, on Solana, live mint/freeze authority or an unburned pool.
 
 Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement):
   hard stop-loss at -${cfg.stopLossPct}%
