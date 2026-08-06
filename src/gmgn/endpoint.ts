@@ -448,10 +448,12 @@ export class OpenApiClient {
   // ---- Swap endpoints (signed auth) ----
 
   async swap(params: SwapParams): Promise<unknown> {
+    this.assertTradeConsent();
     return this.authSignedRequest("POST", "/v1/trade/swap", {}, params);
   }
 
   async multiSwap(params: MultiSwapParams): Promise<unknown> {
+    this.assertTradeConsent();
     return this.authSignedRequest("POST", "/v1/trade/multi_swap", {}, params);
   }
 
@@ -466,6 +468,7 @@ export class OpenApiClient {
   // ---- Strategy order endpoints (signed auth) ----
 
   async createStrategyOrder(params: StrategyCreateParams): Promise<unknown> {
+    this.assertTradeConsent();
     return this.authSignedRequest("POST", "/v1/trade/strategy/create", {}, params);
   }
 
@@ -484,10 +487,24 @@ export class OpenApiClient {
   }
 
   async createToken(params: CreateTokenParams): Promise<unknown> {
+    this.assertTradeConsent();
     return this.authSignedRequest("POST", "/v1/cooking/create_token", {}, params);
   }
 
   // ---- Internal methods ----
+
+  /**
+   * Standing operator consent for any endpoint that spends real funds or commits to a
+   * future spend (swap, multi-swap, strategy orders, token creation+buy) — mirrors the
+   * gate trading/gmgn.ts puts on its own `swap()`. Read it, never write it: the caller
+   * (a tool-calling LLM loop, in src/agent/tools.ts) is not entitled to grant this on the
+   * operator's behalf, and no config knob should be able to substitute for it.
+   */
+  private assertTradeConsent(): void {
+    if (process.env.GMGN_ALLOW_AUTOMATED_TRADES !== "1") {
+      throw new Error("live trade refused: GMGN_ALLOW_AUTOMATED_TRADES=1 is not set in this shell");
+    }
+  }
 
   private async authExistRequest(
     method: string,

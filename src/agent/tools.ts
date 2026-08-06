@@ -1,10 +1,12 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { Tool } from "./llm.ts";
+import { gmgnTools } from "./gmgn-tools.ts";
 
 const execAsync = promisify(exec);
 
 export const tools: Record<string, Tool> = {
+  ...gmgnTools,
   bash: {
     description: "Run a shell command and return its stdout and stderr.",
     parameters: {
