@@ -9,8 +9,8 @@ nol binary eksternal.
 cp .env.example .env         # isi OPENROUTER_API_KEY + GMGN_API_KEY
                              # (GMGN_PRIVATE_KEY cuma perlu buat live mode)
 
-npm run dash                 # dashboard di http://127.0.0.1:3111
-npm start                    # chat interaktif (mode lama, /reset & /exit)
+npm start                    # dashboard di http://127.0.0.1:3111
+npm run cli                  # chat interaktif (mode lama, /reset & /exit)
 npm test
 ```
 
@@ -128,7 +128,7 @@ jalan lagi sampai besok atau sampai kamu start manual. Reset otomatis tengah mal
 
 ## Dashboard
 
-`npm run dash` -> http://127.0.0.1:3111
+`npm start` -> http://127.0.0.1:3111
 
 - **Chain** — SOL / BSC / BASE / ETH
 - **Mode** — paper atau live (live minta konfirmasi ketik, lihat di bawah)
@@ -169,7 +169,7 @@ yang tersisa — gak ada proses lain lagi yang bakal nolak buat kamu. Set sendir
 
 ```bash
 export GMGN_ALLOW_AUTOMATED_TRADES=1
-npm run dash
+npm start
 ```
 
 Plus: isi alamat wallet di panel **Live wallet** (harus wallet yang terikat ke GMGN API key kamu),

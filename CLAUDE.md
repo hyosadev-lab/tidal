@@ -15,8 +15,8 @@ add npm dependencies without being asked.
 ## Commands
 
 ```bash
-npm run dash                                  # dashboard + engine → http://127.0.0.1:3111
-npm start                                     # legacy interactive CLI chat (has a bash tool)
+npm start                                     # dashboard + engine → http://127.0.0.1:3111
+npm run cli                                   # legacy interactive CLI chat (has a bash tool)
 npm test                                      # node --test, all *.test.ts
 node --test trading.test.ts                   # one file
 node --test --test-name-pattern="stop-loss"   # one test by name

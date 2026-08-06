@@ -1,11 +1,11 @@
 {
   "name": "tidal-trading-agent",
-  "main": "src/cli.ts",
+  "main": "src/index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/cli.ts",
-    "dash": "node --env-file-if-exists=.env src/index.ts",
+    "start": "node --env-file-if-exists=.env src/index.ts",
+    "cli": "node --env-file-if-exists=.env src/cli.ts",
     "test": "node --env-file-if-exists=.env --test"
   },
   "devDependencies": {
