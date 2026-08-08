@@ -13,6 +13,13 @@ const PRESETS = {
 };
 
 const FLOORS = { sol: 3, bsc: 5, base: 5, eth: 25 };
+// Fee is denominated in whatever the chain pays gas in — mirrors NATIVE in trading/config.ts.
+const NATIVE_SYMBOL = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
+
+// Refine rows — must match REFINE_FIELDS in trading/config.ts. Blank = no filter.
+const REFINE = ["age", "liquidity", "marketCap", "fee", "kol", "smartMoney", "top10", "devHolding", "insider"];
+// Typed and shown in thousands; the config stores plain USD, so convert at the edge.
+const REFINE_K = new Set(["liquidity", "marketCap"]);
 
 let state = null;
 let dirty = false; // don't stomp on fields the operator is mid-edit
@@ -182,7 +189,11 @@ function fillForm(c, s) {
   set("in-cooldown", c.cooldownMinutes);
   set("in-minpos", c.minPositionUsd);
   set("in-gasres", c.gasReserveNative);
-  set("in-vol", c.minVolume1hUsd);
+  for (const k of REFINE)
+    for (const side of ["Min", "Max"]) {
+      const v = c.refine?.[k + side];
+      set(`in-${k}${side}`, v === undefined ? "" : REFINE_K.has(k) ? v / 1000 : v);
+    }
   set("in-slip", c.slippagePct);
   set("in-bankroll", c.paperStartEquityUsd);
   set("in-wallet", c.walletAddress);
@@ -190,6 +201,8 @@ function fillForm(c, s) {
   $("lbl-ladder").textContent = c.takeProfit.map((r) => `sell ${r.sell}% at +${r.at}%`).join(", ");
 
   // Make the floor visible before it silently eats every candidate.
+  $("lbl-fee-unit").textContent = NATIVE_SYMBOL[c.chain] ?? "";
+
   const floor = c.minPositionUsd || FLOORS[c.chain] || 5;
   const ceiling = (s.stats?.equity ?? 0) * (c.riskPerTradePct / 100);
   $("lbl-floor").textContent = usd(floor);
@@ -303,6 +316,16 @@ function collectConfig() {
     const v = Number($(id).value);
     return Number.isFinite(v) ? v : fallback;
   };
+  // Refine boxes are plain text, so tolerate how people actually type numbers ("50,000",
+  // "1 500"). Blank stays blank — that is the "no filter" signal — and anything still
+  // unreadable is dropped rather than sent as NaN.
+  const refine = {};
+  for (const k of REFINE)
+    for (const side of ["Min", "Max"]) {
+      const raw = $(`in-${k}${side}`).value.replace(/[\s,_]/g, "");
+      const v = Number(raw);
+      if (raw !== "" && Number.isFinite(v)) refine[k + side] = REFINE_K.has(k) ? v * 1000 : v;
+    }
   return {
     chain: document.querySelector('#seg-chain button[aria-pressed="true"]')?.dataset.v ?? "sol",
     mode: document.querySelector('#seg-mode button[aria-pressed="true"]')?.dataset.v ?? "paper",
@@ -318,7 +341,7 @@ function collectConfig() {
     cooldownMinutes: n("in-cooldown", 120),
     minPositionUsd: n("in-minpos", 0),
     gasReserveNative: n("in-gasres", 0),
-    minVolume1hUsd: n("in-vol", 20000),
+    refine,
     slippagePct: n("in-slip", 20),
     paperStartEquityUsd: n("in-bankroll", 1000),
     walletAddress: $("in-wallet").value,

@@ -115,15 +115,29 @@
     </details>
 
     <details class="fold">
-      <summary>Entry gates</summary>
-      <p class="hint">Fixed, not tunable. A candidate is disqualified by GMGN's published
-        🔴 Skip thresholds: liquidity under $10k, <code>rug_ratio</code> above 0.3, top-10 holders
-        above 50%, no smart money, dev still holding, honeypot, or wash trading. Plus a pre-trade
-        refusal on tax above 10% and, on Solana, a live mint/freeze authority or an unburned pool.</p>
-      <p class="hint">Those are the floor, not a strategy — everything above them still has to earn
-        its place. To trade tighter than the floor, say so in the instructions above.</p>
-      <div class="grid2">
-        <label class="mini"><span>Min 1h volume $ <span class="muted">feed filter</span></span><input type="number" id="in-vol" min="0" step="1000" /></label>
+      <summary>Refine</summary>
+      <p class="hint">Filters the trending and graduate feeds at the source. A blank box is no
+        filter. Liquidity and market cap are in thousands; fees are in the chain's own gas token;
+        age is in minutes.</p>
+      <p class="hint">This panel is the structural screen now. Code no longer refuses a token for
+        a thin pool, weak smart money, top-10 concentration or a dev still holding — those are
+        scored, shown in Soundings, and left to the analyst to reject. Set them here if you want
+        them enforced.</p>
+      <p class="hint">Still refused without asking you: wash trading, honeypots, an unreadable
+        price, and the pre-trade security check — tax over 10%, and on Solana a live mint or
+        freeze authority or an unburned pool. <code>rug_ratio</code> has no row here: the
+        graduates feed caps it at 0.3, the trending feed does not cap it at all.</p>
+      <div class="pairs">
+        <div class="pair-head"><span></span><span>min</span><span>max</span></div>
+        <label class="pair"><span>Age <small>min</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-ageMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-ageMax" /></label>
+        <label class="pair"><span>Liquidity <small>K</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-liquidityMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-liquidityMax" /></label>
+        <label class="pair"><span>Market Cap <small>K</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-marketCapMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-marketCapMax" /></label>
+        <label class="pair"><span>Fees <small id="lbl-fee-unit">SOL</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-feeMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-feeMax" /></label>
+        <label class="pair"><span>KOLs</span><input type="text" inputmode="decimal" autocomplete="off" id="in-kolMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-kolMax" /></label>
+        <label class="pair"><span>Smart Money</span><input type="text" inputmode="decimal" autocomplete="off" id="in-smartMoneyMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-smartMoneyMax" /></label>
+        <label class="pair"><span>Top 10 Holding <small>%</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-top10Min" /><input type="text" inputmode="decimal" autocomplete="off" id="in-top10Max" /></label>
+        <label class="pair"><span>Dev Holding <small>%</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-devHoldingMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-devHoldingMax" /></label>
+        <label class="pair"><span>Insiders <small>%</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-insiderMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-insiderMax" /></label>
       </div>
     </details>
 

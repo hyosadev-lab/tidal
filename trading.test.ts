@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, sanitizeConfig } from "./trading/config.ts";
+import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig } from "./trading/config.ts";
 import {
   buyableSet,
   evaluateExit,
@@ -12,6 +12,7 @@ import {
   securityRisk,
   toCandidate,
 } from "./trading/plan.ts";
+import { trenchesFilters } from "./trading/gmgn.ts";
 import { store } from "./trading/store.ts";
 import * as broker from "./trading/broker.ts";
 import { _internals, start, stop } from "./trading/engine.ts";
@@ -170,40 +171,41 @@ test("honeypots and wash trading are rejected outright", () => {
   assert.ok(runGates(candidate({ isWashTrading: true })).includes("wash trading"));
 });
 
-test("a dev still holding their allocation blocks entry", () => {
-  assert.ok(runGates(candidate({ devHolding: true })).includes("dev still holding"));
+// Structure no longer disqualifies. Every one of these was a gate failure before; each is now
+// the analyst's call, marked down by score() and filterable from the Refine panel, not refused.
+test("structure is scored, not gated", () => {
+  assert.deepEqual(runGates(candidate({ devHolding: true })), []);
+  assert.deepEqual(runGates(candidate({ rugRatio: 0.9 })), []);
+  assert.deepEqual(runGates(candidate({ top10HolderRate: 0.95 })), []);
+  assert.deepEqual(runGates(candidate({ liquidityUsd: 200 })), []);
+  assert.deepEqual(runGates(candidate({ smartDegenCount: 0 })), []);
+  // The worst of all of them at once still only fails on what is left.
+  assert.deepEqual(
+    runGates(candidate({ devHolding: true, rugRatio: 0.9, top10HolderRate: 0.95, liquidityUsd: 200, smartDegenCount: 0 })),
+    [],
+  );
+  // ...but it should score far below a clean one, since that is now the only thing marking it.
+  assert.ok(score(candidate({ rugRatio: 0.9, top10HolderRate: 0.95, liquidityUsd: 200, smartDegenCount: 0 })) < score(candidate()));
 });
 
-// The gate boundaries are GMGN's documented 🔴 Skip thresholds, not our own numbers:
-// skills/gmgn-market/SKILL.md. Watch-band values must still pass.
-test("the Watch band passes; only the Skip band is gated", () => {
-  assert.deepEqual(runGates(candidate({ rugRatio: 0.3, top10HolderRate: 0.5, liquidityUsd: 10_000, smartDegenCount: 1 })), []);
-  assert.ok(runGates(candidate({ rugRatio: 0.31 })).some((f) => f.includes("rug")));
-  assert.ok(runGates(candidate({ top10HolderRate: 0.51 })).some((f) => f.includes("top10")));
-  assert.ok(runGates(candidate({ liquidityUsd: 9_999 })).some((f) => f.includes("too thin")));
-  assert.ok(runGates(candidate({ smartDegenCount: 0 })).some((f) => f.includes("smart money")));
-});
-
-// What the table has no row for is no longer a gate: thin volume, a young token, and a pool
-// that is a rounding error next to mcap all pass now. Judging those is the analyst's job.
-test("nothing outside the criteria table gates any more", () => {
+test("thin volume, a young token and a huge mcap still pass", () => {
   assert.deepEqual(runGates(candidate({ volume1hUsd: 0, ageMinutes: 1, marketCapUsd: 100_000_000 })), []);
 });
 
 test("the gate tally counts every failure, busiest first", () => {
   const swept = [
-    candidate({ devHolding: true }),
-    candidate({ devHolding: true }),
-    candidate({ devHolding: true, rugRatio: 0.9 }),
+    candidate({ isWashTrading: true }),
+    candidate({ isWashTrading: true }),
+    candidate({ isWashTrading: true, isHoneypot: true }),
     candidate(),
   ].map((c) => ({ ...c, gateFailures: runGates(c) }));
 
-  // Three dev failures, one rug — and the token that failed both is counted in each.
-  assert.equal(gateTally(swept), "dev 3 · rug 1");
+  // Three wash failures, one honeypot — and the token that failed both is counted in each.
+  assert.equal(gateTally(swept), "wash 3 · honeypot 1");
   assert.equal(gateTally([candidate()].map((c) => ({ ...c, gateFailures: runGates(c) }))), "");
 });
 
-test("only data integrity survives as a non-table gate", () => {
+test("data integrity is still a gate", () => {
   assert.ok(runGates(candidate({ address: "" })).includes("no address"));
   assert.ok(runGates(candidate({ priceUsd: 0 })).includes("no price"));
 });
@@ -287,6 +289,41 @@ test("out-of-range config is clamped rather than trusted", () => {
   assert.equal(c.intervalMinutes, 1);
   assert.equal(c.stopLossPct, 5);
   assert.equal(c.maxOpenPositions, 20);
+});
+
+test("refine rows survive as query params, blanks and junk do not", () => {
+  const c = sanitizeConfig({
+    refine: { ageMin: 5, top10Max: 40, devHoldingMax: 0, insiderMax: 900, feeMin: -1, kolMax: "" as never, nonsense: 3 } as never,
+  });
+  assert.deepEqual(c.refine, { ageMin: 5, top10Max: 40, devHoldingMax: 0, insiderMax: 100, feeMin: 0 });
+  assert.deepEqual(refineQuery(c.refine), {
+    min_created: "5m",
+    max_top10_holder_rate: 0.4,
+    max_dev_team_hold_rate: 0,
+    max_insider_rate: 1,
+    min_gas_fee: 0,
+  });
+  // Same rows, the names /v1/trenches uses for them.
+  assert.deepEqual(refineQuery(c.refine, "trenches"), {
+    min_created: "5m",
+    max_top_holder_rate: 0.4,
+    max_creator_balance_rate: 0,
+    max_insider_ratio: 1,
+    min_total_fee: 0,
+  });
+});
+
+test("a refine row can tighten the trenches preset but never loosen it", () => {
+  const loose = trenchesFilters({ max_insider_ratio: 0.9, min_smart_degen_count: 0 });
+  assert.equal(loose.max_insider_ratio, 0.3);
+  assert.equal(loose.min_smart_degen_count, 1);
+
+  const tight = trenchesFilters({ max_insider_ratio: 0.05, min_smart_degen_count: 4, min_created: "5m" });
+  assert.equal(tight.max_insider_ratio, 0.05);
+  assert.equal(tight.min_smart_degen_count, 4);
+  assert.equal(tight.min_created, "5m");
+  // Untouched preset fields still ship.
+  assert.equal(tight.max_rug_ratio, 0.3);
 });
 
 test("an unknown chain falls back instead of reaching the CLI", () => {

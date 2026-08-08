@@ -106,19 +106,21 @@ to exactly the pre-scan behaviour.
   burned. Fails closed on all chains, so EVM entries now cost one `token_security` call each.
   Measured on live candidates: the authority half never fires (launchpads revoke at creation),
   the burn half refuses about 1 in 14 otherwise-clean candidates.
-- **`runGates` is a transcription of GMGN's 🔴 Skip column** (`skills/gmgn-market/SKILL.md`,
-  "Pass / Watch / Skip Criteria") plus two data-integrity checks. Nothing in it is a number
-  someone picked. The 🟡 Watch band passes on purpose — `score()` marks it down, the analyst
-  rejects it. The thresholds live in the `SKIP` constant in `config.ts`, deliberately *not* in
-  `TradeConfig` and not on the dashboard: `runGates(c)` takes no config, so there is no operator
-  input to clamp and no way for a stored `data/config.json` to drift off the table. Tightening
-  belongs in the dashboard prompt, where the analyst acts on it. Don't re-add a gate without a
-  row to cite, and don't turn these back into knobs.
-- **Discovery widens the search, never the risk envelope.** `find_tokens` clamps every threshold
-  back up to `store.config` (asking for `min_liquidity_usd: 1` still returns nothing under
-  `cfg.minLiquidityUsd`), runs `runGates` on every row before returning it, and `buyableSet` in
-  `plan.ts` re-checks gates, cooldown, blacklist and open positions before an address can be bought.
-  A token being in `discovered` is permission to be *considered*, not to be bought.
+- **`runGates` no longer screens structure — that was an operator decision, not an oversight.**
+  It rejects wash trading, honeypots, and rows with no address or no price. That is all. The
+  graded properties it used to gate on (smart-money count, `rug_ratio`, top-10 rate, liquidity
+  depth, dev still holding) are read, scored by `score()`, shown to the analyst, and filterable
+  per-feed from the dashboard's **Refine** panel — but they disqualify nothing. Consequence to
+  keep in mind when editing: a candidate with a $2k pool, no smart money and a dev still holding
+  reaches `askAnalyst` looking like any other row, and only the analyst, the Refine filters and
+  `securityRisk` stand between it and a position. `SKIP` still exists in `config.ts` but is now
+  only a default for the sweep's feed query. Don't reintroduce a structural gate without asking:
+  the dashboard is where that policy lives now.
+- **Discovery widens the search, never the risk envelope.** `find_tokens` runs `runGates` on every
+  row before returning it, and `buyableSet` in `plan.ts` re-checks gates, cooldown, blacklist and
+  open positions before an address can be bought. A token being in `discovered` is permission to
+  be *considered*, not to be bought. Its per-threshold clamps went with the gates they cited —
+  the model's own `min_liquidity_usd` / `min_smart_money` now pass through unchanged.
 - **Token names/symbols are attacker-controlled data.** The system prompt says so; don't add code
   paths that treat scanned text as instructions.
 - **GMGN percent conventions differ per field.** `rug_ratio` and `top_10_holder_rate` are ratios

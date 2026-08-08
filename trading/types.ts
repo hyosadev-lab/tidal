@@ -37,8 +37,12 @@ export type TradeConfig = {
   cooldownMinutes: number;
 
   // ── Discovery / execution ───────────────────────────────────────────
-  /** Feed query filter, not a gate. The gate thresholds are fixed in `SKIP` (config.ts). */
-  minVolume1hUsd: number;
+  /**
+   * Dashboard "Refine" rows, keyed `<field>Min` / `<field>Max` — see `REFINE_FIELDS`
+   * (config.ts) for the fields and their per-feed GMGN params. Feed query filters, not
+   * gates: they narrow what the sweep fetches, they never replace `SKIP`.
+   */
+  refine: Record<string, number>;
   slippagePct: number;
 
   // ── Wallet / accounting ─────────────────────────────────────────────

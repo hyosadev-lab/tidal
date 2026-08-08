@@ -1,4 +1,3 @@
-import { SKIP } from "./config.ts";
 import { num } from "./gmgn.ts";
 import type { Candidate, Position, TradeConfig } from "./types.ts";
 
@@ -129,39 +128,30 @@ export function securityRisk(sec: Record<string, any> | null, chain: string): st
 
 /**
  * Hard gates. Any failure disqualifies — no weighting, no model override.
- * Percentages here are ratios (0–1) as GMGN returns them.
  *
- * The first block is GMGN's own 🔴 Skip column, transcribed from the
- * "Pass / Watch / Skip Criteria" table in `skills/gmgn-market/SKILL.md`. Each line is one
- * row of that table, in table order, reading its threshold from SKIP. The 🟡 Watch band
- * deliberately passes — score() marks it down instead.
+ * What is left is only what a token cannot be under any thesis: fake flow, a token you
+ * cannot sell, and rows we cannot read. The graded properties from GMGN's 🔴 Skip column —
+ * smart-money count, rug_ratio, top-10 concentration, pool depth, dev still holding — no
+ * longer gate. They are still read, still scored by `score()`, still shown to the analyst,
+ * and still steerable per-feed from the dashboard's Refine panel; they are simply no longer
+ * a refusal. That moves the call on a thin pool or a concentrated holder set from this
+ * function to the analyst and the operator.
  *
- * Takes no config: there is no operator input here, by design. The published thresholds are
- * the whole policy, and an operator who wants to trade tighter says so in the dashboard
- * prompt, where the analyst can act on it, rather than by moving a number that cites a source
- * it no longer matches.
+ * Worth being explicit about what that costs: a candidate with zero smart money, a 0.9
+ * rug_ratio, 90% in the top ten and a $2k pool now reaches the analyst, and only the analyst
+ * and the Refine filters stand between it and a position. `securityRisk` is unchanged and
+ * still refuses honeypot-equivalents, high tax, live mint/freeze authority and unburned
+ * liquidity before any entry, on every chain.
  *
- * Nothing else is a gate. The two remaining checks are data integrity, not policy. Tax moved
- * to securityRisk, where the rest of the pre-trade refusals live; the invented thresholds
- * (liquidity/mcap ratio, 1h volume, age window) are gone.
+ * Takes no config: there is no operator input here, by design.
  */
 export function runGates(c: Candidate): string[] {
   const f: string[] = [];
 
-  // ── GMGN 🔴 Skip criteria ──
-  if (c.smartDegenCount < SKIP.minSmartDegenCount) f.push(`smart money ${c.smartDegenCount} < ${SKIP.minSmartDegenCount}`);
-  if (c.rugRatio > SKIP.maxRugRatio) f.push(`rug ${c.rugRatio.toFixed(2)} > ${SKIP.maxRugRatio}`);
-  if (c.devHolding) f.push("dev still holding");
   if (c.isWashTrading) f.push("wash trading");
-  if (c.top10HolderRate > SKIP.maxTop10HolderRate)
-    f.push(`top10 ${(c.top10HolderRate * 100).toFixed(0)}% > ${(SKIP.maxTop10HolderRate * 100).toFixed(0)}%`);
-  if (c.liquidityUsd < SKIP.minLiquidityUsd) f.push(`liq $${Math.round(c.liquidityUsd / 1000)}k too thin`);
-  // `has_social` is the table's seventh row, but it marks it a weak signal rather than a
-  // skip, and Candidate carries no social field. Left out on both counts.
 
-  // Part of the table's quick-disqualification rule. is_honeypot is EVM-only: on Solana it
-  // arrives empty, so this is inert there by design — securityRisk covers the equivalent
-  // Solana failure modes before entry.
+  // is_honeypot is EVM-only: on Solana it arrives empty, so this is inert there by design —
+  // securityRisk covers the equivalent Solana failure modes before entry.
   if (c.isHoneypot) f.push("honeypot");
 
   // ── data integrity, not policy ──
@@ -172,7 +162,7 @@ export function runGates(c: Candidate): string[] {
 }
 
 /**
- * How often each gate fired across one sweep, busiest first: `dev 71 · top10 22 · rug 18`.
+ * How often each gate fired across one sweep, busiest first: `wash 12 · no 3 · honeypot 1`.
  *
  * Grouped on the first word of the failure string, since the rest carries the token's own
  * numbers. That merges `no address` and `no price` into one `no` bucket — acceptable, both are
@@ -308,14 +298,16 @@ The candidate list is a starting point, not the whole market. It comes from a fi
 
 THE PLAN YOU ARE OPERATING INSIDE
 
-Entry gates (already applied in code — everything you see has passed them). They are GMGN's own
-🔴 Skip thresholds, so passing means "not disqualified", not "good":
-  liquidity >= $${SKIP.minLiquidityUsd.toLocaleString()}, rug_ratio <= ${SKIP.maxRugRatio},
-  top-10 holders <= ${(SKIP.maxTop10HolderRate * 100).toFixed(0)}%, smart money >= ${SKIP.minSmartDegenCount},
-  dev has closed out, no honeypot, no wash trading.
-Anything above those floors but still weak — a $12k pool, rug_ratio 0.28, top-10 at 48% — is your
-job to reject, not the gates'. Before entry each pick also faces a security refusal on tax > 10%
-and, on Solana, live mint/freeze authority or an unburned pool.
+Entry gates (already applied in code — everything you see has passed them). They are a thin
+floor now, and you should read them as exactly that:
+  no wash trading, no honeypot, a readable address and a readable price.
+That is the whole list. Nothing screens for pool depth, rug_ratio, top-10 concentration,
+smart-money count, or whether the dev still holds. Those numbers are on every candidate row and
+judging them is your job, not the gates'. A token with no smart money, a $2k pool, 90% held by
+ten wallets or a dev still sitting on their allocation will reach you looking like any other
+row — structure_score marks it down, nothing stops it. Reject on those numbers yourself.
+Before entry each pick still faces a security refusal on tax > 10% and, on Solana, live
+mint/freeze authority or an unburned pool.
 
 Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement):
   hard stop-loss at -${cfg.stopLossPct}%

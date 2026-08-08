@@ -343,6 +343,13 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 12px 0 4px; }
 
+.pairs { display: grid; gap: 6px; margin: 12px 0 4px; }
+.pair, .pair-head { display: grid; grid-template-columns: 1fr 68px 68px; gap: 6px; align-items: center; }
+.pair span, .pair-head span { font-size: 10.5px; color: var(--haze); }
+.pair small { color: var(--rule-2); }
+.pair-head span { text-align: center; font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; }
+.pair input { padding: 6px 7px; }
+
 .mini { display: block; }
 .mini span { display: block; font-size: 10.5px; color: var(--haze); margin-bottom: 4px; }
 .mini input { padding: 7px 8px; }

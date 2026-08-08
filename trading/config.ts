@@ -48,6 +48,77 @@ export const SKIP = {
   minSmartDegenCount: 1,
 } as const;
 
+/**
+ * The dashboard's "Refine" panel → GMGN feed filters, one min/max pair per row. These narrow
+ * what the feeds *return*; they are not gates and cannot loosen one — `runGates` still runs on
+ * every row that comes back, so a slack refine value costs wasted rows, never a wider risk
+ * envelope. Config keys are `<key>Min` / `<key>Max`; an absent key means "no filter" (0 is a
+ * real value: max dev holding 0% = dev fully out).
+ *
+ * `/v1/market/rank` and `/v1/trenches` describe several of these with different field names,
+ * so a row carries the rank pair plus a `trenches` override where the two disagree.
+ *
+ * `scale` converts the UI's percent to the 0–1 ratio the API wants; `unit` turns minutes
+ * into the duration string `min_created` / `max_created` require.
+ */
+type RefineField = {
+  min: string;
+  max: string;
+  trenches?: { min: string; max: string };
+  hi: number;
+  unit?: string;
+  scale?: number;
+};
+
+export const REFINE_FIELDS: Record<string, RefineField> = {
+  age: { min: "min_created", max: "max_created", hi: 100_000, unit: "m" },
+  liquidity: { min: "min_liquidity", max: "max_liquidity", hi: 1_000_000_000 },
+  marketCap: { min: "min_marketcap", max: "max_marketcap", hi: 1_000_000_000_000 },
+  fee: {
+    min: "min_gas_fee",
+    max: "max_gas_fee",
+    trenches: { min: "min_total_fee", max: "max_total_fee" },
+    hi: 1_000_000,
+  },
+  kol: { min: "min_renowned_count", max: "max_renowned_count", hi: 10_000 },
+  smartMoney: { min: "min_smart_degen_count", max: "max_smart_degen_count", hi: 10_000 },
+  top10: {
+    min: "min_top10_holder_rate",
+    max: "max_top10_holder_rate",
+    trenches: { min: "min_top_holder_rate", max: "max_top_holder_rate" },
+    hi: 100,
+    scale: 0.01,
+  },
+  devHolding: {
+    min: "min_dev_team_hold_rate",
+    max: "max_dev_team_hold_rate",
+    trenches: { min: "min_creator_balance_rate", max: "max_creator_balance_rate" },
+    hi: 100,
+    scale: 0.01,
+  },
+  insider: {
+    min: "min_insider_rate",
+    max: "max_insider_rate",
+    trenches: { min: "min_insider_ratio", max: "max_insider_ratio" },
+    hi: 100,
+    scale: 0.01,
+  },
+};
+
+/** Config values → one feed's filter params. Blank rows drop out. */
+export function refineQuery(refine: Record<string, number>, feed: "rank" | "trenches" = "rank"): Record<string, string | number> {
+  const q: Record<string, string | number> = {};
+  for (const [key, f] of Object.entries(REFINE_FIELDS)) {
+    const names = (feed === "trenches" && f.trenches) || f;
+    for (const [side, api] of [["Min", names.min] as const, ["Max", names.max] as const]) {
+      const v = refine?.[key + side];
+      if (v === undefined) continue;
+      q[api] = f.unit ? `${v}${f.unit}` : f.scale ? v * f.scale : v;
+    }
+  }
+  return q;
+}
+
 export const DEFAULT_CONFIG: TradeConfig = {
   chain: "sol",
   mode: "paper",
@@ -70,8 +141,7 @@ export const DEFAULT_CONFIG: TradeConfig = {
   timeStopMinPnlPct: 8,
   cooldownMinutes: 120,
 
-  // Not a gate — pushed to the GMGN feeds as a query filter, so it shapes what gets fetched.
-  minVolume1hUsd: 20_000,
+  refine: {},
   slippagePct: 20,
 
   minPositionUsd: 0,
@@ -89,6 +159,20 @@ function clamp(n: unknown, lo: number, hi: number, fallback: number): number {
   const v = typeof n === "number" ? n : Number(n);
   if (!Number.isFinite(v)) return fallback;
   return Math.min(hi, Math.max(lo, v));
+}
+
+/** Drop anything blank or unknown, clamp the rest to its row's ceiling. Negatives are not filters. */
+function sanitizeRefine(input: unknown): Record<string, number> {
+  const src = (input ?? {}) as Record<string, unknown>;
+  const out: Record<string, number> = {};
+  for (const [key, f] of Object.entries(REFINE_FIELDS))
+    for (const side of ["Min", "Max"]) {
+      const raw = src[key + side];
+      if (raw === undefined || raw === null || raw === "") continue;
+      const v = Number(raw);
+      if (Number.isFinite(v)) out[key + side] = Math.min(f.hi, Math.max(0, v));
+    }
+  return out;
 }
 
 /**
@@ -124,8 +208,8 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     timeStopMinPnlPct: clamp(input.timeStopMinPnlPct, -50, 500, base.timeStopMinPnlPct),
     cooldownMinutes: clamp(input.cooldownMinutes, 0, 10080, base.cooldownMinutes),
 
-    // The gate thresholds are not here — see SKIP. This one only narrows the feed query.
-    minVolume1hUsd: clamp(input.minVolume1hUsd, 0, 100_000_000, base.minVolume1hUsd),
+    // The gate thresholds are not here — see SKIP. These only narrow the feed queries.
+    refine: sanitizeRefine(input.refine),
     slippagePct: Math.round(clamp(input.slippagePct, 1, 100, base.slippagePct)),
 
     minPositionUsd: clamp(input.minPositionUsd, 0, 100_000, base.minPositionUsd),

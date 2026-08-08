@@ -193,6 +193,8 @@ export async function trending(
     maxTop10Rate?: number;
     orderBy?: string;
     platforms?: string[];
+    /** Operator's Refine rows, already mapped to rank params by `refineQuery`. */
+    refine?: Record<string, string | number>;
   } = {},
 ): Promise<RankItem[]> {
   const q: Query = {
@@ -209,6 +211,9 @@ export async function trending(
   if (opts.maxCreated) q["max_created"] = opts.maxCreated;
   if (opts.minCreated) q["min_created"] = opts.minCreated;
   if (opts.platforms?.length) q["platforms"] = opts.platforms;
+  // Last word to the operator: a Refine row overrides the caller's floor for the same param.
+  // Only the query moves — `runGates` still disqualifies whatever comes back below SKIP.
+  Object.assign(q, opts.refine);
   return list(await api("GET", "/v1/market/rank", q), "rank");
 }
 
@@ -229,6 +234,17 @@ const TRENCHES_STRICT = {
   min_smart_degen_count: 1,
   min_volume_24h: 1000,
 };
+
+/**
+ * The operator's Refine rows over the strict preset. Where both name the same field, the
+ * tighter of the two wins: the dashboard can narrow this feed, never loosen it past strict.
+ */
+export function trenchesFilters(refine: Record<string, string | number> = {}): Record<string, string | number> {
+  const out = { ...TRENCHES_STRICT, ...refine } as Record<string, string | number>;
+  for (const [k, preset] of Object.entries(TRENCHES_STRICT))
+    out[k] = k.startsWith("max_") ? Math.min(preset, num(out[k], preset)) : Math.max(preset, num(out[k], preset));
+  return out;
+}
 
 // launchpad_platform and quote_address_type are allow-lists: sending an empty array
 // filters everything out, so a chain we have no list for omits the field and takes the
@@ -254,12 +270,17 @@ const TRENCHES_QUOTE_TYPES: Partial<Record<Chain, number[]>> = {
 
 export type TrenchType = "completed" | "near_completion" | "new_creation";
 
-export async function trenches(chain: Chain, type: TrenchType | string = "completed", limit = 40): Promise<RankItem[]> {
+export async function trenches(
+  chain: Chain,
+  type: TrenchType | string = "completed",
+  limit = 40,
+  refine?: Record<string, string | number>,
+): Promise<RankItem[]> {
   const section: Record<string, unknown> = {
     filters: ["offchain", "onchain"],
     launchpad_platform_v2: true,
     limit,
-    ...TRENCHES_STRICT,
+    ...trenchesFilters(refine),
   };
   const platforms = TRENCHES_PLATFORMS[chain];
   const quoteTypes = TRENCHES_QUOTE_TYPES[chain];

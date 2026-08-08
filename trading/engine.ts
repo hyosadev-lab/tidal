@@ -1,6 +1,6 @@
 import { runAgent, type Tool } from "../src/agent/llm.ts";
 import { loadSkills, skillIndex, skillTool } from "../src/agent/skills.ts";
-import { SKIP, gasReserve, liveReady, minPosition } from "./config.ts";
+import { SKIP, gasReserve, liveReady, minPosition, refineQuery } from "./config.ts";
 import * as broker from "./broker.ts";
 import * as gmgn from "./gmgn.ts";
 import { num } from "./gmgn.ts";
@@ -80,21 +80,24 @@ const analystTools: Record<string, Tool> = {
       let rows: Record<string, any>[] = [];
       const feed = String(a.feed);
 
-      // The floors here are the gate thresholds and the config's, not the model's: a request
-      // for looser liquidity than either allows is silently clamped back up.
+      // These were clamped up to the gate thresholds until those gates were dropped. Depth and
+      // smart-money count no longer disqualify anything, so there is nothing left to clamp to:
+      // the model's own numbers go through, and every row still passes runGates below.
       if (feed === "trending")
         rows = await gmgn.trending(cfg.chain, {
           interval: String(a.interval ?? "1h"),
           limit,
-          minLiquidity: Math.max(SKIP.minLiquidityUsd, num(a.min_liquidity_usd)),
-          minVolume: Math.max(cfg.minVolume1hUsd, num(a.min_volume_usd)),
-          minSmartDegen: Math.max(SKIP.minSmartDegenCount, num(a.min_smart_money)) || undefined,
+          minLiquidity: num(a.min_liquidity_usd) || undefined,
+          minVolume: num(a.min_volume_usd) || undefined,
+          minSmartDegen: num(a.min_smart_money) || undefined,
           minRenowned: num(a.min_kols) || undefined,
           maxCreated: a.max_age ? String(a.max_age) : undefined,
           minCreated: a.min_age ? String(a.min_age) : undefined,
           platforms: Array.isArray(a.platforms) ? a.platforms.map(String).slice(0, 12) : undefined,
+          refine: refineQuery(cfg.refine),
         });
-      else if (feed === "trenches") rows = await gmgn.trenches(cfg.chain, String(a.trench_type ?? "completed"), limit);
+      else if (feed === "trenches")
+        rows = await gmgn.trenches(cfg.chain, String(a.trench_type ?? "completed"), limit, refineQuery(cfg.refine, "trenches"));
       else if (feed === "signals")
         rows = await gmgn.signals(cfg.chain, Array.isArray(a.signal_types) ? a.signal_types.map(Number) : undefined);
       else if (feed === "hot_searches") rows = await gmgn.hotSearches(cfg.chain, String(a.interval ?? "1h"), limit);
@@ -264,28 +267,31 @@ async function gatherCandidates(): Promise<Candidate[]> {
     }
   };
 
+  // SKIP still seeds the sweep's own query — GMGN's published skip band is a reasonable
+  // default for what to fetch — but it is only a feed filter now: nothing downstream
+  // disqualifies a row for being under it, and a Refine row overrides it either way.
   const feeds: Promise<void>[] = [
     gmgn
       .trending(cfg.chain, {
         interval: "1h",
         limit: 50,
         minLiquidity: SKIP.minLiquidityUsd,
-        minVolume: cfg.minVolume1hUsd,
         minSmartDegen: SKIP.minSmartDegenCount || undefined,
+        refine: refineQuery(cfg.refine),
       })
       .then((r) => add(r, "trending-1h"))
       .catch((e) => {
         store.log("warn", `Trending feed failed: ${short(e)}`);
       }),
     gmgn
-      .trending(cfg.chain, { interval: "5m", limit: 30, minLiquidity: SKIP.minLiquidityUsd })
+      .trending(cfg.chain, { interval: "5m", limit: 30, minLiquidity: SKIP.minLiquidityUsd, refine: refineQuery(cfg.refine) })
       .then((r) => add(r, "trending-5m"))
       .catch(() => undefined),
   ];
   if (cfg.chain === "sol" || cfg.chain === "bsc")
     feeds.push(
       gmgn
-        .trenches(cfg.chain, "completed", 40)
+        .trenches(cfg.chain, "completed", 40, refineQuery(cfg.refine, "trenches"))
         .then((r) => add(r, "graduated"))
         .catch(() => undefined),
     );
