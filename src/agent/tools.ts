@@ -6,11 +6,13 @@ import type { Tool } from "./llm.ts";
 const execAsync = promisify(exec);
 
 /**
- * GMGN tool schemas below cover every OpenApiClient endpoint (src/gmgn/endpoint.ts) — the
- * full GMGN OpenAPI surface, not just the read-only subset trading/engine.ts exposes to its
- * analyst. This file is consumed by src/cli.ts, the interactive human-in-the-loop chat, not
- * the headless trading engine — see CLAUDE.md's "analystTools ... read-only by design" note
- * for why the engine's tool set stays separate and narrower.
+ * GMGN tool schemas below cover the OpenApiClient endpoints (src/gmgn/endpoint.ts) — the GMGN
+ * OpenAPI surface, shared by both consumers:
+ *
+ *   • src/cli.ts takes the whole object, `bash` included: interactive, human at the prompt.
+ *   • src/trading/analyst.ts takes a named read-only subset (`ANALYST_TOOL_NAMES`) — an
+ *     allowlist, so anything added here stays out of the unattended trading loop until
+ *     someone names it there. Never widen that list to `bash` or a route that spends.
  *
  * Endpoints that spend real funds or commit to a future spend (swap, multi_swap,
  * strategy/create, cooking/create_token) still refuse at call time unless
@@ -234,79 +236,79 @@ export const tools: Record<string, Tool> = {
     ({ chain, limit }) => gmgnClient().getSmartMoney(chain, limit),
   ),
 
-  // ---- GMGN: Trade (reads) ----
+  // // ---- GMGN: Trade (reads) ----
 
-  gmgn_quote: gmgnTool(
-    "Get a swap quote (expected output amount, price impact) without executing anything.",
-    {
-      chain,
-      fromAddress: { type: "string", description: "the wallet that would send the swap" },
-      inputToken: address,
-      outputToken: { type: "string", description: "output token contract address" },
-      inputAmount: { type: "string", description: "smallest-unit input amount" },
-      slippage: { type: "number", description: "percent, e.g. 1 for 1%" },
-    },
-    ["chain", "fromAddress", "inputToken", "outputToken", "inputAmount", "slippage"],
-    ({ chain, fromAddress, inputToken, outputToken, inputAmount, slippage }) =>
-      gmgnClient().quoteOrder(chain, fromAddress, inputToken, outputToken, inputAmount, slippage),
-  ),
+  // gmgn_quote: gmgnTool(
+  //   "Get a swap quote (expected output amount, price impact) without executing anything.",
+  //   {
+  //     chain,
+  //     fromAddress: { type: "string", description: "the wallet that would send the swap" },
+  //     inputToken: address,
+  //     outputToken: { type: "string", description: "output token contract address" },
+  //     inputAmount: { type: "string", description: "smallest-unit input amount" },
+  //     slippage: { type: "number", description: "percent, e.g. 1 for 1%" },
+  //   },
+  //   ["chain", "fromAddress", "inputToken", "outputToken", "inputAmount", "slippage"],
+  //   ({ chain, fromAddress, inputToken, outputToken, inputAmount, slippage }) =>
+  //     gmgnClient().quoteOrder(chain, fromAddress, inputToken, outputToken, inputAmount, slippage),
+  // ),
 
-  gmgn_gas_price: gmgnTool("Get the current native-token gas price and USD price for a chain.", { chain }, ["chain"], ({ chain }) =>
-    gmgnClient().getGasPrice(chain),
-  ),
+  // gmgn_gas_price: gmgnTool("Get the current native-token gas price and USD price for a chain.", { chain }, ["chain"], ({ chain }) =>
+  //   gmgnClient().getGasPrice(chain),
+  // ),
 
-  gmgn_query_order: gmgnTool(
-    "Check the status of a previously submitted swap order. Signed route — requires GMGN_PRIVATE_KEY.",
-    { orderId: { type: "string" }, chain },
-    ["orderId", "chain"],
-    ({ orderId, chain }) => gmgnClient().queryOrder(orderId, chain),
-  ),
+  // gmgn_query_order: gmgnTool(
+  //   "Check the status of a previously submitted swap order. Signed route — requires GMGN_PRIVATE_KEY.",
+  //   { orderId: { type: "string" }, chain },
+  //   ["orderId", "chain"],
+  //   ({ orderId, chain }) => gmgnClient().queryOrder(orderId, chain),
+  // ),
 
-  gmgn_strategy_orders: gmgnTool(
-    "List open strategy (conditional take-profit/stop-loss) orders. Signed route — requires GMGN_PRIVATE_KEY.",
-    { chain, extra },
-    ["chain"],
-    ({ chain, extra }) => gmgnClient().getStrategyOrders(chain, extra ?? {}),
-  ),
+  // gmgn_strategy_orders: gmgnTool(
+  //   "List open strategy (conditional take-profit/stop-loss) orders. Signed route — requires GMGN_PRIVATE_KEY.",
+  //   { chain, extra },
+  //   ["chain"],
+  //   ({ chain, extra }) => gmgnClient().getStrategyOrders(chain, extra ?? {}),
+  // ),
 
-  gmgn_cooking_statistics: gmgnTool("Get platform-wide token-launch (\"cooking\") statistics.", {}, [], () =>
-    gmgnClient().getCookingStatistics(),
-  ),
+  // gmgn_cooking_statistics: gmgnTool("Get platform-wide token-launch (\"cooking\") statistics.", {}, [], () =>
+  //   gmgnClient().getCookingStatistics(),
+  // ),
 
-  // ---- GMGN: Trade (spends real funds — refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1) ----
+  // // ---- GMGN: Trade (spends real funds — refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1) ----
 
-  gmgn_swap: gmgnTool(
-    "Execute a real, irreversible on-chain swap. Refuses unless the operator set GMGN_ALLOW_AUTOMATED_TRADES=1 in this shell.",
-    { params: { type: "object", additionalProperties: true, description: "SwapParams — chain, from_address, input_token, output_token, input_amount, slippage, plus optional fee/anti-mev/condition_orders fields" } },
-    ["params"],
-    ({ params }) => gmgnClient().swap(params),
-  ),
+  // gmgn_swap: gmgnTool(
+  //   "Execute a real, irreversible on-chain swap. Refuses unless the operator set GMGN_ALLOW_AUTOMATED_TRADES=1 in this shell.",
+  //   { params: { type: "object", additionalProperties: true, description: "SwapParams — chain, from_address, input_token, output_token, input_amount, slippage, plus optional fee/anti-mev/condition_orders fields" } },
+  //   ["params"],
+  //   ({ params }) => gmgnClient().swap(params),
+  // ),
 
-  gmgn_multi_swap: gmgnTool(
-    "Execute the same swap across multiple wallets at once. Refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1 is set.",
-    { params: { type: "object", additionalProperties: true, description: "MultiSwapParams — chain, accounts[], input_token, output_token, plus amount/fee fields" } },
-    ["params"],
-    ({ params }) => gmgnClient().multiSwap(params),
-  ),
+  // gmgn_multi_swap: gmgnTool(
+  //   "Execute the same swap across multiple wallets at once. Refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1 is set.",
+  //   { params: { type: "object", additionalProperties: true, description: "MultiSwapParams — chain, accounts[], input_token, output_token, plus amount/fee fields" } },
+  //   ["params"],
+  //   ({ params }) => gmgnClient().multiSwap(params),
+  // ),
 
-  gmgn_strategy_create: gmgnTool(
-    "Create a conditional strategy order (e.g. take-profit / stop-loss that fires automatically). Commits future spend — refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1 is set.",
-    { params: { type: "object", additionalProperties: true, description: "StrategyCreateParams — chain, from_address, base_token, quote_token, order_type, sub_order_type, plus trigger/sizing fields" } },
-    ["params"],
-    ({ params }) => gmgnClient().createStrategyOrder(params),
-  ),
+  // gmgn_strategy_create: gmgnTool(
+  //   "Create a conditional strategy order (e.g. take-profit / stop-loss that fires automatically). Commits future spend — refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1 is set.",
+  //   { params: { type: "object", additionalProperties: true, description: "StrategyCreateParams — chain, from_address, base_token, quote_token, order_type, sub_order_type, plus trigger/sizing fields" } },
+  //   ["params"],
+  //   ({ params }) => gmgnClient().createStrategyOrder(params),
+  // ),
 
-  gmgn_strategy_cancel: gmgnTool(
-    "Cancel an open strategy order. Signed route — requires GMGN_PRIVATE_KEY. Safe: this only removes a pending order, never spends.",
-    { params: { type: "object", additionalProperties: true, description: "StrategyCancelParams — chain, from_address, order_id, plus optional order_type/close_sell_model" } },
-    ["params"],
-    ({ params }) => gmgnClient().cancelStrategyOrder(params),
-  ),
+  // gmgn_strategy_cancel: gmgnTool(
+  //   "Cancel an open strategy order. Signed route — requires GMGN_PRIVATE_KEY. Safe: this only removes a pending order, never spends.",
+  //   { params: { type: "object", additionalProperties: true, description: "StrategyCancelParams — chain, from_address, order_id, plus optional order_type/close_sell_model" } },
+  //   ["params"],
+  //   ({ params }) => gmgnClient().cancelStrategyOrder(params),
+  // ),
 
-  gmgn_create_token: gmgnTool(
-    "Launch a new token on a launchpad and execute the creator's initial buy. Spends real funds — refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1 is set.",
-    { params: { type: "object", additionalProperties: true, description: "CreateTokenParams — chain, dex, from_address, name, symbol, buy_amt, image/image_url, plus many optional fields" } },
-    ["params"],
-    ({ params }) => gmgnClient().createToken(params),
-  ),
+  // gmgn_create_token: gmgnTool(
+  //   "Launch a new token on a launchpad and execute the creator's initial buy. Spends real funds — refuses unless GMGN_ALLOW_AUTOMATED_TRADES=1 is set.",
+  //   { params: { type: "object", additionalProperties: true, description: "CreateTokenParams — chain, dex, from_address, name, symbol, buy_amt, image/image_url, plus many optional fields" } },
+  //   ["params"],
+  //   ({ params }) => gmgnClient().createToken(params),
+  // ),
 };

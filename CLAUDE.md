@@ -56,13 +56,13 @@ for reads, *signed* (API key + `X-Signature`) for the swap and order routes.
 the system prompt (`skillIndex`); the full `SKILL.md` body is returned by the `load_skill` tool.
 Skills live in `<root>/<name>/SKILL.md` with flat `key: value` frontmatter.
 
-**There are two skill roots, and they are not interchangeable.** `skills/` holds the seven
-vendored `gmgn-*` skills: they are written for an interactive assistant with a shell, they open
-by telling the model to run `gmgn-cli config --check` and to ask the user for an API key, and
-`src/cli.ts` loads them — correctly, since it has a bash tool and a human at the prompt.
-`src/trading/skills/` holds `scanning` and `analysis`, written for the headless analyst: they
-describe `analystTools`, not shell commands, and there is no user in that loop to ask.
-`engine.ts` loads only the latter. Don't point the engine at `skills/`.
+**There is one skill root: `skills/`,** loaded by both `src/cli.ts` and the trading analyst.
+`token-analysis` is the procedure both use — it is written against the `gmgn_*` tool names and
+closes with a section for the headless analyst. The seven vendored `gmgn-*` skills alongside it
+are the original CLI ones: their data and thresholds are good, their `gmgn-cli` shell commands are
+a second path to the same endpoints, and `token-analysis` opens with a table mapping one to the
+other. There used to be a second root at `src/trading/skills/` (`scanning` + `analysis`) written
+against a separate analyst tool set; both went when the analyst moved onto the shared tools.
 
 ### The central split (`src/trading/plan.ts` header states it; respect it)
 
@@ -81,7 +81,7 @@ risk logic in `plan.ts`/`config.ts` — not in prompts.
 | `market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing above this file speaks HTTP or touches `gmgnClient()` |
 | `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`, prompts. No I/O — this is where tests concentrate |
 | `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
-| `analyst.ts` | the model half of a cycle: `analystTools` (read-only), the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
+| `analyst.ts` | the model half of a cycle: the read-only tool allowlist, the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
 
 Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
@@ -89,12 +89,13 @@ top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) �
 `broker.buy/sell` → `store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs
 independently and never touches the LLM.
 
-`gatherCandidates` is the **floor**, not the whole search. During `askAnalyst` the model can call
-`find_tokens` (trending / trenches / signals / hot_searches) to look where the fixed sweep does not,
-steered by the operator's dashboard prompt — that is the only way `cfg.prompt` reaches scanning,
-since the sweep itself runs before the model is called. Rows it finds are returned alongside the
-decision (`{ decision, discovered }`), already gated. If the model calls nothing, or the call fails, the cycle degrades
-to exactly the pre-scan behaviour.
+**`gatherCandidates` is the whole search.** Only what the sweep surfaced can be bought: the
+analyst has read-only tools and can research anything, but an address outside the brief never went
+through `toCandidate` or the gates, so there is nothing to size and `buyableSet` refuses it. The
+operator steers the sweep through the dashboard's Refine panel (`refineQuery`), not through the
+prompt — `cfg.prompt` shapes selection, not fetching, because the sweep runs before the model is
+called. The analyst used to have a `find_tokens` tool that widened the search mid-cycle; it and its
+`discovered` plumbing were dropped once Refine covered the same ground from the dashboard.
 
 ## Invariants worth knowing before you edit
 
@@ -104,9 +105,13 @@ to exactly the pre-scan behaviour.
   the process is not entitled to grant it on their behalf. Same reasoning behind `liveReady()`.
   This process signs its own trade requests, so that check is now the *entire* barrier — there is
   no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
-- **`analystTools` in `analyst.ts` is read-only by design** — no bash tool, no swap tool. An analyst
-  that cannot spend money cannot be talked into spending money by a token name. Keep new analyst
-  tools read-only.
+- **The analyst's tool set is an allowlist, and that is the whole safety barrier.** It shares
+  `src/agent/tools.ts` with the interactive CLI, which has `bash` and the spend routes. `analyst.ts`
+  names the read-only tools it wants one by one in `ANALYST_TOOL_NAMES`, so a tool added to the
+  shared file is *not* in the analyst's hands until someone adds its name — the safe default when
+  that file grows is "no". A test in `plan.test.ts` asserts `bash` and the spend routes stay out;
+  it fails the moment the allowlist grows something it should not have. Never invert it into a
+  denylist: this loop runs unattended on rows named by whoever deployed the contract.
 - **`securityRisk` is a pre-trade refusal, not a gate, and that is deliberate.** It runs once per
   entry in `openPosition` (paper and live alike) against `token_security`, because only that route
   answers reliably — `trenches` rows report `renounced_*: false` on tokens the security route
@@ -126,11 +131,12 @@ to exactly the pre-scan behaviour.
   `securityRisk` stand between it and a position. `SKIP` still exists in `config.ts` but is now
   only a default for the sweep's feed query. Don't reintroduce a structural gate without asking:
   the dashboard is where that policy lives now.
-- **Discovery widens the search, never the risk envelope.** `find_tokens` runs `runGates` on every
-  row before returning it, and `buyableSet` in `plan.ts` re-checks gates, cooldown, blacklist and
-  open positions before an address can be bought. A token being in `discovered` is permission to
-  be *considered*, not to be bought. Its per-threshold clamps went with the gates they cited —
-  the model's own `min_liquidity_usd` / `min_smart_money` now pass through unchanged.
+- **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
+  blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
+  the model's requested exits have run, since closing a position puts its address straight onto
+  cooldown. An address the analyst names that is not in the set is logged and skipped, with the
+  address included in the log line: a mistyped or omitted one is indistinguishable from a gate
+  failure without it.
 - **Token names/symbols are attacker-controlled data.** The system prompt says so; don't add code
   paths that treat scanned text as instructions.
 - **GMGN percent conventions differ per field.** `rug_ratio` and `top_10_holder_rate` are ratios
@@ -152,10 +158,12 @@ to exactly the pre-scan behaviour.
 
 ## Extending
 
-- **New analyst tool**: add an entry to `analystTools` in `src/trading/analyst.ts` (`description`,
-  `parameters`, `run`). Read-only.
-- **New skill**: `src/trading/skills/<name>/SKILL.md` for the trading analyst, `skills/<name>/SKILL.md`
-  for the interactive CLI — see the two-roots note above. `name` + `description` frontmatter;
-  supporting files go in the same directory and `load_skill` hands the model the absolute path.
-  A skill for the analyst must describe tools, never shell commands, and must never address a user.
+- **New tool**: add it to `tools` in `src/agent/tools.ts` (`description`, `parameters`, `run`).
+  The CLI picks it up immediately. To give it to the trading analyst as well, add its name to
+  `ANALYST_TOOL_NAMES` in `src/trading/analyst.ts` — read-only only, and never `bash`.
+- **New skill**: `skills/<name>/SKILL.md`, with `name` + `description` frontmatter. Only those two
+  lines reach the system prompt; the body is returned by `load_skill`, which hands the model an
+  absolute path, so supporting files can live in the same directory. Both entry points load this
+  root, so a skill must work with or without a human at the prompt: describe tools, and don't ask
+  the reader questions.
 - **New config knob**: `types.ts` → `DEFAULT_CONFIG` → a clamp in `sanitizeConfig` → the UI.

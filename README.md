@@ -204,9 +204,8 @@ src/
     market.ts          feed & harga GMGN dalam bahasa engine (batas cast)
     plan.ts            gate, skor, sizing, aturan exit, prompt analis
     broker.ts          eksekusi paper & live
-    analyst.ts         tool analis (read-only), brief, askAnalyst
+    analyst.ts         allowlist tool read-only, brief, askAnalyst
     engine.ts          loop scan + monitor
-    skills/            skill analis: scanning + analysis
 ```
 
 `src/trading/plan.test.ts` nutupin gate, skor, sizing, tiap aturan exit, clamping config,
@@ -218,13 +217,14 @@ jalanin semuanya.
 
 ## Nambah tool / skill
 
-Nambah tool analis = tambah entry di `analystTools` (`src/trading/analyst.ts`): `description`,
-`parameters` (JSON Schema), `run`. Read-only aja.
+Nambah tool = tambah entry di `tools` (`src/agent/tools.ts`): `description`, `parameters`
+(JSON Schema), `run`. CLI langsung dapat. Biar analis trading dapat juga, tambahin namanya ke
+`ANALYST_TOOL_NAMES` di `src/trading/analyst.ts` — read-only saja, dan jangan pernah `bash`.
 
-Ada **dua root skill** dan gak bisa ditukar. `src/trading/skills/` buat analis headless — isinya
-harus ngomongin tool, bukan perintah shell, dan gak boleh nyapa user (di loop itu gak ada user).
-`skills/` buat chat CLI di `src/cli.ts` yang punya bash. Nambah skill = bikin
-`src/trading/skills/<nama>/SKILL.md` atau `skills/<nama>/SKILL.md`:
+Root skill-nya **satu**: `skills/`, dimuat sama CLI dan analis trading. `token-analysis` isinya
+prosedur analisa yang dipakai dua-duanya. Nambah skill = bikin `skills/<nama>/SKILL.md`. Karena
+dua-duanya muat root yang sama, skill harus tetap jalan tanpa manusia di depan prompt: bahas tool,
+jangan nanya balik ke pembaca.
 
 ```md
 ---

@@ -12,7 +12,7 @@ import {
   securityRisk,
   toCandidate,
 } from "./plan.ts";
-import { extractJson } from "./analyst.ts";
+import { extractJson, _internals as analyst } from "./analyst.ts";
 import { trenchesFilters } from "./market.ts";
 import { candidate, position } from "./fixtures.ts";
 import type { Candidate, TradeConfig } from "./types.ts";
@@ -78,35 +78,47 @@ test("an unreadable response fails closed on EVM too, not just Solana", () => {
   assert.notEqual(securityRisk(null, "bsc"), "");
 });
 
+// ── what the analyst is allowed to do ─────────────────────────────────
+
+// The analyst shares src/agent/tools.ts with the interactive CLI, which has a shell and
+// spend routes. The allowlist is the only thing keeping them out of an unattended loop, so
+// it gets a test: this fails the moment someone adds a name they should not have.
+test("the analyst has no shell and no route that spends", () => {
+  const names = Object.keys(analyst.analystTools);
+  assert.ok(names.length > 5, "the analyst should still have its research tools");
+  for (const banned of ["bash", "gmgn_swap", "gmgn_multi_swap", "gmgn_strategy_create", "gmgn_create_token"])
+    assert.ok(!names.includes(banned), `${banned} must never be in the analyst's tool set`);
+  // Everything it does have is either a gmgn_* read or the skill loader.
+  for (const n of names) assert.ok(n.startsWith("gmgn_") || n === "load_skill", `unexpected analyst tool: ${n}`);
+});
+
 // ── what the analyst is allowed to buy ────────────────────────────────
 
 const at = (addr: string, over: Partial<Candidate> = {}) => candidate({ address: addr, ...over });
 
-test("a token the analyst found itself is buyable once it clears the gates", () => {
-  const set = buyableSet([], [at("DiscoveredAddr")], new Set());
-  assert.deepEqual([...set.keys()], ["discoveredaddr"]);
+test("a swept candidate is buyable once it clears the gates, keyed lowercased", () => {
+  const set = buyableSet([at("SweptAddr")], new Set());
+  assert.deepEqual([...set.keys()], ["sweptaddr"]);
 });
 
-test("a discovered token that failed a gate is never buyable", () => {
-  const set = buyableSet([], [at("RuggyAddr", { gateFailures: ["rug 0.80 > 0.3"] })], new Set());
+test("a candidate that failed a gate is never buyable", () => {
+  const set = buyableSet([at("RuggyAddr", { gateFailures: ["wash trading"] })], new Set());
   assert.equal(set.size, 0);
 });
 
-test("discovery does not bypass cooldown, blacklist or an open position", () => {
-  const set = buyableSet([], [at("BlockedAddr")], new Set(["blockedaddr"]));
+test("cooldown, blacklist and open positions block an otherwise clean candidate", () => {
+  const set = buyableSet([at("BlockedAddr")], new Set(["blockedaddr"]));
   assert.equal(set.size, 0);
 });
 
-test("the pre-scan entry wins when both feeds surface the same token", () => {
-  const scanned = at("SameAddr", { symbol: "FROM_SCAN" });
-  const found = at("sameaddr", { symbol: "FROM_TOOL" });
-  const set = buyableSet([scanned], [found], new Set());
+test("the first row wins when the sweep surfaced the same token twice", () => {
+  const set = buyableSet([at("SameAddr", { symbol: "FIRST" }), at("sameaddr", { symbol: "SECOND" })], new Set());
   assert.equal(set.size, 1);
-  assert.equal(set.get("sameaddr")?.symbol, "FROM_SCAN");
+  assert.equal(set.get("sameaddr")?.symbol, "FIRST");
 });
 
 test("a candidate with no address cannot slip into the buyable set", () => {
-  assert.equal(buyableSet([], [at("")], new Set()).size, 0);
+  assert.equal(buyableSet([at("")], new Set()).size, 0);
 });
 
 // ── gates ─────────────────────────────────────────────────────────────

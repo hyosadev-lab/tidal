@@ -163,7 +163,7 @@ async function runScan(): Promise<void> {
     store.phase = "analysing";
     store.push();
 
-    const { decision, discovered } = await askAnalyst(eligible.slice(0, 18), cfg.maxOpenPositions - store.positions.length);
+    const decision = await askAnalyst(eligible.slice(0, 18), cfg.maxOpenPositions - store.positions.length);
     if (!decision) return;
     if (decision.notes) store.log("model", decision.notes);
 
@@ -187,12 +187,13 @@ async function runScan(): Promise<void> {
     }
 
     store.phase = "entering";
-    const blocked = new Set(held);
-    for (const c of discovered) {
-      const key = c.address.toLowerCase();
-      if (store.onCooldown(c.address) || store.isBlacklisted(c.address)) blocked.add(key);
-    }
-    const byAddress = buyableSet(eligible, discovered, blocked);
+    // Re-checked here, not reused from the scan: the model's exits ran in between, and
+    // closing a position puts its address straight onto cooldown.
+    const blocked = new Set<string>();
+    for (const c of eligible)
+      if (store.position(c.address) || store.onCooldown(c.address) || store.isBlacklisted(c.address))
+        blocked.add(c.address.toLowerCase());
+    const byAddress = buyableSet(eligible, blocked);
     let opened = 0;
 
     for (const e of decision.entries ?? []) {
