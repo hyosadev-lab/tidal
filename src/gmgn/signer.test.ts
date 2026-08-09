@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import { buildMessage, detectAlgorithm, sign } from "./signer.ts";
 import { gmgnClient } from "./client.ts";
+import { OpenApiClient } from "./endpoint.ts";
 
 // Pure, no network — pins the exact byte format GMGN verifies the signature against.
 
@@ -53,6 +54,21 @@ test("an unsupported key type is refused, not silently mis-signed", () => {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   assert.throws(() => detectAlgorithm(pem), /Unsupported key type/);
+});
+
+test("swap refuses without the operator's standing consent", async () => {
+  const before = process.env.GMGN_ALLOW_AUTOMATED_TRADES;
+  delete process.env.GMGN_ALLOW_AUTOMATED_TRADES;
+  const client = new OpenApiClient({ apiKey: "test", host: "https://openapi.gmgn.ai" });
+  try {
+    // Refused before the request is even built, so this makes no network call.
+    await assert.rejects(
+      client.swap({ chain: "sol", from_address: "w", input_token: "a", output_token: "b", input_amount: "1", slippage: 1 }),
+      /GMGN_ALLOW_AUTOMATED_TRADES/,
+    );
+  } finally {
+    if (before !== undefined) process.env.GMGN_ALLOW_AUTOMATED_TRADES = before;
+  }
 });
 
 test("gmgnClient refuses without GMGN_API_KEY", () => {

@@ -1,4 +1,4 @@
-import { num } from "./gmgn.ts";
+import { num } from "./market.ts";
 import type { Candidate, Position, TradeConfig } from "./types.ts";
 
 /**

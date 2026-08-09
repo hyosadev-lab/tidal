@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig } from "./trading/config.ts";
+import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig } from "./config.ts";
 import {
   buyableSet,
   evaluateExit,
@@ -11,67 +11,16 @@ import {
   score,
   securityRisk,
   toCandidate,
-} from "./trading/plan.ts";
-import { trenchesFilters } from "./trading/gmgn.ts";
-import { store } from "./trading/store.ts";
-import * as broker from "./trading/broker.ts";
-import { _internals, start, stop } from "./trading/engine.ts";
-import type { Candidate, Position, TradeConfig } from "./trading/types.ts";
+} from "./plan.ts";
+import { extractJson } from "./analyst.ts";
+import { trenchesFilters } from "./market.ts";
+import { candidate, position } from "./fixtures.ts";
+import type { Candidate, TradeConfig } from "./types.ts";
+
+// Pure: no network, no engine, no shared store. Everything stateful or live lives in
+// engine.test.ts. This is where the trading plan's own rules are pinned.
 
 const cfg: TradeConfig = { ...DEFAULT_CONFIG };
-
-function candidate(over: Partial<Candidate> = {}): Candidate {
-  return {
-    address: "So11111111111111111111111111111111111111112",
-    symbol: "TEST",
-    name: "Test",
-    priceUsd: 0.001,
-    marketCapUsd: 1_000_000,
-    liquidityUsd: 80_000,
-    volume1hUsd: 120_000,
-    change5mPct: 4,
-    change1hPct: 35,
-    swaps1h: 500,
-    holderCount: 900,
-    smartDegenCount: 4,
-    renownedCount: 1,
-    rugRatio: 0.05,
-    top10HolderRate: 0.18,
-    devHolding: false,
-    isWashTrading: false,
-    isHoneypot: false,
-    ageMinutes: 300,
-    launchpad: "Pump.fun",
-    source: "test",
-    gateFailures: [],
-    score: 0,
-    ...over,
-  };
-}
-
-function position(over: Partial<Position> = {}): Position {
-  return {
-    id: "p1",
-    chain: "sol",
-    address: candidate().address,
-    symbol: "TEST",
-    openedAt: Date.now(),
-    costUsd: 100,
-    qty: 100_000,
-    originalQty: 100_000,
-    entryPrice: 0.001,
-    lastPrice: 0.001,
-    peakPrice: 0.001,
-    realisedUsd: 0,
-    filledRungs: [],
-    trailArmed: false,
-    thesis: "test",
-    conviction: 70,
-    stopLossPct: 25,
-    entryLiquidityUsd: 80_000,
-    ...over,
-  };
-}
 
 // ── pre-trade security refusal ────────────────────────────────────────
 
@@ -341,57 +290,10 @@ test("live mode stays disarmed without the operator's opt-in", () => {
   else process.env.GMGN_ALLOW_AUTOMATED_TRADES = saved;
 });
 
-// ── paper round trip ──────────────────────────────────────────────────
-
-test("a paper round trip moves cash and books PnL", async () => {
-  store.reset();
-  const start = store.cash;
-  const c = candidate();
-
-  const bought = await broker.buy(store, cfg, c, 100, "thesis", 80, 25);
-  assert.ok(!("error" in bought), "buy should succeed");
-  if ("error" in bought) return;
-
-  assert.ok(store.cash < start, "cash was committed");
-  assert.ok(bought.position.qty > 0);
-  assert.ok(bought.position.entryPrice > c.priceUsd, "fill includes slippage");
-  store.addPosition(bought.position);
-
-  // double the price, then take the whole position
-  bought.position.lastPrice = bought.position.entryPrice * 2;
-  const sold = await broker.sell(store, cfg, bought.position, 100, "test exit", c.liquidityUsd);
-  assert.ok(!("error" in sold), "sell should succeed");
-  if ("error" in sold) return;
-
-  assert.ok((sold.trade.pnlUsd ?? 0) > 0, "a 2x should book a profit");
-  assert.ok(store.cash > start, "proceeds returned to cash");
-  store.reset();
-});
-
-test("paper buys cannot overdraw the ledger", async () => {
-  store.reset();
-  const res = await broker.buy(store, cfg, candidate(), store.cash + 500, "too big", 80, 25);
-  assert.ok("error" in res);
-  store.reset();
-});
-
-test("partial exits book PnL against only the slice sold", async () => {
-  store.reset();
-  const bought = await broker.buy(store, cfg, candidate(), 100, "t", 80, 25);
-  if ("error" in bought) return assert.fail("buy failed");
-  store.addPosition(bought.position);
-  bought.position.lastPrice = bought.position.entryPrice * 2;
-  const sold = await broker.sell(store, cfg, bought.position, 40, "rung 1", 80_000);
-  if ("error" in sold) return assert.fail("sell failed");
-  assert.ok(Math.abs(sold.qtySold - bought.position.originalQty * 0.4) < 1, "sold 40% of the original size");
-  assert.ok((sold.trade.pnlUsd ?? 0) > 30 && (sold.trade.pnlUsd ?? 0) < 45, "PnL is scoped to the slice");
-  store.reset();
-});
-
 // ── model output parsing ──────────────────────────────────────────────
 
 test("a decision is recovered from a fenced, chatty reply", () => {
-  const d = _internals.extractJson(
+  const d = extractJson(
     'Here you go:\n```json\n{"entries":[{"address":"abc","conviction":72,"thesis":"x"}],"exits":[],"notes":"quiet"}\n```\nHope that helps.',
   );
   assert.equal(d?.entries.length, 1);
@@ -399,7 +301,7 @@ test("a decision is recovered from a fenced, chatty reply", () => {
 });
 
 test("garbage in the model reply yields no decision rather than a bad one", () => {
-  assert.equal(_internals.extractJson("no json here at all"), null);
+  assert.equal(extractJson("no json here at all"), null);
 });
 
 test("a rank row maps onto a candidate", () => {
@@ -437,26 +339,4 @@ test("the position floor tracks the chain's round-trip cost", () => {
 test("gas is held back so a fully deployed wallet can still pay to exit", () => {
   assert.ok(gasReserve({ ...cfg, chain: "sol", gasReserveNative: 0 }) > 0);
   assert.equal(gasReserve({ ...cfg, chain: "sol", gasReserveNative: 0.05 }), 0.05);
-});
-
-test("a risk envelope that can never clear the floor is refused at start", async () => {
-  const saved = process.env.OPENROUTER_API_KEY;
-  process.env.OPENROUTER_API_KEY = "test";
-  store.updateConfig({ chain: "sol", mode: "paper", paperStartEquityUsd: 45, riskPerTradePct: 5 });
-  store.reset();
-  const bad = await start();
-  stop();
-  assert.equal(bad.ok, false);
-  assert.match(bad.error ?? "", /under the \$3 minimum/);
-
-  store.updateConfig({ riskPerTradePct: 25 });
-  store.reset();
-  const good = await start();
-  stop();
-  assert.equal(good.ok, true, "25% of $45 clears the SOL floor");
-
-  store.updateConfig({ ...DEFAULT_CONFIG });
-  store.reset();
-  if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
-  else process.env.OPENROUTER_API_KEY = saved;
 });

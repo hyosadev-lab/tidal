@@ -2,10 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises";
 import { join, extname, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { store } from "../trading/store.ts";
-import * as engine from "../trading/engine.ts";
-import { apiReady } from "../trading/gmgn.ts";
-import { liveReady } from "../trading/config.ts";
+import { store } from "./trading/store.ts";
+import * as engine from "./trading/engine.ts";
+import { apiReady } from "./trading/market.ts";
+import { liveReady } from "./trading/config.ts";
 
 const PUBLIC = join(fileURLToPath(new URL("..", import.meta.url)), "public");
 const PORT = Number(process.env.PORT ?? 3111);

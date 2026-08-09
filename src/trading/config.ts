@@ -1,9 +1,10 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Chain, Mode, TradeConfig } from "./types.ts";
 
-export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+/** Repo root — `data/` stays beside the sources, not inside `src/`. */
+export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 export const DATA_DIR = join(ROOT, "data");
 
 export const CHAINS: Chain[] = ["sol", "bsc", "base", "eth"];

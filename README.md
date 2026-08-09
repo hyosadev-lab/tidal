@@ -53,7 +53,7 @@ Ambang ini adalah batas "jangan disentuh sama sekali", bukan batas "layak dibeli
 rug 0.28 akan lolos, lalu jadi urusan analis untuk menolaknya.
 
 **Tidak ada satu pun yang bisa diatur dari dashboard.** Angkanya ada di konstanta `SKIP`
-(`trading/config.ts`) dan bukan bagian dari `TradeConfig` — ini ambang yang dipublikasikan
+(`src/trading/config.ts`) dan bukan bagian dari `TradeConfig` — ini ambang yang dipublikasikan
 untuk hal yang didiskualifikasi, jadi tidak ada yang perlu ditala. Kalau mau berdagang lebih
 ketat dari lantai ini, tulis di kolom instruksi dashboard: di situ analis bisa menindaklanjutinya,
 tanpa membuat angka karangan yang menyandang nama tabel.
@@ -187,40 +187,44 @@ bikin rugi lebih cepat.
 ## Struktur
 
 ```
-src/index.ts           HTTP + SSE, API kontrol
 public/                dashboard (vanilla, tanpa build step)
-trading/
-  types.ts             tipe bersama
-  config.ts            default + sanitasi (semua input dari UI diclamp di sini)
-  store.ts             state, persistensi, event bus
-  gmgn.ts              client GMGN OpenAPI + leaky bucket rate limiter
-  plan.ts              gate, skor, sizing, aturan exit, prompt analis
-  broker.ts            eksekusi paper & live
-  engine.ts            loop scan + monitor
-  skills/              skill analis: scanning + analysis
+skills/                skill gmgn-* bawaan, buat chat CLI (butuh bash)
 src/
+  index.ts             HTTP + SSE, API kontrol
+  cli.ts               chat CLI (mode lama, punya tool bash)
   agent/
     llm.ts             loop tool-calling (dipakai analis)
     skills.ts          loader <root>/<nama>/SKILL.md
-  gmgn/                client GMGN OpenAPI standalone (belum dipakai trading/)
-skills/                skill gmgn-* bawaan, buat chat CLI (butuh bash)
-src/cli.ts             chat CLI (mode lama, punya tool bash)
+    tools.ts           tool GMGN lengkap buat CLI (termasuk bash)
+  gmgn/                transport: OpenApiClient, signing, antrian + leaky bucket
+  trading/
+    types.ts           tipe bersama
+    config.ts          default + sanitasi (semua input dari UI diclamp di sini)
+    store.ts           state, persistensi, event bus
+    market.ts          feed & harga GMGN dalam bahasa engine (batas cast)
+    plan.ts            gate, skor, sizing, aturan exit, prompt analis
+    broker.ts          eksekusi paper & live
+    analyst.ts         tool analis (read-only), brief, askAnalyst
+    engine.ts          loop scan + monitor
+    skills/            skill analis: scanning + analysis
 ```
 
-`trading.test.ts` nutupin gate, skor, sizing, tiap aturan exit, round trip paper, clamping
-config, penolakan live mode, dan parsing output model. `npm test` buat jalanin semuanya.
+`src/trading/plan.test.ts` nutupin gate, skor, sizing, tiap aturan exit, clamping config,
+penolakan live mode, dan parsing output model — murni, tanpa network. `src/trading/engine.test.ts`
+yang sisanya: round trip paper dan `start()`, yang beneran manggil API GMGN. `npm test` buat
+jalanin semuanya.
 
 ---
 
 ## Nambah tool / skill
 
-Nambah tool analis = tambah entry di `analystTools` (`trading/engine.ts`): `description`,
+Nambah tool analis = tambah entry di `analystTools` (`src/trading/analyst.ts`): `description`,
 `parameters` (JSON Schema), `run`. Read-only aja.
 
-Ada **dua root skill** dan gak bisa ditukar. `trading/skills/` buat analis headless — isinya
+Ada **dua root skill** dan gak bisa ditukar. `src/trading/skills/` buat analis headless — isinya
 harus ngomongin tool, bukan perintah shell, dan gak boleh nyapa user (di loop itu gak ada user).
 `skills/` buat chat CLI di `src/cli.ts` yang punya bash. Nambah skill = bikin
-`trading/skills/<nama>/SKILL.md` atau `skills/<nama>/SKILL.md`:
+`src/trading/skills/<nama>/SKILL.md` atau `skills/<nama>/SKILL.md`:
 
 ```md
 ---

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NATIVE } from "./config.ts";
-import * as gmgn from "./gmgn.ts";
-import { num } from "./gmgn.ts";
+import * as gmgn from "./market.ts";
+import { num } from "./market.ts";
 import type { store as Store } from "./store.ts";
 import type { Candidate, Position, TradeConfig, Trade } from "./types.ts";
 

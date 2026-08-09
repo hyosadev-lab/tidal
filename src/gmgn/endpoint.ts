@@ -15,6 +15,61 @@ import { buildAuthQuery, buildMessage, detectAlgorithm, sign } from "./signer.ts
 const RATE_LIMIT_RETRY_BUFFER_MS = 1000;
 const DEFAULT_RATE_LIMIT_AUTO_RETRY_MAX_WAIT_MS = 5000;
 const USER_AGENT = "tta-0-gmgn-client";
+const DEFAULT_TIMEOUT_MS = 60_000;
+
+/**
+ * Per-route bucket weight and timeout override. Unlisted routes weigh 1 and time out at
+ * DEFAULT_TIMEOUT_MS. The numbers were tuned against the live API in the trading client
+ * this was merged with — the expensive routes cost more than one token.
+ */
+const ROUTE: Record<string, { weight?: number; timeoutMs?: number }> = {
+  "/v1/market/token_kline": { weight: 2 },
+  "/v1/market/hot_searches": { weight: 2 },
+  "/v1/market/token_signal": { weight: 3 },
+  "/v1/market/token_top_holders": { weight: 5 },
+  "/v1/trenches": { weight: 3 },
+  "/v1/trade/quote": { weight: 2 },
+  "/v1/trade/swap": { weight: 5, timeoutMs: 120_000 },
+  "/v1/trade/multi_swap": { weight: 5, timeoutMs: 120_000 },
+};
+
+/**
+ * One leaky bucket and one queue for the whole process — the limit is per API key, so
+ * sharing them across client instances is the point. GMGN extends the cooldown by 5s
+ * every time you hit a 429, so retry spam makes the ban worse: it is cheaper to wait
+ * here than to be told to wait there.
+ *
+ * Requests are serialised rather than merely rate-limited so the token accounting stays
+ * honest under concurrency, and so the timestamp (validated within ±5s) and client_id
+ * are built after the wait, not before it.
+ */
+const RATE = 20;
+const CAPACITY = 20;
+let tokens = CAPACITY;
+let lastRefill = Date.now();
+let queue: Promise<unknown> = Promise.resolve();
+
+async function takeTokens(weight: number): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    tokens = Math.min(CAPACITY, tokens + ((now - lastRefill) / 1000) * RATE);
+    lastRefill = now;
+    if (tokens >= weight) {
+      tokens -= weight;
+      return;
+    }
+    await sleep(Math.ceil(((weight - tokens) / RATE) * 1000) + 20);
+  }
+}
+
+function schedule<T>(weight: number, run: () => Promise<T>): Promise<T> {
+  const result = queue.then(async () => {
+    await takeTokens(weight);
+    return run();
+  });
+  queue = result.catch(() => undefined);
+  return result;
+}
 
 interface PreparedRequest {
   method: string;
@@ -523,7 +578,7 @@ export class OpenApiClient {
       };
       const bodyStr = body !== null ? JSON.stringify(body) : null;
       return { method, subPath, url, headers, body: bodyStr, curlStr: formatCurl(method, url, headers, bodyStr) };
-    }, true);
+    }, subPath, true);
   }
 
   private async authSignedRequest(
@@ -551,25 +606,34 @@ export class OpenApiClient {
         "User-Agent": USER_AGENT,
       };
       return { method, subPath, url, headers, body: bodyStr || null, curlStr: formatCurl(method, url, headers, bodyStr || null) };
-    }, method !== "POST");
+    }, subPath, method !== "POST");
   }
 
-  private async executePreparedRequest(prepare: () => PreparedRequest, autoRetryOnRateLimit: boolean): Promise<unknown> {
+  private async executePreparedRequest(
+    prepare: () => PreparedRequest,
+    subPath: string,
+    autoRetryOnRateLimit: boolean,
+  ): Promise<unknown> {
     const maxAttempts = autoRetryOnRateLimit ? 2 : 1;
+    const weight = ROUTE[subPath]?.weight ?? 1;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const request = prepare();
-      const res = await this.doFetch(request.method, request.subPath, request.url, request.headers, request.body, request.curlStr);
-
       try {
-        return await this.parseResponse(request.method, request.subPath, res, request.curlStr);
+        // prepare() runs inside the queue: the timestamp it stamps is validated within
+        // ±5s server-side, so it has to be built after the wait, not before it.
+        return await schedule(weight, async () => {
+          const request = prepare();
+          const res = await this.doFetch(request.method, request.subPath, request.url, request.headers, request.body, request.curlStr);
+          return this.parseResponse(request.method, request.subPath, res, request.curlStr);
+        });
       } catch (err) {
         const retryDelayMs = getRateLimitRetryDelayMs(err, attempt, maxAttempts, autoRetryOnRateLimit);
         if (retryDelayMs == null) throw err;
 
         if (process.env.GMGN_DEBUG) {
-          console.error(`[gmgn] ${request.method} ${request.subPath} hit rate limit, retrying once in ${Math.ceil(retryDelayMs / 1000)}s`);
+          console.error(`[gmgn] ${subPath} hit rate limit, retrying once in ${Math.ceil(retryDelayMs / 1000)}s`);
         }
+        // Backoff waits outside the queue — holding it would stall unrelated routes.
         await sleep(retryDelayMs);
       }
     }
@@ -586,7 +650,12 @@ export class OpenApiClient {
     curlStr: string,
   ): Promise<Response> {
     try {
-      return await fetch(url, { method, headers, body: body ?? undefined });
+      return await fetch(url, {
+        method,
+        headers,
+        body: body ?? undefined,
+        signal: AbortSignal.timeout(ROUTE[subPath]?.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      });
     } catch (err: unknown) {
       const cause = extractRootCause(err);
       const errorCode = (cause as NodeJS.ErrnoException).code;
