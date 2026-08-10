@@ -367,6 +367,22 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 }
 .fold > .sect:first-of-type { margin-top: 12px; }
 
+/* A footnote inside a fold: the detail one operator in ten needs, folded away for the rest. */
+/* Specificity has to clear `.fold summary`, which this one sits inside. */
+.sub { margin: 8px 0 2px; }
+.fold .sub > summary {
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--rule-2);
+  list-style: none;
+}
+.fold .sub > summary::before { content: "▸ "; color: inherit; }
+.fold .sub[open] > summary::before { content: "▾ "; }
+.fold .sub > summary:hover { color: var(--haze); }
+
 /* exit builder */
 /* minmax(0,…) or the row sizes to the inputs' max-content and spills out of the rail. */
 .rules { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; margin: 10px 0 8px; }
