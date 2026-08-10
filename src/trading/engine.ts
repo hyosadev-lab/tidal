@@ -5,6 +5,7 @@ import * as gmgn from "./market.ts";
 import { NATIVE_SYMBOL, num } from "./market.ts";
 import {
   buyableSet,
+  entryStrategy,
   evaluateExit,
   gateTally,
   healthExit,
@@ -15,7 +16,7 @@ import {
   toCandidate,
 } from "./plan.ts";
 import { store } from "./store.ts";
-import type { Candidate, Position } from "./types.ts";
+import type { Candidate, Position, StrategyRule } from "./types.ts";
 
 let monitorTimer: NodeJS.Timeout | null = null;
 let scanTimer: NodeJS.Timeout | null = null;
@@ -214,6 +215,7 @@ async function runScan(): Promise<void> {
       }
       const mult = Math.max(0.5, Math.min(1.5, num(e.sizeMultiplier, 1)));
       const stop = Math.max(10, Math.min(60, num(e.stopLossPct, cfg.stopLossPct)));
+      const strategy = entryStrategy(cfg, e.strategy);
       const size = positionSize(cfg, store.equity, store.cash, conviction) * mult;
       const floor = minPosition(cfg);
       if (size < floor) {
@@ -224,7 +226,7 @@ async function runScan(): Promise<void> {
         );
         continue;
       }
-      await openPosition(c, size, String(e.thesis ?? "").slice(0, 400), conviction, stop);
+      await openPosition(c, size, String(e.thesis ?? "").slice(0, 400), conviction, stop, strategy);
       opened++;
     }
     if (!opened && decision.entries?.length === 0) store.log("info", "No entry this cycle.");
@@ -248,6 +250,7 @@ async function openPosition(
   thesis: string,
   conviction: number,
   stopLossPct: number,
+  strategy: StrategyRule[],
 ): Promise<void> {
   const cfg = store.config;
   if (cfg.mode === "live") {
@@ -276,7 +279,7 @@ async function openPosition(
   }
 
   try {
-    const res = await broker.buy(store, cfg, c, usd, thesis, conviction, stopLossPct);
+    const res = await broker.buy(store, cfg, c, usd, thesis, conviction, stopLossPct, strategy);
     if ("error" in res) {
       store.log("warn", `Buy ${c.symbol} failed: ${res.error}`);
       if (/honeypot/i.test(res.error)) store.blacklist(c.address);
@@ -366,7 +369,7 @@ async function runMonitor(): Promise<void> {
 
       const exit = evaluateExit(p, cfg);
       if (exit) {
-        const rung = /^tp(\d+)$/.exec(exit.kind);
+        const rung = /^(?:tp|rule)(\d+)$/.exec(exit.kind);
         if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
         await closePosition(p, exit.percent, exit.reason);
       }

@@ -350,6 +350,77 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .pair-head span { text-align: center; font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; }
 .pair input { padding: 6px 7px; }
 
+.toggle { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; cursor: pointer; }
+.toggle span { font-size: 11.5px; color: var(--foam); }
+.toggle input { width: auto; accent-color: var(--foam); cursor: pointer; }
+
+/* exit builder */
+.rules { display: grid; gap: 7px; margin: 10px 0 8px; }
+.rule { display: flex; align-items: center; gap: 7px; }
+
+.rule-cell {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--hull-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  min-width: 0;
+}
+.rule-cell span { font-size: 10.5px; color: var(--haze); white-space: nowrap; }
+.rule-cell i { font-style: normal; font-size: 10px; color: var(--rule-2); }
+.rule-cell input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: right;
+  font-weight: 500;
+}
+
+.rule-del { appearance: none; background: none; border: 0; padding: 2px; font-size: 13px; line-height: 1; cursor: pointer; filter: grayscale(1); opacity: .55; }
+.rule-del:hover { filter: none; opacity: 1; }
+
+.empty-rules { font-size: 11px; color: var(--haze); margin: 8px 0; }
+.hint.warn { color: var(--lamp); }
+
+.addwrap { position: relative; margin-bottom: 4px; }
+.addwrap .btn { width: 100%; }
+
+/* `display` would otherwise beat the UA's [hidden] rule — same trick as .veil below. */
+.menu { display: none; }
+
+.menu:not([hidden]) {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 5;
+  display: grid;
+  background: var(--hull-2);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius);
+  padding: 4px;
+  min-width: 200px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .45);
+}
+.menu button {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--foam);
+  font-family: var(--sans);
+  font-size: 12px;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.menu button:hover { background: var(--rule); }
+
 .mini { display: block; }
 .mini span { display: block; font-size: 10.5px; color: var(--haze); margin-bottom: 4px; }
 .mini input { padding: 7px 8px; }
@@ -423,6 +494,11 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 }
 
 .pill-armed { border-color: var(--flood); color: var(--flood); }
+.pill-done  { opacity: .4; text-decoration: line-through; }
+
+/* The exit plan is per position now, so it needs room to wrap. */
+.plan { display: flex; flex-wrap: wrap; gap: 3px; max-width: 210px; }
+.plan .pill { letter-spacing: .04em; text-transform: none; white-space: nowrap; }
 .pill-pass  { border-color: var(--flood); color: var(--flood); }
 .pill-fail  { border-color: #4E211D; color: var(--ebb); }
 

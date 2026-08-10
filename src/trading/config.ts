@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Chain, Mode, TradeConfig } from "./types.ts";
+import type { Chain, Mode, StrategyRule, TradeConfig } from "./types.ts";
 
 /** Repo root — `data/` stays beside the sources, not inside `src/`. */
 export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -130,6 +130,8 @@ export const DEFAULT_CONFIG: TradeConfig = {
   riskPerTradePct: 4,
   maxOpenPositions: 5,
   maxDailyLossPct: 15,
+  fixedStrategy: true,
+  strategy: [],
   stopLossPct: 25,
   takeProfit: [
     { at: 60, sell: 40 },
@@ -176,6 +178,21 @@ function sanitizeRefine(input: unknown): Record<string, number> {
   return out;
 }
 
+/** Exit-builder rows. Same clamps as the fields they replace — a rule is a risk limit. */
+export function sanitizeStrategy(input: unknown, base: StrategyRule[]): StrategyRule[] {
+  if (!Array.isArray(input)) return base;
+  const out: StrategyRule[] = [];
+  for (const r of input.slice(0, 12)) {
+    const sell = clamp(r?.sell, 1, 100, 50);
+    if (r?.kind === "tp") out.push({ kind: "tp", at: clamp(r.at, 5, 5000, 100), sell });
+    else if (r?.kind === "sl") out.push({ kind: "sl", at: clamp(r.at, -95, -1, -50), sell });
+    else if (r?.kind === "ttp")
+      out.push({ kind: "ttp", at: clamp(r.at, 5, 5000, 100), dd: clamp(r.dd, 1, 90, 10), sell });
+    else if (r?.kind === "tsl") out.push({ kind: "tsl", dd: clamp(r.dd, 1, 90, 20), sell });
+  }
+  return out;
+}
+
 /**
  * Coerce whatever arrived from the dashboard into a config we're willing to trade with.
  * Every bound here is a real safety limit, not input tidying.
@@ -201,6 +218,8 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     riskPerTradePct: clamp(input.riskPerTradePct, 0.5, 25, base.riskPerTradePct),
     maxOpenPositions: Math.round(clamp(input.maxOpenPositions, 1, 20, base.maxOpenPositions)),
     maxDailyLossPct: clamp(input.maxDailyLossPct, 1, 90, base.maxDailyLossPct),
+    fixedStrategy: typeof input.fixedStrategy === "boolean" ? input.fixedStrategy : base.fixedStrategy,
+    strategy: sanitizeStrategy(input.strategy, base.strategy),
     stopLossPct: clamp(input.stopLossPct, 5, 90, base.stopLossPct),
     takeProfit: ladder,
     trailArmPct: clamp(input.trailArmPct, 5, 1000, base.trailArmPct),

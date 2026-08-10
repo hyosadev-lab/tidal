@@ -1,5 +1,6 @@
+import { sanitizeStrategy } from "./config.ts";
 import { num } from "./market.ts";
-import type { Candidate, Position, TradeConfig } from "./types.ts";
+import type { Candidate, Position, StrategyRule, TradeConfig } from "./types.ts";
 
 /**
  * THE TRADING PLAN
@@ -235,6 +236,14 @@ export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
   const pnlPct = ((p.lastPrice - p.entryPrice) / p.entryPrice) * 100;
   const stop = p.stopLossPct || cfg.stopLossPct;
 
+  // A position carrying its own rule set runs on those instead of the config's
+  // stop / trail / ladder. The time stop below still applies either way.
+  if (p.strategy?.length) {
+    const hit = ruleExit(p, pnlPct);
+    if (hit) return hit;
+    return timeStop(p, cfg, pnlPct);
+  }
+
   if (pnlPct <= -stop)
     return { percent: 100, reason: `stop-loss hit at ${pnlPct.toFixed(1)}%`, kind: "stop" };
 
@@ -258,6 +267,10 @@ export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
       return { percent: rung.sell, reason: `take-profit rung ${i + 1} at +${pnlPct.toFixed(1)}%`, kind: `tp${i}` };
   }
 
+  return timeStop(p, cfg, pnlPct);
+}
+
+function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | null {
   const ageMin = (Date.now() - p.openedAt) / 60_000;
   if (ageMin >= cfg.timeStopMinutes && pnlPct < cfg.timeStopMinPnlPct)
     return {
@@ -265,8 +278,58 @@ export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
       reason: `time stop — ${Math.round(ageMin)}m in and only ${pnlPct.toFixed(1)}%`,
       kind: "time",
     };
-
   return null;
+}
+
+/**
+ * The rule-set exits. Losses first, then the highest take-profit reached, so a spike
+ * between two ticks fills the top rung rather than the bottom one. Arming is derived
+ * from `peakPrice` rather than latched, so several trailing rules can coexist.
+ */
+function ruleExit(p: Position, pnlPct: number): ExitSignal | null {
+  const rules = p.strategy ?? [];
+  const peakPnl = p.entryPrice > 0 ? ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
+  const giveback = p.peakPrice > 0 ? ((p.peakPrice - p.lastPrice) / p.peakPrice) * 100 : 0;
+  const live = (i: number) => !p.filledRungs.includes(i);
+  const sig = (i: number, reason: string): ExitSignal => ({ percent: rules[i]!.sell, reason, kind: `rule${i}` });
+
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i]!;
+    if (!live(i)) continue;
+    if (r.kind === "sl" && pnlPct <= (r.at ?? 0))
+      return sig(i, `stop loss at ${pnlPct.toFixed(1)}%`);
+    if (r.kind === "tsl" && giveback >= (r.dd ?? Infinity))
+      return sig(i, `trailing stop loss — gave back ${giveback.toFixed(1)}% from peak (now ${pnlPct.toFixed(1)}%)`);
+    if (r.kind === "ttp" && peakPnl >= (r.at ?? Infinity) && giveback >= (r.dd ?? Infinity))
+      return sig(i, `trailing take-profit — armed at +${r.at}%, gave back ${giveback.toFixed(1)}% (still ${pnlPct.toFixed(1)}%)`);
+  }
+
+  let best = -1;
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i]!;
+    if (r.kind !== "tp" || !live(i) || pnlPct < (r.at ?? Infinity)) continue;
+    if (best < 0 || (rules[best]!.at ?? 0) < (r.at ?? 0)) best = i;
+  }
+  return best < 0 ? null : sig(best, `take-profit at +${pnlPct.toFixed(1)}%`);
+}
+
+/**
+ * The exit plan a new position will run on.
+ *   fixed   → the operator's rows from the dashboard
+ *   dynamic → the analyst's, sanitized to the same clamps
+ * The model picks the shape, never the outer limit: a stop can't sit deeper than
+ * `cfg.stopLossPct`, and a plan without one gets it appended. An unusable proposal
+ * falls back to the config's stop / trail / ladder rather than to no exits at all.
+ */
+export function entryStrategy(cfg: TradeConfig, proposed: unknown): StrategyRule[] {
+  const rules = cfg.fixedStrategy ? cfg.strategy : sanitizeStrategy(proposed, []);
+  if (!rules.length) return [];
+  const capped = rules.map((r) =>
+    r.kind === "sl" ? { ...r, at: Math.max(r.at ?? -cfg.stopLossPct, -cfg.stopLossPct) } : r,
+  );
+  return capped.some((r) => r.kind === "sl")
+    ? capped
+    : [...capped, { kind: "sl" as const, at: -cfg.stopLossPct, sell: 100 }];
 }
 
 /** Live risk checks against fresh token data for a position we already hold. */
@@ -289,8 +352,67 @@ export function pnlPct(p: Position): number {
 
 // ── prompts ───────────────────────────────────────────────────────────
 
+/** One rule as a line of the brief. Same wording the dashboard builder uses. */
+export function describeRule(r: StrategyRule): string {
+  if (r.kind === "tp") return `take profit: sell ${r.sell}% at +${r.at}%`;
+  if (r.kind === "sl") return `stop loss: sell ${r.sell}% at ${r.at}%`;
+  if (r.kind === "ttp") return `trailing take profit: arm at +${r.at}%, then sell ${r.sell}% on a ${r.dd}% giveback from peak`;
+  return `trailing stop loss: sell ${r.sell}% on a ${r.dd}% giveback from peak`;
+}
+
+/** The exit half of the brief — it changes shape with `fixedStrategy`. */
+function exitPlan(cfg: TradeConfig): string {
+  const time = `  time stop: flat out after ${cfg.timeStopMinutes}m if the position is under +${cfg.timeStopMinPnlPct}%`;
+
+  if (!cfg.fixedStrategy)
+    return `Exits (yours to design, then mechanical — the engine runs them every ${cfg.monitorSeconds}s with no
+further model involvement, so a plan you write badly is a plan you cannot revise later):
+
+Give every entry a \`strategy\`: an ordered list of rules, each selling a % of the ORIGINAL size.
+  {"kind":"tp","at":<pnl % ≥5>,"sell":<1-100>}         sell when PnL reaches +at%
+  {"kind":"sl","at":<pnl % -95..-1>,"sell":<1-100>}     sell when PnL falls to at%
+  {"kind":"ttp","at":<arm % ≥5>,"dd":<1-90>,"sell":<1-100>}  arm at +at%, sell on a dd% giveback from peak
+  {"kind":"tsl","dd":<1-90>,"sell":<1-100>}             sell on a dd% giveback from peak, live from entry
+
+Losses and trailing rules are checked before take-profits, and the highest take-profit reached
+wins. Make the take-profits add up to 100% unless you mean to ride a stub, and remember an
+unfilled rung is worth nothing.
+
+Write the plan for the token in front of you, not to a house default — one plan per entry is the
+whole point, and two entries in the same cycle should rarely get the same numbers. The brief
+already carries what should drive it:
+  liquidity_usd, mcap_usd — a thin pool cannot absorb a 100% exit at the price you see; take more,
+    earlier, and expect the fill to be worse than the quote.
+  change_5m_pct, change_1h_pct — volatility sets the trail. A token swinging 40% in five minutes
+    hits a 15% giveback on noise alone and exits on the first wick; a steady mover does not need
+    30% of room.
+  age_minutes, launchpad — a minutes-old graduate is not a six-hour trend. Fresh means faster
+    rungs and a tighter stop, because there is no structure under it yet.
+  top10_rate, smart_money, rug_ratio — concentration is an argument for a tighter stop and an
+    earlier first rung, never for giving the position more rope.
+Name in the thesis which of these set the numbers you chose.
+
+Two limits are not yours: a stop deeper than -${cfg.stopLossPct}% is clamped back to -${cfg.stopLossPct}%, and a plan with no
+stop gets one at -${cfg.stopLossPct}% appended. Omit \`strategy\`, or send something unusable, and the position
+falls back to the operator's default plan — that is a worse outcome than a mediocre plan you chose.
+${time}`;
+
+  // Describe what a position will actually be opened with, appended stop included.
+  const plan = entryStrategy(cfg, null);
+  const rows = plan.length
+    ? plan.map((r) => `  ${describeRule(r)}`).join("\n")
+    : [
+        `  hard stop-loss at -${cfg.stopLossPct}%`,
+        cfg.takeProfit.map((r, i) => `  rung ${i + 1}: sell ${r.sell}% of the original size at +${r.at}%`).join("\n"),
+        `  trailing stop arms at +${cfg.trailArmPct}%, then exits on a ${cfg.trailGivebackPct}% giveback from peak`,
+      ].join("\n");
+
+  return `Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement):
+${rows}
+${time}`;
+}
+
 export function systemPrompt(cfg: TradeConfig): string {
-  const ladder = cfg.takeProfit.map((r, i) => `  rung ${i + 1}: sell ${r.sell}% of the original size at +${r.at}%`).join("\n");
   return `You are the analyst for an automated memecoin trading agent on ${cfg.chain.toUpperCase()}, running in ${cfg.mode.toUpperCase()} mode.
 
 Each cycle you read the pre-screened candidates and the open book, then return a JSON decision. You do not place orders and you do not manage exits — the engine does that.
@@ -312,11 +434,7 @@ row — structure_score marks it down, nothing stops it. Reject on those numbers
 Before entry each pick still faces a security refusal on tax > 10% and, on Solana, live
 mint/freeze authority or an unburned pool.
 
-Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement):
-  hard stop-loss at -${cfg.stopLossPct}%
-${ladder}
-  trailing stop arms at +${cfg.trailArmPct}%, then exits on a ${cfg.trailGivebackPct}% giveback from peak
-  time stop: flat out after ${cfg.timeStopMinutes}m if the position is under +${cfg.timeStopMinPnlPct}%
+${exitPlan(cfg)}
 
 Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your conviction, max ${cfg.maxOpenPositions} open at once.
 
@@ -336,7 +454,7 @@ OUTPUT
 
 Reply with raw JSON only. No prose, no markdown fences.
 {
-  "entries": [{"address":"...","symbol":"...","conviction":0-100,"sizeMultiplier":0.5-1.5,"stopLossPct":10-60,"thesis":"one or two sentences of concrete reasoning"}],
+  "entries": [{"address":"...","symbol":"...","conviction":0-100,"sizeMultiplier":0.5-1.5,"stopLossPct":10-60,${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl|ttp|tsl","at":<%>,"dd":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}],
   "exits":   [{"address":"...","percent":1-100,"reason":"what changed"}],
   "notes":   "one line on the market read this cycle"
 }

@@ -4,6 +4,15 @@ export type Chain = "sol" | "bsc" | "base" | "eth";
 export type Mode = "paper" | "live";
 export type RunState = "stopped" | "running" | "halted";
 
+/**
+ * One row of the dashboard's exit builder.
+ *   tp  — sell `sell`% once PnL reaches `at`%
+ *   sl  — sell `sell`% once PnL falls to `at`% (negative)
+ *   ttp — arm at `at`% PnL, then sell `sell`% on a `dd`% giveback from peak
+ *   tsl — sell `sell`% on a `dd`% giveback from peak, armed from entry
+ */
+export type StrategyRule = { kind: "tp" | "sl" | "ttp" | "tsl"; at?: number; dd?: number; sell: number };
+
 /** Everything the dashboard can change. Persisted to data/config.json. */
 export type TradeConfig = {
   chain: Chain;
@@ -21,6 +30,10 @@ export type TradeConfig = {
   maxOpenPositions: number;
   /** Stop trading for the day once realised+unrealised loss exceeds this %. */
   maxDailyLossPct: number;
+  /** On = exit by `strategy` below instead of the stop/trail/ladder fields. UI only for now. */
+  fixedStrategy: boolean;
+  /** Operator-built exit rules from the dashboard. Nothing reads these yet. */
+  strategy: StrategyRule[];
   /** Hard stop-loss per position, %. */
   stopLossPct: number;
   /** Ladder: sell `sell`% of the original size once PnL reaches `at`%. */
@@ -101,6 +114,12 @@ export type Position = {
   peakPrice: number;
   /** USD already taken off the table via partial exits. */
   realisedUsd: number;
+  /**
+   * The exit plan this position runs on, snapshotted at entry — the operator's rows in
+   * fixed mode, the analyst's in dynamic mode. Empty falls back to the config's
+   * stop / trail / ladder. Indexes into it are what `filledRungs` holds.
+   */
+  strategy?: StrategyRule[];
   /** Take-profit rungs already filled, by index. */
   filledRungs: number[];
   trailArmed: boolean;
@@ -189,6 +208,8 @@ export type Decision = {
     conviction: number;
     sizeMultiplier?: number;
     stopLossPct?: number;
+    /** Dynamic mode only — the exit plan the model wants for this position. */
+    strategy?: StrategyRule[];
     thesis: string;
   }[];
   exits: { address: string; percent: number; reason: string }[];

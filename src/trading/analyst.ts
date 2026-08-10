@@ -1,7 +1,7 @@
 import { runAgent, type Tool } from "../agent/llm.ts";
 import { loadSkills, skillIndex, skillTool } from "../agent/skills.ts";
 import { tools as allTools } from "../agent/tools.ts";
-import { pnlPct, systemPrompt, userPromptBlock } from "./plan.ts";
+import { describeRule, pnlPct, systemPrompt, userPromptBlock } from "./plan.ts";
 import { store } from "./store.ts";
 import type { Candidate, Decision } from "./types.ts";
 
@@ -91,6 +91,9 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
     age_minutes: Math.round((Date.now() - p.openedAt) / 60_000),
     size_usd: Number((p.qty * p.lastPrice).toFixed(2)),
     rungs_filled: p.filledRungs.length,
+    // The plan this one is actually running on — it was written for this token, and may
+    // look nothing like the next row's.
+    exit_plan: (p.strategy ?? []).map((r, i) => (p.filledRungs.includes(i) ? `[filled] ${describeRule(r)}` : describeRule(r))),
     thesis: p.thesis,
   }));
 

@@ -179,12 +179,17 @@ function fillForm(c, s) {
     const el = $(id);
     if (el && document.activeElement !== el) el.value = v;
   };
+  $("in-fixed").checked = c.fixedStrategy !== false;
+  applyFixed();
+  // Don't rebuild the rule rows under the operator's cursor — only when they actually changed.
+  const incoming = JSON.stringify(c.strategy ?? []);
+  if (incoming !== JSON.stringify(rules)) {
+    rules = JSON.parse(incoming);
+    renderRules();
+  }
   set("in-risk", c.riskPerTradePct);
   set("in-maxpos", c.maxOpenPositions);
-  set("in-stop", c.stopLossPct);
   set("in-daily", c.maxDailyLossPct);
-  set("in-trailarm", c.trailArmPct);
-  set("in-trailgive", c.trailGivebackPct);
   set("in-timestop", c.timeStopMinutes);
   set("in-cooldown", c.cooldownMinutes);
   set("in-minpos", c.minPositionUsd);
@@ -197,8 +202,6 @@ function fillForm(c, s) {
   set("in-slip", c.slippagePct);
   set("in-bankroll", c.paperStartEquityUsd);
   set("in-wallet", c.walletAddress);
-
-  $("lbl-ladder").textContent = c.takeProfit.map((r) => `sell ${r.sell}% at +${r.at}%`).join(", ");
 
   // Make the floor visible before it silently eats every candidate.
   $("lbl-fee-unit").textContent = NATIVE_SYMBOL[c.chain] ?? "";
@@ -223,8 +226,17 @@ function renderPositions(s) {
       const pl = p.entryPrice > 0 ? ((p.lastPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
       const value = p.qty * p.lastPrice;
       const peak = p.entryPrice > 0 ? ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
+      // A position carries the exit plan it was opened with, so show that plan rather than a
+      // rung count: with the analyst writing one per token, no two rows need be alike.
+      const plan = (p.strategy ?? [])
+        .map((r, i) => {
+          const done = p.filledRungs.includes(i);
+          return `<span class="pill${done ? " pill-done" : ""}" title="${esc(ruleTitle(r))}">${esc(ruleLabel(r))}</span>`;
+        })
+        .join("");
       const rungs = p.filledRungs.length ? `<span class="pill">${p.filledRungs.length} rung${p.filledRungs.length > 1 ? "s" : ""}</span>` : "";
       const trail = p.trailArmed ? `<span class="pill pill-armed">trailing</span>` : "";
+      const state = plan || `${trail}${rungs || (trail ? "" : `<span class="pill">holding</span>`)}`;
       return `<tr>
         <td class="sym"><a class="linkish" href="${esc(tokenUrl(p.chain, p.address))}" target="_blank" rel="noopener">${esc(p.symbol)}</a>
           <small title="${esc(p.thesis)}">${esc(p.thesis).slice(0, 46)}${p.thesis.length > 46 ? "…" : ""}</small></td>
@@ -234,12 +246,28 @@ function renderPositions(s) {
         <td class="r ${tone(pl)}">${pct(pl)}</td>
         <td class="r muted">${pct(peak)}</td>
         <td class="r muted">${dur(Date.now() - p.openedAt)}</td>
-        <td>${trail}${rungs || (trail ? "" : `<span class="pill">holding</span>`)}</td>
+        <td class="plan">${state}</td>
         <td class="r"><button class="btn btn-quiet" data-close="${p.id}">Close</button></td>
       </tr>`;
     })
     .join("");
 }
+
+const ruleLabel = (r) =>
+  ({
+    tp: `TP +${r.at}% · ${r.sell}%`,
+    sl: `SL ${r.at}% · ${r.sell}%`,
+    ttp: `TTP +${r.at}% ↘${r.dd}% · ${r.sell}%`,
+    tsl: `TSL ↘${r.dd}% · ${r.sell}%`,
+  })[r.kind] ?? r.kind;
+
+const ruleTitle = (r) =>
+  ({
+    tp: `take profit — sell ${r.sell}% of the original size at +${r.at}%`,
+    sl: `stop loss — sell ${r.sell}% at ${r.at}%`,
+    ttp: `trailing take profit — arms at +${r.at}%, sells ${r.sell}% on a ${r.dd}% giveback from peak`,
+    tsl: `trailing stop loss — sells ${r.sell}% on a ${r.dd}% giveback from peak`,
+  })[r.kind] ?? "";
 
 function renderCandidates(s) {
   const rows = s.cycle.lastCandidates || [];
@@ -333,10 +361,9 @@ function collectConfig() {
     prompt: $("in-prompt").value,
     riskPerTradePct: n("in-risk", 4),
     maxOpenPositions: n("in-maxpos", 5),
-    stopLossPct: n("in-stop", 25),
+    fixedStrategy: $("in-fixed").checked,
+    strategy: rules,
     maxDailyLossPct: n("in-daily", 15),
-    trailArmPct: n("in-trailarm", 45),
-    trailGivebackPct: n("in-trailgive", 25),
     timeStopMinutes: n("in-timestop", 180),
     cooldownMinutes: n("in-cooldown", 120),
     minPositionUsd: n("in-minpos", 0),
@@ -412,6 +439,93 @@ $("in-interval").addEventListener("input", (e) => {
   dirty = true;
 });
 $("in-interval").addEventListener("change", save);
+
+// ── exit builder ──────────────────────────────────────────────────────
+// These rows are the exit plan every new position is opened with. Leave the list
+// empty and the engine falls back to the stop / trail / ladder in data/config.json.
+const RULE_FIELDS = {
+  tp: [["at", "TP"], ["sell", "Sell"]],
+  sl: [["at", "SL"], ["sell", "Sell"]],
+  ttp: [["at", "TP"], ["dd", "DD"], ["sell", "Sell"]],
+  tsl: [["dd", "SL DD"], ["sell", "Sell"]],
+};
+const RULE_DEFAULTS = {
+  tp: { kind: "tp", at: 100, sell: 50 },
+  sl: { kind: "sl", at: -50, sell: 100 },
+  ttp: { kind: "ttp", at: 100, dd: 10, sell: 50 },
+  tsl: { kind: "tsl", dd: 20, sell: 100 },
+};
+let rules = [];
+
+function renderRules() {
+  const box = $("rules");
+  box.textContent = "";
+  rules.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "rule";
+    for (const [key, label] of RULE_FIELDS[r.kind] ?? []) {
+      const cell = document.createElement("label");
+      cell.className = "rule-cell";
+      cell.innerHTML = `<span></span><input type="number" step="1" /><i>%</i>`;
+      cell.firstChild.textContent = label;
+      const input = cell.querySelector("input");
+      input.value = r[key];
+      input.addEventListener("input", () => (dirty = true));
+      input.addEventListener("change", () => {
+        r[key] = Number(input.value);
+        save();
+      });
+      row.append(cell);
+    }
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "rule-del";
+    del.title = "remove rule";
+    del.textContent = "🗑";
+    del.addEventListener("click", () => {
+      rules.splice(i, 1);
+      renderRules();
+      save();
+    });
+    row.append(del);
+    box.append(row);
+  });
+
+  // A ladder that never adds up to 100% leaves a stub of every position running forever.
+  const sum = (kinds) => rules.filter((r) => kinds.includes(r.kind)).reduce((t, r) => t + (r.sell || 0), 0);
+  const tp = sum(["tp", "ttp"]);
+  const sl = sum(["sl", "tsl"]);
+  $("e-rules").hidden = rules.length > 0;
+  $("rules-total").textContent = `Sells ${tp}% on the way up, ${sl}% on the way down. 100% each side exits fully.`;
+  $("rules-total").classList.toggle("warn", rules.length > 0 && (tp < 100 || sl < 100));
+}
+
+function applyFixed() {
+  const on = $("in-fixed").checked;
+  $("strategy").hidden = !on;
+  $("hint-dynamic").hidden = on;
+}
+$("in-fixed").addEventListener("change", () => {
+  applyFixed();
+  save();
+});
+
+$("btn-add-rule").addEventListener("click", () => {
+  $("rule-menu").hidden = !$("rule-menu").hidden;
+});
+
+$("rule-menu").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  rules.push({ ...RULE_DEFAULTS[b.dataset.kind] });
+  $("rule-menu").hidden = true;
+  renderRules();
+  save();
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".addwrap")) $("rule-menu").hidden = true;
+});
 
 $("in-prompt").addEventListener("input", () => (dirty = true));
 $("in-prompt").addEventListener("blur", save);

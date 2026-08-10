@@ -3,7 +3,7 @@ import { NATIVE } from "./config.ts";
 import * as gmgn from "./market.ts";
 import { num } from "./market.ts";
 import type { store as Store } from "./store.ts";
-import type { Candidate, Position, TradeConfig, Trade } from "./types.ts";
+import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "./types.ts";
 
 /** GMGN's routing fee, applied to both legs of a paper trade. */
 const FEE_PCT = 1.0;
@@ -31,6 +31,7 @@ export async function buy(
   thesis: string,
   conviction: number,
   stopLossPct: number,
+  strategy: StrategyRule[] = [],
 ): Promise<BuyResult> {
   if (usdAmount < 1) return { error: "size below $1" };
   const now = Date.now();
@@ -57,9 +58,13 @@ export async function buy(
     const amount = toSmallestUnit(usdAmount / nativeUsd, native.decimals);
 
     // Protection is attached to the buy itself, so the position keeps a stop even
-    // if this process dies a second after the fill.
+    // if this process dies a second after the fill. GMGN only understands the two
+    // fixed order types — the trailing rules stay with our own monitor loop.
+    const rungs = strategy.length
+      ? strategy.filter((r) => r.kind === "tp").map((r) => ({ at: r.at ?? 0, sell: r.sell }))
+      : cfg.takeProfit;
     const conditionOrders = [
-      ...cfg.takeProfit.map((r) => ({
+      ...rungs.map((r) => ({
         order_type: "profit_stop",
         side: "sell",
         price_scale: String(r.at),
@@ -110,6 +115,7 @@ export async function buy(
     lastPrice: fillPrice,
     peakPrice: fillPrice,
     realisedUsd: 0,
+    ...(strategy.length ? { strategy } : {}),
     filledRungs: [],
     trailArmed: false,
     thesis,

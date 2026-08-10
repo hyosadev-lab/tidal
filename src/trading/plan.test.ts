@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig } from "./config.ts";
 import {
   buyableSet,
+  entryStrategy,
   evaluateExit,
   healthExit,
   positionSize,
@@ -15,7 +16,7 @@ import {
 import { extractJson, _internals as analyst } from "./analyst.ts";
 import { trenchesFilters } from "./market.ts";
 import { candidate, position } from "./fixtures.ts";
-import type { Candidate, TradeConfig } from "./types.ts";
+import type { Candidate, StrategyRule, TradeConfig } from "./types.ts";
 
 // Pure: no network, no engine, no shared store. Everything stateful or live lives in
 // engine.test.ts. This is where the trading plan's own rules are pinned.
@@ -234,6 +235,77 @@ test("the time stop closes dead money but spares a winner", () => {
   const old = Date.now() - (cfg.timeStopMinutes + 10) * 60_000;
   assert.equal(evaluateExit(position({ openedAt: old, lastPrice: 0.00101 }), cfg)?.kind, "time");
   assert.equal(evaluateExit(position({ openedAt: old, lastPrice: 0.00109 }), cfg), null);
+});
+
+// ── rule-set exits (Fixed trading strategy / the analyst's own plan) ──
+
+const RULES: StrategyRule[] = [
+  { kind: "sl", at: -30, sell: 100 },
+  { kind: "tp", at: 60, sell: 40 },
+  { kind: "tp", at: 400, sell: 20 },
+  { kind: "ttp", at: 100, dd: 25, sell: 50 },
+];
+
+test("a position with rules ignores the config stop and ladder", () => {
+  // -26%: past the config's -25% stop, inside the rule set's -30% one.
+  assert.equal(evaluateExit(position({ strategy: RULES, lastPrice: 0.00074 }), cfg), null);
+  const e = evaluateExit(position({ strategy: RULES, lastPrice: 0.0006 }), cfg);
+  assert.equal(e?.kind, "rule0");
+  assert.equal(e?.percent, 100);
+});
+
+test("the highest take-profit rule a spike reaches wins", () => {
+  const e = evaluateExit(position({ strategy: RULES, lastPrice: 0.005, peakPrice: 0.005 }), cfg);
+  assert.equal(e?.kind, "rule2");
+  assert.equal(e?.percent, 20);
+});
+
+test("a trailing take-profit rule needs both the arm and the giveback", () => {
+  // Peak +150% so the ttp is armed, but only 10% off it. The +60% rung is already filled.
+  const held = { strategy: RULES, peakPrice: 0.0025, filledRungs: [1] };
+  assert.equal(evaluateExit(position({ ...held, lastPrice: 0.00225 }), cfg), null);
+  const e = evaluateExit(position({ ...held, lastPrice: 0.0018 }), cfg);
+  assert.equal(e?.kind, "rule3");
+  assert.equal(e?.percent, 50);
+});
+
+test("a filled rule is not sold twice", () => {
+  const p = position({ strategy: RULES, lastPrice: 0.0016, peakPrice: 0.0016, filledRungs: [1] });
+  assert.equal(evaluateExit(p, cfg), null);
+});
+
+test("the time stop still applies to a rule set", () => {
+  const old = Date.now() - (cfg.timeStopMinutes + 10) * 60_000;
+  assert.equal(evaluateExit(position({ strategy: RULES, openedAt: old, lastPrice: 0.00101 }), cfg)?.kind, "time");
+});
+
+test("the model may shape the exit plan but not outrun the stop", () => {
+  const dyn = { ...cfg, fixedStrategy: false, stopLossPct: 25 };
+  const out = entryStrategy(dyn, [
+    { kind: "sl", at: -80, sell: 100 },
+    { kind: "tp", at: 90, sell: 60 },
+  ]);
+  assert.deepEqual(out[0], { kind: "sl", at: -25, sell: 100 });
+  assert.equal(out.length, 2);
+});
+
+test("a plan with no stop gets one, and an unusable plan falls back to the config", () => {
+  const dyn = { ...cfg, fixedStrategy: false };
+  const added = entryStrategy(dyn, [{ kind: "tp", at: 90, sell: 100 }]);
+  assert.equal(added.length, 2);
+  assert.deepEqual(added[1], { kind: "sl", at: -cfg.stopLossPct, sell: 100 });
+  // Nothing salvageable → no rules → evaluateExit uses the config stop/ladder/trail.
+  assert.deepEqual(entryStrategy(dyn, [{ kind: "please sell", at: 5 }]), []);
+  assert.deepEqual(entryStrategy(dyn, "sell everything"), []);
+});
+
+test("fixed mode ignores whatever the model proposes", () => {
+  const fixed = { ...cfg, fixedStrategy: true, strategy: [{ kind: "tp" as const, at: 50, sell: 100 }] };
+  const out = entryStrategy(fixed, [{ kind: "tp", at: 999, sell: 1 }]);
+  assert.deepEqual(out, [
+    { kind: "tp", at: 50, sell: 100 },
+    { kind: "sl", at: -cfg.stopLossPct, sell: 100 },
+  ]);
 });
 
 test("drained liquidity forces an exit", () => {

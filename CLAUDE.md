@@ -66,10 +66,19 @@ against a separate analyst tool set; both went when the analyst moved onto the s
 
 ### The central split (`src/trading/plan.ts` header states it; respect it)
 
-**Gates, sizing, and exits are deterministic code. The model only ranks and writes theses.**
+**Gates, sizing, and exit *execution* are deterministic code. The model only ranks, writes theses,
+and — in dynamic mode — proposes the shape of an exit plan.**
 A position must never depend on an LLM call succeeding in order to be closed. The model can veto a
 trade or request an early exit; it can never widen a risk limit. When adding features, keep new
 risk logic in `plan.ts`/`config.ts` — not in prompts.
+
+`cfg.fixedStrategy` picks who writes the plan. On: the operator's rows from the dashboard's exit
+builder (`cfg.strategy`). Off: the analyst returns a `strategy` array per entry. Either way the
+rules are snapshotted onto `Position.strategy` at entry by `entryStrategy` and run by
+`evaluateExit` every monitor tick with no further model involvement — a proposal is clamped by
+`sanitizeStrategy`, can't put a stop deeper than `cfg.stopLossPct`, gets a stop appended if it
+omits one, and falls back to the config's stop/trail/ladder if it is unusable. An empty
+`Position.strategy` is that legacy path.
 
 ### `src/trading/` layering (import order, roughly)
 
