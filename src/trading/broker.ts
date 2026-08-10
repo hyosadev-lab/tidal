@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { NATIVE } from "./config.ts";
+import { NATIVE, slippage } from "./config.ts";
 import * as gmgn from "./market.ts";
 import { num } from "./market.ts";
 import type { store as Store } from "./store.ts";
@@ -45,7 +45,7 @@ export async function buy(
   let strategyOrderId: string | undefined;
 
   if (cfg.mode === "paper") {
-    const slip = paperSlip(usdAmount, c.liquidityUsd, cfg.slippagePct);
+    const slip = paperSlip(usdAmount, c.liquidityUsd, slippage(cfg));
     fillPrice = c.priceUsd * (1 + slip / 100);
     const net = usdAmount * (1 - FEE_PCT / 100);
     qty = net / fillPrice;
@@ -80,7 +80,7 @@ export async function buy(
       outputToken: c.address,
       amount,
       slippage: cfg.slippagePct,
-      autoSlippage: cfg.slippageAuto,
+      autoSlippage: cfg.slippagePct === 0,
       antiMev: true,
       conditionOrders,
       sellRatioType: "hold_amount",
@@ -168,7 +168,7 @@ export async function sell(
 
   if (cfg.mode === "paper") {
     const gross = qtySold * p.lastPrice;
-    const slip = paperSlip(gross, liquidityUsd || gross * 20, cfg.slippagePct);
+    const slip = paperSlip(gross, liquidityUsd || gross * 20, slippage(cfg));
     fillPrice = p.lastPrice * (1 - slip / 100);
     proceeds = qtySold * fillPrice * (1 - FEE_PCT / 100);
     store.cash += proceeds;
@@ -182,7 +182,7 @@ export async function sell(
       outputToken: NATIVE[cfg.chain].address,
       percent: pctOfBalance,
       slippage: cfg.slippagePct,
-      autoSlippage: cfg.slippageAuto,
+      autoSlippage: cfg.slippagePct === 0,
       antiMev: true,
     });
     orderId = res.order_id;

@@ -23,6 +23,12 @@ export const NATIVE: Record<Chain, { symbol: string; address: string; decimals: 
  */
 export const MIN_POSITION_USD: Record<Chain, number> = { sol: 3, bsc: 5, base: 5, eth: 25 };
 
+/**
+ * Cap on the simulated price impact of a paper fill when slippage is on auto. Live swaps ask
+ * GMGN to pick per route; paper has no route to ask about, so it needs a number.
+ */
+export const AUTO_SLIPPAGE_CAP = 20;
+
 /** Native units kept aside for gas. Without this, a full deployment cannot pay to exit. */
 export const GAS_RESERVE: Record<Chain, number> = { sol: 0.02, bsc: 0.004, base: 0.0015, eth: 0.004 };
 
@@ -146,7 +152,6 @@ export const DEFAULT_CONFIG: TradeConfig = {
 
   refine: {},
   slippagePct: 20,
-  slippageAuto: false,
 
   minPositionUsd: 0,
   gasReserveNative: 0,
@@ -156,6 +161,8 @@ export const DEFAULT_CONFIG: TradeConfig = {
 
 export const minPosition = (cfg: TradeConfig): number => cfg.minPositionUsd || MIN_POSITION_USD[cfg.chain];
 export const gasReserve = (cfg: TradeConfig): number => cfg.gasReserveNative || GAS_RESERVE[cfg.chain];
+/** Paper's impact cap. Live reads `slippagePct === 0` directly — that is the auto flag. */
+export const slippage = (cfg: TradeConfig): number => cfg.slippagePct || AUTO_SLIPPAGE_CAP;
 
 const CONFIG_PATH = join(DATA_DIR, "config.json");
 
@@ -231,8 +238,8 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
 
     // The gate thresholds are not here — see SKIP. These only narrow the feed queries.
     refine: sanitizeRefine(input.refine),
-    slippagePct: Math.round(clamp(input.slippagePct, 1, 100, base.slippagePct)),
-    slippageAuto: typeof input.slippageAuto === "boolean" ? input.slippageAuto : base.slippageAuto,
+    // 0 is not a tolerance, it is the auto flag — same convention as the two fields below.
+    slippagePct: Math.round(clamp(input.slippagePct, 0, 100, base.slippagePct)),
 
     minPositionUsd: clamp(input.minPositionUsd, 0, 100_000, base.minPositionUsd),
     gasReserveNative: clamp(input.gasReserveNative, 0, 10, base.gasReserveNative),

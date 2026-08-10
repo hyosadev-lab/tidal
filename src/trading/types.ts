@@ -56,9 +56,8 @@ export type TradeConfig = {
    * gates: they narrow what the sweep fetches, they never replace `SKIP`.
    */
   refine: Record<string, number>;
+  /** Swap tolerance, %. 0 = auto: GMGN picks per route, paper uses `AUTO_SLIPPAGE_CAP`. */
   slippagePct: number;
-  /** Let GMGN set the tolerance per route. `slippagePct` then only caps the paper fill. */
-  slippageAuto: boolean;
 
   // ── Wallet / accounting ─────────────────────────────────────────────
   /** Smallest position worth opening, USD. 0 = per-chain default. */

@@ -192,16 +192,16 @@ function fillForm(c, s) {
   set("in-daily", c.maxDailyLossPct);
   set("in-timestop", c.timeStopMinutes);
   set("in-cooldown", c.cooldownMinutes);
-  set("in-minpos", c.minPositionUsd);
-  set("in-gasres", c.gasReserveNative);
+  // 0 means "per-chain default" — show that as an empty box with an `auto` placeholder
+  // rather than a 0 the operator has to decode.
+  set("in-minpos", c.minPositionUsd || "");
+  set("in-gasres", c.gasReserveNative || "");
   for (const k of REFINE)
     for (const side of ["Min", "Max"]) {
       const v = c.refine?.[k + side];
       set(`in-${k}${side}`, v === undefined ? "" : REFINE_K.has(k) ? v / 1000 : v);
     }
-  $("in-slipauto").checked = c.slippageAuto === true;
-  applySlippage();
-  set("in-slip", c.slippagePct);
+  set("in-slip", c.slippagePct || "");
   set("in-bankroll", c.paperStartEquityUsd);
   set("in-wallet", c.walletAddress);
 
@@ -372,7 +372,6 @@ function collectConfig() {
     gasReserveNative: n("in-gasres", 0),
     refine,
     slippagePct: n("in-slip", 20),
-    slippageAuto: $("in-slipauto").checked,
     paperStartEquityUsd: n("in-bankroll", 1000),
     walletAddress: $("in-wallet").value,
   };
@@ -484,7 +483,7 @@ function renderRules() {
     del.type = "button";
     del.className = "rule-del";
     del.title = "remove rule";
-    del.textContent = "🗑";
+    del.textContent = "✕";
     del.addEventListener("click", () => {
       rules.splice(i, 1);
       renderRules();
@@ -498,8 +497,9 @@ function renderRules() {
   const sum = (kinds) => rules.filter((r) => kinds.includes(r.kind)).reduce((t, r) => t + (r.sell || 0), 0);
   const tp = sum(["tp", "ttp"]);
   const sl = sum(["sl", "tsl"]);
-  $("e-rules").hidden = rules.length > 0;
-  $("rules-total").textContent = `Sells ${tp}% on the way up, ${sl}% on the way down. 100% each side exits fully.`;
+  $("rules-total").textContent = rules.length
+    ? `Sells ${tp}% on the way up, ${sl}% on the way down. 100% each side exits fully.`
+    : "No rules yet — every position opens on the stop, trail and ladder in data/config.json.";
   $("rules-total").classList.toggle("warn", rules.length > 0 && (tp < 100 || sl < 100));
 }
 
@@ -510,16 +510,6 @@ function applyFixed() {
 }
 $("in-fixed").addEventListener("change", () => {
   applyFixed();
-  save();
-});
-
-// Auto hands the tolerance to GMGN per route. The number stays live either way — it is
-// still what caps a paper fill — so it is greyed rather than hidden.
-function applySlippage() {
-  $("in-slip").disabled = $("in-slipauto").checked;
-}
-$("in-slipauto").addEventListener("change", () => {
-  applySlippage();
   save();
 });
 

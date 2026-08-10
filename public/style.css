@@ -267,6 +267,8 @@ code { font-family: var(--mono); font-size: .85em; color: var(--haze); }
 .field-k b { color: var(--foam); font-weight: 500; letter-spacing: 0; text-transform: none; }
 
 .hint { display: block; margin-top: 7px; font-size: 11.5px; line-height: 1.45; color: var(--haze); }
+/* `display` beats the UA's [hidden] rule — same trick as .veil and .menu. */
+.hint[hidden] { display: none; }
 .hint b { color: var(--foam); }
 
 .seg { display: flex; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
@@ -354,9 +356,21 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .toggle span { font-size: 11.5px; color: var(--foam); }
 .toggle input { width: auto; accent-color: var(--foam); cursor: pointer; }
 
+/* A section caption inside a fold — four short blocks read better than one wall of boxes. */
+.sect {
+  margin: 16px 0 -2px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--rule-2);
+}
+.fold > .sect:first-of-type { margin-top: 12px; }
+
 /* exit builder */
-.rules { display: grid; gap: 7px; margin: 10px 0 8px; }
-.rule { display: flex; align-items: center; gap: 7px; }
+/* minmax(0,…) or the row sizes to the inputs' max-content and spills out of the rail. */
+.rules { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; margin: 10px 0 8px; }
+.rule { display: flex; align-items: center; gap: 7px; min-width: 0; }
 
 .rule-cell {
   flex: 1;
@@ -382,10 +396,19 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
   font-weight: 500;
 }
 
-.rule-del { appearance: none; background: none; border: 0; padding: 2px; font-size: 13px; line-height: 1; cursor: pointer; filter: grayscale(1); opacity: .55; }
-.rule-del:hover { filter: none; opacity: 1; }
+.rule-del {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--rule-2);
+  cursor: pointer;
+}
+.rule-del:hover { color: var(--ebb); }
 
-.empty-rules { font-size: 11px; color: var(--haze); margin: 8px 0; }
 .hint.warn { color: var(--lamp); }
 
 .addwrap { position: relative; margin-bottom: 4px; }
@@ -423,8 +446,6 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 
 .mini { display: block; }
 .mini input:disabled { opacity: .45; cursor: not-allowed; }
-.inline { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
-.inline input { width: auto; accent-color: var(--flood); margin: 0; cursor: pointer; }
 .mini span { display: block; font-size: 10.5px; color: var(--haze); margin-bottom: 4px; }
 .mini input { padding: 7px 8px; }
 

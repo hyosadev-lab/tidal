@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig } from "./config.ts";
+import {
+  AUTO_SLIPPAGE_CAP,
+  DEFAULT_CONFIG,
+  gasReserve,
+  liveReady,
+  minPosition,
+  refineQuery,
+  sanitizeConfig,
+  slippage,
+} from "./config.ts";
 import {
   buyableSet,
   entryStrategy,
@@ -315,6 +324,19 @@ test("drained liquidity forces an exit", () => {
 });
 
 // ── config safety ─────────────────────────────────────────────────────
+
+test("0 is the auto flag on the three fields that have one, not a real value", () => {
+  const c = sanitizeConfig({ slippagePct: 0, minPositionUsd: 0, gasReserveNative: 0 });
+  assert.equal(c.slippagePct, 0);
+  // Auto still has to produce a usable number for a paper fill and for sizing.
+  assert.equal(slippage(c), AUTO_SLIPPAGE_CAP);
+  assert.equal(minPosition(c), 3);
+  assert.equal(gasReserve(c), 0.02);
+  // A real value is kept, and an out-of-range one is clamped rather than read as auto.
+  assert.equal(sanitizeConfig({ slippagePct: 5 }).slippagePct, 5);
+  assert.equal(sanitizeConfig({ slippagePct: 900 }).slippagePct, 100);
+  assert.equal(sanitizeConfig({ slippagePct: -3 }).slippagePct, 0);
+});
 
 test("out-of-range config is clamped rather than trusted", () => {
   const c = sanitizeConfig({ riskPerTradePct: 900, intervalMinutes: 0, stopLossPct: -5, maxOpenPositions: 999 });

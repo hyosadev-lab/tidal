@@ -96,21 +96,16 @@
 
     <details class="fold">
       <summary>Risk envelope</summary>
+      <p class="sect">Exit plan</p>
       <label class="toggle"><input type="checkbox" id="in-fixed" /><span>Fixed trading strategy</span></label>
-      <p class="hint" id="hint-dynamic" hidden>Off: the analyst writes the exit plan for each
-        position itself — the same TP / SL / TTP / TSL rules, chosen per token and then run
-        mechanically. It cannot go past <code>stopLossPct</code> in <code>data/config.json</code>,
-        and a plan without a stop gets one there. An unusable plan falls back to that file's
-        stop, trail and ladder.</p>
+      <p class="hint" id="hint-dynamic" hidden>The analyst writes one per token instead — same
+        rules, chosen per entry, then run mechanically. It cannot set a stop deeper than
+        <code>stopLossPct</code>, and a plan without one gets it appended.</p>
       <div id="strategy" hidden>
-        <p class="hint">Exit rules, applied to every position in order. Sell % is a share of the
-          original size. Losses and trailing rules are checked first, then the highest take-profit
-          reached. A hard stop at <code>stopLossPct</code> is appended if you leave one out.</p>
         <div class="rules" id="rules"></div>
-        <p class="empty-rules" id="e-rules">No rules yet.</p>
         <p class="hint" id="rules-total">—</p>
         <div class="addwrap">
-          <button class="btn btn-quiet" type="button" id="btn-add-rule">+ Add</button>
+          <button class="btn btn-quiet" type="button" id="btn-add-rule">+ Add rule</button>
           <div class="menu" id="rule-menu" hidden>
             <button type="button" data-kind="tp">↑ Take Profit</button>
             <button type="button" data-kind="sl">↓ Stop Loss</button>
@@ -119,17 +114,28 @@
           </div>
         </div>
       </div>
+
+      <p class="sect">Position sizing</p>
       <div class="grid2">
         <label class="mini"><span>Risk per trade %</span><input type="number" id="in-risk" min="0.5" max="25" step="0.5" /></label>
         <label class="mini"><span>Max open</span><input type="number" id="in-maxpos" min="1" max="20" step="1" /></label>
+        <label class="mini"><span>Min position $</span><input type="number" id="in-minpos" min="0" step="1" placeholder="auto" /></label>
+        <label class="mini"><span>Paper bankroll $</span><input type="number" id="in-bankroll" min="10" step="100" /></label>
+      </div>
+
+      <p class="sect">Loss limits</p>
+      <div class="grid2">
         <label class="mini"><span>Daily loss cap %</span><input type="number" id="in-daily" min="1" max="90" step="1" /></label>
         <label class="mini"><span>Time stop (min)</span><input type="number" id="in-timestop" min="5" max="1440" step="5" /></label>
         <label class="mini"><span>Cooldown (min)</span><input type="number" id="in-cooldown" min="0" max="1440" step="5" /></label>
-        <label class="mini"><span>Min position $ <span class="muted">0 = auto</span></span><input type="number" id="in-minpos" min="0" step="1" /></label>
-        <label class="mini"><span>Gas reserve <span class="muted">0 = auto</span></span><input type="number" id="in-gasres" min="0" step="0.001" /></label>
-        <div class="mini"><span>Slippage % <label class="inline"><input type="checkbox" id="in-slipauto" />auto</label></span><input type="number" id="in-slip" min="1" max="100" step="1" /></div>
-        <label class="mini"><span>Paper bankroll $</span><input type="number" id="in-bankroll" min="10" step="100" /></label>
       </div>
+
+      <p class="sect">Execution</p>
+      <div class="grid2">
+        <label class="mini"><span>Slippage %</span><input type="number" id="in-slip" min="0" max="100" step="1" placeholder="auto" /></label>
+        <label class="mini"><span>Gas reserve</span><input type="number" id="in-gasres" min="0" step="0.001" placeholder="auto" /></label>
+      </div>
+
       <p class="hint">Largest position these settings allow: <b id="lbl-ceiling">—</b>. Anything under the <b id="lbl-floor">—</b> floor is skipped, because fees and slippage would outweigh the trade.</p>
     </details>
 
