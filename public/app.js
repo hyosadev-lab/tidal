@@ -377,10 +377,31 @@ function collectConfig() {
   };
 }
 
+// Every input saves itself on `change`, so there is no Save button — this line is the
+// only thing telling the operator that happened. A failed save keeps `dirty` set, so the
+// next tick of state cannot quietly overwrite the edit that did not land.
+function saveState(text, failed = false) {
+  const el = $("save-state");
+  el.textContent = text;
+  el.classList.toggle("err", failed);
+}
+
 async function save() {
-  const r = await post("/api/config", collectConfig());
+  saveState("saving…");
+  let r;
+  try {
+    r = await post("/api/config", collectConfig());
+  } catch {
+    saveState("not saved — server unreachable", true);
+    return;
+  }
+  if (!r.config) {
+    saveState("not saved", true);
+    return;
+  }
   dirty = false;
-  if (r.config) fillForm(r.config, state ?? { liveReady: false });
+  fillForm(r.config, state ?? { liveReady: false });
+  saveState(`saved ${clock(Date.now())}`);
 }
 
 // ── wiring ────────────────────────────────────────────────────────────
@@ -552,7 +573,6 @@ $("btn-run").addEventListener("click", async () => {
   else await post("/api/start", { config: collectConfig() });
 });
 
-$("btn-save").addEventListener("click", save);
 $("btn-scan").addEventListener("click", () => post("/api/scan"));
 
 $("btn-reset").addEventListener("click", () => {

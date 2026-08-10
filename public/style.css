@@ -465,7 +465,10 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .mini span { display: block; font-size: 10.5px; color: var(--haze); margin-bottom: 4px; }
 .mini input { padding: 7px 8px; }
 
-.rail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--rule); }
+.rail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--rule); }
+
+.save-state { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--rule-2); }
+.save-state.err { color: var(--ebb); }
 
 .btn {
   appearance: none;
