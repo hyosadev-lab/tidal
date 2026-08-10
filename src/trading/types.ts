@@ -30,9 +30,9 @@ export type TradeConfig = {
   maxOpenPositions: number;
   /** Stop trading for the day once realised+unrealised loss exceeds this %. */
   maxDailyLossPct: number;
-  /** On = exit by `strategy` below instead of the stop/trail/ladder fields. UI only for now. */
+  /** On = every position opens on `strategy`. Off = the analyst writes one per entry. */
   fixedStrategy: boolean;
-  /** Operator-built exit rules from the dashboard. Nothing reads these yet. */
+  /** The operator's exit rules, snapshotted onto a position at entry. Empty = the legacy fields. */
   strategy: StrategyRule[];
   /** Hard stop-loss per position, %. */
   stopLossPct: number;
@@ -57,6 +57,8 @@ export type TradeConfig = {
    */
   refine: Record<string, number>;
   slippagePct: number;
+  /** Let GMGN set the tolerance per route. `slippagePct` then only caps the paper fill. */
+  slippageAuto: boolean;
 
   // ── Wallet / accounting ─────────────────────────────────────────────
   /** Smallest position worth opening, USD. 0 = per-chain default. */

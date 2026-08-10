@@ -146,6 +146,7 @@ export const DEFAULT_CONFIG: TradeConfig = {
 
   refine: {},
   slippagePct: 20,
+  slippageAuto: false,
 
   minPositionUsd: 0,
   gasReserveNative: 0,
@@ -231,6 +232,7 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     // The gate thresholds are not here — see SKIP. These only narrow the feed queries.
     refine: sanitizeRefine(input.refine),
     slippagePct: Math.round(clamp(input.slippagePct, 1, 100, base.slippagePct)),
+    slippageAuto: typeof input.slippageAuto === "boolean" ? input.slippageAuto : base.slippageAuto,
 
     minPositionUsd: clamp(input.minPositionUsd, 0, 100_000, base.minPositionUsd),
     gasReserveNative: clamp(input.gasReserveNative, 0, 10, base.gasReserveNative),

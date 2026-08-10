@@ -422,6 +422,9 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .menu button:hover { background: var(--rule); }
 
 .mini { display: block; }
+.mini input:disabled { opacity: .45; cursor: not-allowed; }
+.inline { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+.inline input { width: auto; accent-color: var(--flood); margin: 0; cursor: pointer; }
 .mini span { display: block; font-size: 10.5px; color: var(--haze); margin-bottom: 4px; }
 .mini input { padding: 7px 8px; }
 

@@ -80,6 +80,7 @@ export async function buy(
       outputToken: c.address,
       amount,
       slippage: cfg.slippagePct,
+      autoSlippage: cfg.slippageAuto,
       antiMev: true,
       conditionOrders,
       sellRatioType: "hold_amount",
@@ -181,6 +182,7 @@ export async function sell(
       outputToken: NATIVE[cfg.chain].address,
       percent: pctOfBalance,
       slippage: cfg.slippagePct,
+      autoSlippage: cfg.slippageAuto,
       antiMev: true,
     });
     orderId = res.order_id;

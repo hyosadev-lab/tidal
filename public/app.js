@@ -199,6 +199,8 @@ function fillForm(c, s) {
       const v = c.refine?.[k + side];
       set(`in-${k}${side}`, v === undefined ? "" : REFINE_K.has(k) ? v / 1000 : v);
     }
+  $("in-slipauto").checked = c.slippageAuto === true;
+  applySlippage();
   set("in-slip", c.slippagePct);
   set("in-bankroll", c.paperStartEquityUsd);
   set("in-wallet", c.walletAddress);
@@ -370,6 +372,7 @@ function collectConfig() {
     gasReserveNative: n("in-gasres", 0),
     refine,
     slippagePct: n("in-slip", 20),
+    slippageAuto: $("in-slipauto").checked,
     paperStartEquityUsd: n("in-bankroll", 1000),
     walletAddress: $("in-wallet").value,
   };
@@ -507,6 +510,16 @@ function applyFixed() {
 }
 $("in-fixed").addEventListener("change", () => {
   applyFixed();
+  save();
+});
+
+// Auto hands the tolerance to GMGN per route. The number stays live either way — it is
+// still what caps a paper fill — so it is greyed rather than hidden.
+function applySlippage() {
+  $("in-slip").disabled = $("in-slipauto").checked;
+}
+$("in-slipauto").addEventListener("change", () => {
+  applySlippage();
   save();
 });
 

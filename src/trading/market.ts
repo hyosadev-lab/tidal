@@ -208,6 +208,8 @@ export type SwapArgs = {
   /** Percent of balance — only valid when the input token is NOT a currency. */
   percent?: number;
   slippage: number;
+  /** Let GMGN pick the tolerance per route instead of sending `slippage`. */
+  autoSlippage?: boolean;
   antiMev?: boolean;
   conditionOrders?: unknown[];
   sellRatioType?: "buy_amount" | "hold_amount";
@@ -233,7 +235,8 @@ export async function swap(a: SwapArgs): Promise<SwapResult> {
     output_token: a.outputToken,
     // With a percent sell the amount field is a placeholder; bps carries the real size.
     input_amount: a.amount ?? "0",
-    slippage: a.slippage,
+    // Both fields at once is ambiguous, so it is one or the other.
+    ...(a.autoSlippage ? { auto_slippage: true } : { slippage: a.slippage }),
   };
   if (a.percent != null) params.input_amount_bps = String(Math.round(a.percent * 100));
   if (a.antiMev && a.chain !== "base") params.is_anti_mev = true;
