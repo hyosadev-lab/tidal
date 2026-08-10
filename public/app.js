@@ -70,17 +70,23 @@ function drawTide(points, stats) {
     return;
   }
 
-  const series = points.length === 1 ? [points[0], points[0]] : points;
+  // The stored series is throttled to one point a minute and stops entirely while nothing
+  // is open, so the curve ends at a live reading — otherwise the dot lags the big number.
+  const series = [...points, { at: Date.now(), equity: stats.equity }];
   const vals = series.map((p) => p.equity);
-  const hi = Math.max(...vals, stats.peakEquity || 0);
-  const lo = Math.min(...vals, stats.troughEquity || Infinity);
+  // Only what is plotted: peak/trough are all-time and survive the history trim, so drawing
+  // the water lines from them floats them above a curve that never reached there.
+  const hi = Math.max(...vals);
+  const lo = Math.min(...vals);
   const range = hi - lo || Math.max(1, hi * 0.02);
   const top = hi + range * 0.18;
   const bottom = lo - range * 0.12;
   const y = (v) => pad + (1 - (v - bottom) / (top - bottom)) * (H - pad * 2);
-  const x = (i) => (i / (series.length - 1)) * W;
+  const t0 = series[0].at;
+  const span = series[series.length - 1].at - t0 || 1;
+  const x = (p) => ((p.at - t0) / span) * W;
 
-  const line = series.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.equity).toFixed(1)}`).join("");
+  const line = series.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p.equity).toFixed(1)}`).join("");
   const area = `${line}L${W},${H}L0,${H}Z`;
   const rising = vals[vals.length - 1] >= vals[0];
   const stroke = rising ? "var(--flood)" : "var(--ebb)";
@@ -101,8 +107,7 @@ function drawTide(points, stats) {
 
   $("mk-high").textContent = usd(hi);
   $("mk-low").textContent = usd(lo);
-  const first = series[0].at;
-  $("mk-span").textContent = `${series.length} soundings over ${dur(Date.now() - first)}`;
+  $("mk-span").textContent = `${points.length} soundings over ${dur(Date.now() - t0)}`;
 }
 
 // ── render ────────────────────────────────────────────────────────────
