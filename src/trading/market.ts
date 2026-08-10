@@ -165,50 +165,25 @@ export async function nativeUsdPrice(chain: Chain): Promise<number> {
   return num(r["native_token_usd_price"] ?? r["nativeTokenUsdPrice"]);
 }
 
+export const NATIVE_SYMBOL: Record<string, string> = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
+
 /**
  * Native balance of the API-key-bound wallet, in whole units (SOL / BNB / ETH).
  *
- * `/v1/user/info` returns the key's wallets and their main-currency balances, but the
- * field names are not documented, so this walks the response looking for the matching
- * wallet and a balance-shaped number. Returns null rather than a guess — sizing a real
- * trade off an invented balance is worse than not trading.
+ * `/v1/user/info` returns `{wallets: [{chain, address, balances: [{symbol, balance}]}]}` —
+ * one entry per chain the key is bound to. Returns null when the wallet or its native row
+ * is absent rather than a guess: sizing a real trade off an invented balance is worse than
+ * not trading.
  */
 export async function nativeBalance(chain: Chain, wallet: string): Promise<number | null> {
-  const r = await client().getUserInfo();
   const target = wallet.trim().toLowerCase();
-
-  const balanceOf = (o: Record<string, any>): number | null => {
-    for (const k of ["balance", "native_balance", "sol_balance", "amount", "available_balance"]) {
-      const v = num(o[k], -1);
-      if (v >= 0) return v;
-    }
-    return null;
-  };
-
-  const walk = (node: unknown, depth = 0): number | null => {
-    if (depth > 5 || !node || typeof node !== "object") return null;
-    if (Array.isArray(node)) {
-      for (const item of node) {
-        const hit = walk(item, depth + 1);
-        if (hit !== null) return hit;
-      }
-      return null;
-    }
-    const o = node as Record<string, any>;
-    const addr = String(o.address ?? o.wallet ?? o.wallet_address ?? "").toLowerCase();
-    const nodeChain = String(o.chain ?? "").toLowerCase();
-    if (addr === target && (!nodeChain || nodeChain === chain)) {
-      const b = balanceOf(o);
-      if (b !== null) return b;
-    }
-    for (const v of Object.values(o)) {
-      const hit = walk(v, depth + 1);
-      if (hit !== null) return hit;
-    }
-    return null;
-  };
-
-  return walk(r);
+  const w = list(await client().getUserInfo(), "wallets").find(
+    (x) => String(x?.address ?? "").toLowerCase() === target && String(x?.chain ?? "").toLowerCase() === chain,
+  );
+  const row = list(w, "balances").find((b) => String(b?.symbol ?? "").toUpperCase() === NATIVE_SYMBOL[chain]);
+  if (!row) return null;
+  const bal = num(row.balance, -1);
+  return bal >= 0 ? bal : null;
 }
 
 // ── execution routes ──────────────────────────────────────────────────

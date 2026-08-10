@@ -2,7 +2,7 @@ import { askAnalyst } from "./analyst.ts";
 import { SKIP, gasReserve, liveReady, minPosition, refineQuery } from "./config.ts";
 import * as broker from "./broker.ts";
 import * as gmgn from "./market.ts";
-import { num } from "./market.ts";
+import { NATIVE_SYMBOL, num } from "./market.ts";
 import {
   buyableSet,
   evaluateExit,
@@ -116,8 +116,6 @@ async function syncLiveBalance(): Promise<boolean> {
     return false;
   }
 }
-
-const NATIVE_SYMBOL: Record<string, string> = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
 
 async function runScan(): Promise<void> {
   if (scanning) return;
