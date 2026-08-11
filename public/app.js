@@ -273,7 +273,7 @@ const ruleTitle = (r) =>
     tp: `take profit — sell ${r.sell}% of the original size at +${r.at}%`,
     sl: `stop loss — sell ${r.sell}% at ${r.at}%`,
     ttp: `trailing take profit — arms at +${r.at}%, sells ${r.sell}% on a ${r.dd}% giveback from peak`,
-    tsl: `trailing stop loss — sells ${r.sell}% on a ${r.dd}% giveback from peak`,
+    tsl: `trailing stop loss — once in profit, sells ${r.sell}% on a ${r.dd}% giveback from peak. Below break-even the stop loss owns the position`,
   })[r.kind] ?? "";
 
 function renderCandidates(s) {

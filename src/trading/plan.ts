@@ -285,6 +285,7 @@ function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | n
  * The rule-set exits. Losses first, then the highest take-profit reached, so a spike
  * between two ticks fills the top rung rather than the bottom one. Arming is derived
  * from `peakPrice` rather than latched, so several trailing rules can coexist.
+ * Trailing rules never fire underwater — that half of the range is the stop loss's.
  */
 function ruleExit(p: Position, pnlPct: number): ExitSignal | null {
   const rules = p.strategy ?? [];
@@ -298,8 +299,11 @@ function ruleExit(p: Position, pnlPct: number): ExitSignal | null {
     if (!live(i)) continue;
     if (r.kind === "sl" && pnlPct <= (r.at ?? 0))
       return sig(i, `stop loss at ${pnlPct.toFixed(1)}%`);
-    if (r.kind === "tsl" && giveback >= (r.dd ?? Infinity))
-      return sig(i, `trailing stop loss — gave back ${giveback.toFixed(1)}% from peak (now ${pnlPct.toFixed(1)}%)`);
+    // A trail only exits in profit: below break-even the position belongs to the stop loss.
+    // Without this a `tsl` shallower than the `sl` fires first on the way down, and the stop
+    // the rest of the plan was written around is unreachable.
+    if (r.kind === "tsl" && pnlPct > 0 && giveback >= (r.dd ?? Infinity))
+      return sig(i, `trailing stop loss — gave back ${giveback.toFixed(1)}% from peak (still +${pnlPct.toFixed(1)}%)`);
     if (r.kind === "ttp" && peakPnl >= (r.at ?? Infinity) && giveback >= (r.dd ?? Infinity))
       return sig(i, `trailing take-profit — armed at +${r.at}%, gave back ${giveback.toFixed(1)}% (still ${pnlPct.toFixed(1)}%)`);
   }
@@ -357,7 +361,7 @@ export function describeRule(r: StrategyRule): string {
   if (r.kind === "tp") return `take profit: sell ${r.sell}% at +${r.at}%`;
   if (r.kind === "sl") return `stop loss: sell ${r.sell}% at ${r.at}%`;
   if (r.kind === "ttp") return `trailing take profit: arm at +${r.at}%, then sell ${r.sell}% on a ${r.dd}% giveback from peak`;
-  return `trailing stop loss: sell ${r.sell}% on a ${r.dd}% giveback from peak`;
+  return `trailing stop loss: once in profit, sell ${r.sell}% on a ${r.dd}% giveback from peak`;
 }
 
 /** The exit half of the brief — it changes shape with `fixedStrategy`. */
@@ -372,8 +376,10 @@ Give every entry a \`strategy\`: an ordered list of rules, each selling a % of t
   {"kind":"tp","at":<pnl % ≥5>,"sell":<1-100>}         sell when PnL reaches +at%
   {"kind":"sl","at":<pnl % -95..-1>,"sell":<1-100>}     sell when PnL falls to at%
   {"kind":"ttp","at":<arm % ≥5>,"dd":<1-90>,"sell":<1-100>}  arm at +at%, sell on a dd% giveback from peak
-  {"kind":"tsl","dd":<1-90>,"sell":<1-100>}             sell on a dd% giveback from peak, live from entry
+  {"kind":"tsl","dd":<1-90>,"sell":<1-100>}             sell on a dd% giveback from peak, in profit only
 
+Trailing rules never fire underwater — the whole downside belongs to \`sl\`, so a \`tsl\` is profit
+protection, not a second stop, and its dd is free to be tighter than the stop without shadowing it.
 Losses and trailing rules are checked before take-profits, and the highest take-profit reached
 wins. Make the take-profits add up to 100% unless you mean to ride a stub, and remember an
 unfilled rung is worth nothing.

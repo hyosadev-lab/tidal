@@ -278,6 +278,21 @@ test("a trailing take-profit rule needs both the arm and the giveback", () => {
   assert.equal(e?.percent, 50);
 });
 
+test("a trailing stop tighter than the stop loss does not shadow it on the way down", () => {
+  // The shape the analyst keeps writing: a -30% stop plus a 15% trail. Live from entry the
+  // trail would fire first on any drop and the stop could never be reached.
+  const rules: StrategyRule[] = [
+    { kind: "sl", at: -30, sell: 100 },
+    { kind: "tsl", dd: 15, sell: 100 },
+  ];
+  // -15%: a full 15% off the peak, but underwater — the stop owns this half of the range.
+  assert.equal(evaluateExit(position({ strategy: rules, lastPrice: 0.00085 }), cfg), null);
+  assert.equal(evaluateExit(position({ strategy: rules, lastPrice: 0.00069 }), cfg)?.kind, "rule0");
+  // +100% then 15% back off the peak: in profit, so the trail is the one that fires.
+  const won = position({ strategy: rules, peakPrice: 0.002, lastPrice: 0.0017 });
+  assert.equal(evaluateExit(won, cfg)?.kind, "rule1");
+});
+
 test("a filled rule is not sold twice", () => {
   const p = position({ strategy: RULES, lastPrice: 0.0016, peakPrice: 0.0016, filledRungs: [1] });
   assert.equal(evaluateExit(p, cfg), null);
