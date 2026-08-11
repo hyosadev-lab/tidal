@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
-    // Environment
-    "lib": ["ESNext"],
+    // Environment setup & latest features
+    "lib": ["ESNext", "DOM"],
     "target": "ESNext",
-    "module": "ESNext",
+    "module": "Preserve",
     "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
 
-    // Node.js module resolution (tsx compatible)
+    // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
@@ -19,11 +21,13 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
 
-    // Relaxed (same as yours)
+    // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
+    "noPropertyAccessFromIndexSignature": false,
+
+    "types": ["node"]
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules"]
+  // Reference clone of the gmgn-cli source — read for endpoint shapes, not built here.
+  "exclude": ["node_modules", "gmgn-skills"]
 }

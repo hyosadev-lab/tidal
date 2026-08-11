@@ -1,146 +1,159 @@
-import { getConfig } from './config.ts';
-import { getDb } from './db/database.ts';
-import { logger } from './utils/logger.ts';
-import { scanFollowedWalletActivity } from './modules/scanner.ts';
-import { enrichAndScore } from './modules/scorer.ts';
-import { buildEntryPrompt } from './modules/ai-decision.ts';
-import { evaluateEntry } from './services/openrouter.ts';
-import { canOpenPosition, executeBuy } from './modules/executor.ts';
-import { checkOpenPositions, printDailySummary } from './modules/position-manager.ts';
-import { insertAiDecision } from './db/queries.ts';
-import { mkdirSync } from 'fs';
-import { sleep } from './utils/retry.ts';
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
+import { join, extname, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
+import { store } from "./trading/store.ts";
+import * as engine from "./trading/engine.ts";
+import { apiReady } from "./trading/market.ts";
+import { liveReady } from "./trading/config.ts";
 
-async function main(): Promise<void> {
-  mkdirSync('logs', { recursive: true });
+const PUBLIC = join(fileURLToPath(new URL("..", import.meta.url)), "public");
+const PORT = Number(process.env.PORT ?? 3111);
+const HOST = process.env.HOST ?? "127.0.0.1";
 
-  const config = getConfig();
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+};
 
-  logger.info('agent_starting', {
-    dryRun: config.dryRun,
-    model: config.openrouterModel,
-    tradeSizeSol: config.tradeSizeSol,
-    maxConcurrentPositions: config.maxConcurrentPositions,
-    minScoreToBuy: config.minScoreToBuy,
-    klineResolution: config.klineResolution,
-    trailingActivatePct: config.trailingActivatePct,
-    trailingDrawdownPct: config.trailingDrawdownPct,
-    stopLossPct: config.stopLossPct,
-    scanIntervalSec: config.scanIntervalSec,
-    positionCheckIntervalSec: config.positionCheckIntervalSec,
-  });
-
-  getDb();
-
-  // Graceful shutdown
-  process.on('SIGINT', () => {
-    logger.info('agent_shutting_down');
-    printDailySummary();
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    logger.info('agent_shutting_down');
-    printDailySummary();
-    process.exit(0);
-  });
-
-  scheduleDailySummary();
-
-  await Promise.all([
-    scanLoop(),
-    positionLoop(),
-  ]);
+function json(res: ServerResponse, code: number, body: unknown): void {
+  const s = JSON.stringify(body);
+  res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  res.end(s);
 }
 
-async function scanLoop(): Promise<void> {
-  const config = getConfig();
-  logger.info('scan_loop_started', { intervalSec: config.scanIntervalSec });
+async function readBody(req: IncomingMessage): Promise<any> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > 256 * 1024) throw new Error("body too large");
+    chunks.push(chunk as Buffer);
+  }
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
 
-  while (true) {
-    try {
-      await scanCycle();
-    } catch (err) {
-      logger.error('scan_cycle_error', { error: String(err) });
-    }
-    await sleep(config.scanIntervalSec * 1000);
+async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> {
+  const rel = normalize(urlPath === "/" ? "/index.html" : urlPath).replace(/^(\.\.[/\\])+/, "");
+  const file = join(PUBLIC, rel);
+  if (!file.startsWith(PUBLIC)) {
+    res.writeHead(403).end("forbidden");
+    return;
+  }
+  try {
+    const buf = await readFile(file);
+    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
+    res.end(buf);
+  } catch {
+    res.writeHead(404, { "content-type": "text/plain" }).end("not found");
   }
 }
 
-async function positionLoop(): Promise<void> {
-  const config = getConfig();
-  logger.info('position_loop_started', { intervalSec: config.positionCheckIntervalSec });
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const path = url.pathname;
 
-  while (true) {
-    try {
-      await checkOpenPositions();
-    } catch (err) {
-      logger.error('position_loop_error', { error: String(err) });
-    }
-    await sleep(config.positionCheckIntervalSec * 1000);
-  }
-}
-
-async function scanCycle(): Promise<void> {
-  const config = getConfig();
-
-  const candidates = await scanFollowedWalletActivity();
-
-  for (const candidate of candidates) {
-    logger.info('evaluating_candidate', { mint: candidate.mintAddress, symbol: candidate.symbol });
-
-    // Enrich + score
-    const enriched = await enrichAndScore(candidate);
-    if (!enriched) continue;
-
-    // AI entry decision
-    const prompt = buildEntryPrompt(enriched);
-    const decision = await evaluateEntry(prompt);
-
-    insertAiDecision({
-      mintAddress: candidate.mintAddress,
-      decisionType: 'entry',
-      action: decision.action,
-      confidence: decision.confidence,
-      reasoning: decision.reasoning,
-      redFlags: decision.red_flags,
-      rawResponse: (decision as any)._raw ?? '',
-    });
-
-    logger.info('ai_entry_decision', {
-      mint: candidate.mintAddress,
-      symbol: candidate.symbol,
-      action: decision.action,
-      confidence: decision.confidence,
-      red_flags: decision.red_flags,
-    });
-
-    if (decision.action !== 'BUY' || decision.confidence < config.aiConfidenceThreshold) continue;
-
-    // Position gate
-    if (!canOpenPosition()) {
-      logger.warn('buy_skipped_position_full', { mint: candidate.mintAddress, symbol: candidate.symbol });
-      continue;
+  try {
+    // ── live updates ────────────────────────────────────────────────
+    if (path === "/api/stream") {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      const send = (ev: string, data: unknown) => {
+        res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      send("snapshot", store.snapshot());
+      const unsub = store.subscribe(send);
+      const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
+      req.on("close", () => {
+        clearInterval(ping);
+        unsub();
+      });
+      return;
     }
 
-    // Execute buy
-    await executeBuy(enriched);
+    if (path === "/api/state") return json(res, 200, store.snapshot());
+
+    if (path === "/api/health") {
+      const live = liveReady(store.config);
+      return json(res, 200, {
+        gmgnApi: await apiReady(),
+        openrouter: Boolean(process.env.OPENROUTER_API_KEY),
+        liveReady: live.ok,
+        liveReason: live.reason,
+        automatedTradesEnv: process.env.GMGN_ALLOW_AUTOMATED_TRADES === "1",
+      });
+    }
+
+    if (req.method === "POST") {
+      const body = await readBody(req);
+
+      if (path === "/api/config") {
+        const before = store.config;
+        const cfg = store.updateConfig(body ?? {});
+        if (cfg.intervalMinutes !== before.intervalMinutes || cfg.monitorSeconds !== before.monitorSeconds)
+          engine.reschedule();
+        if (cfg.mode !== before.mode) store.log("info", `Mode switched to ${cfg.mode}.`);
+        if (cfg.chain !== before.chain) store.log("info", `Chain switched to ${cfg.chain.toUpperCase()}.`);
+        store.push();
+        return json(res, 200, { ok: true, config: cfg });
+      }
+
+      if (path === "/api/start") {
+        if (body?.config) store.updateConfig(body.config);
+        const r = await engine.start();
+        return json(res, r.ok ? 200 : 400, r);
+      }
+
+      if (path === "/api/stop") {
+        engine.stop();
+        return json(res, 200, { ok: true });
+      }
+
+      if (path === "/api/scan") {
+        void engine.scanNow();
+        return json(res, 200, { ok: true });
+      }
+
+      if (path === "/api/close") {
+        const r = await engine.manualClose(String(body?.id ?? ""), Number(body?.percent ?? 100));
+        return json(res, r.ok ? 200 : 400, r);
+      }
+
+      if (path === "/api/reset") {
+        engine.stop();
+        store.reset();
+        return json(res, 200, { ok: true });
+      }
+
+      return json(res, 404, { error: "unknown endpoint" });
+    }
+
+    if (path.startsWith("/api/")) return json(res, 404, { error: "unknown endpoint" });
+    await serveStatic(res, path);
+  } catch (e) {
+    json(res, 500, { error: e instanceof Error ? e.message : String(e) });
   }
-}
-
-function scheduleDailySummary(): void {
-  const now = new Date();
-  const midnight = new Date(now);
-  midnight.setHours(24, 0, 0, 0);
-  const msUntilMidnight = midnight.getTime() - now.getTime();
-
-  setTimeout(() => {
-    printDailySummary();
-    setInterval(() => printDailySummary(), 24 * 60 * 60 * 1000);
-  }, msUntilMidnight);
-}
-
-main().catch((err) => {
-  console.error('[fatal]', err);
-  process.exit(1);
 });
+
+server.listen(PORT, HOST, () => {
+  console.log(`\n  tidal · dashboard on http://${HOST}:${PORT}`);
+  console.log(`  mode: ${store.config.mode}   chain: ${store.config.chain}   interval: ${store.config.intervalMinutes}m`);
+  if (!process.env.OPENROUTER_API_KEY) console.log("  ! OPENROUTER_API_KEY missing — set it in .env before starting the agent");
+  if (process.env.GMGN_ALLOW_AUTOMATED_TRADES === "1") console.log("  ! automated live trades are ENABLED in this shell");
+  console.log("");
+});
+
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+  process.on(sig, () => {
+    engine.stop();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1500);
+  });

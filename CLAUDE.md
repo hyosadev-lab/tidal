@@ -2,323 +2,193 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Runtime
 
-**trading-agent** is an autonomous Solana memecoin trading agent that identifies promising post-graduation tokens, scores them using multi-signal analysis, and executes trades with AI-driven entry/exit decisions. The agent runs two concurrent loops: one that scans and evaluates token candidates, and another that monitors open positions for exit signals.
+Node 22+ running TypeScript directly (native type stripping) — no build step, no bundler,
+**zero runtime dependencies**. `@types/node` is the only devDependency; `typescript` is a
+peerDependency used for type-checking only.
 
-## Quick Start
+This is deliberate: the code sticks to `fetch` + Node stdlib so it also runs under Bun and Deno.
+Persistence is `node:sqlite` (stdlib, Node 22.5+; Bun 1.2+ and Deno 2.2+ implement the same
+module) — do not reach for Bun-specific APIs (`Bun.serve`, `bun:sqlite`, `Bun.file`, `Bun.$`),
+and do not add npm dependencies without being asked.
 
-### Installation and Running
+## Commands
 
 ```bash
-# Install dependencies
-bun install
-# or
-npm install
-
-# Run in development (with watch mode)
-npm run dev
-
-# Run once
-npm run start
+npm start                                     # dashboard + engine → http://127.0.0.1:3111
+npm run cli                                   # legacy interactive CLI chat (has a bash tool)
+npm test                                      # node --test, all *.test.ts
+node --test src/trading/plan.test.ts          # one file
+node --test --test-name-pattern="stop-loss"   # one test by name
+npx tsc --noEmit                              # type check
+npm run calibrate -- --limit=0                # is score() ranking anything? (--limit=0 spends nothing)
 ```
 
-### Environment Setup
+`GMGN_API_KEY` is required — every market read is an HTTP call to the GMGN OpenAPI.
+`GMGN_PRIVATE_KEY` (a request-signing key, not a wallet key) is only needed for live mode:
+it signs `swap` and `query_order`, the two routes GMGN requires a signature on. There is no
+`gmgn-cli` dependency; `gmgn-skills/` is an untracked reference clone of its source, kept only
+to look up endpoint shapes and field semantics, and excluded from `tsconfig.json`.
 
-1. Copy `.env.example` to `.env` and fill in required values:
-   - GMGN API key and private key (for swap execution)
-   - OpenRouter API key (for AI decisions)
-   - Wallet address and trading parameters
-   - Token filters (liquidity, holder count, etc.)
-   - Exit parameters (stop-loss, trailing stop, max hold duration)
-
-2. Optional: Place global config at `~/.config/gmgn/.env` (loaded first, then project `.env` overrides)
-
-3. Set `DRY_RUN=true` to simulate trades without real transactions
+**One test file is not hermetic.** `src/trading/engine.test.ts` calls `engine.start()`, which
+schedules a real scan 1.5s later; that scan hits the live GMGN API and writes to `data/tta.db`.
+Expect network calls, a few seconds of runtime, and a mutated `data/` (gitignored). Point `TTA_DB`
+at a scratch file to keep a test off the real ledger — `db.test.ts` does exactly that.
+It also drives the shared `store` singleton. Every other test file is pure — put new tests in
+`plan.test.ts` unless they genuinely need the network or the store. `npm test` loads `.env`
+so the key is present.
 
 ## Architecture
 
-### High-Level Flow
-
-```
-┌─────────────────────────────────────────┐
-│         Main Event Loop                 │
-├─────────────────────────────────────────┤
-│                                         │
-│  scanLoop (every SCAN_INTERVAL_SEC)    │  positionLoop (every POSITION_CHECK_INTERVAL_SEC)
-│  ├─ Fetch graduated tokens (GMGN)      │  ├─ Check condition orders (stop-loss, trailing)
-│  ├─ Filter by client-side rules        │  ├─ Check time limit
-│  ├─ Enrich & score each token          │  ├─ AI evaluation (if needed)
-│  ├─ AI entry decision (OpenRouter)     │  └─ Execute sell if triggered
-│  ├─ Gate: check position capacity      │
-│  └─ Execute buy (GMGN swap)            │
-│                                         │
-└─────────────────────────────────────────┘
-```
-
-### Signal Scoring System
-
-Each token gets scored on three signals, combined into a **composite score** (0-100):
-
-1. **Dip Recovery (70% weight)**: Scores based on:
-   - Dip depth from all-time high (sweet spot: 50-70% below ATH)
-   - Downtrend momentum (comparing recent lows vs older lows)
-   - Buy volume dominance in last 5m
-   - Buy transaction count dominance
-   - Rejects: recent >100% spikes (dead cat bounce), extreme dips (>70%)
-
-2. **Momentum (0% weight, disabled)**: Would score buy pressure, volume acceleration, and candle colors
-
-3. **Smart Money (30% weight)**: Scores based on:
-   - Number of active smart wallets (still holding)
-   - Smart wallets with sufficient SOL balance
-   - Recent entries (<5 minutes)
-   - Average supply holdings per wallet
-   - Rejected if all smart money has exited
-
-**Gate**: Tokens below `MIN_SCORE_TO_BUY` are skipped.
-
-### Entry Decision (AI)
-
-OpenRouter/Claude evaluates the enriched token data and decides **BUY** or **SKIP** based on:
-- Signal scores and their components
-- Price action (ATH, current price, 5m/1h changes)
-- Volume and liquidity metrics
-- Developer/holder concentration
-- Smart money activity
-- Red flags from the model
-
-**Gate**: Buys only if action is **BUY** AND confidence ≥ `AI_CONFIDENCE_THRESHOLD`.
-
-### Position Management
-
-Once a buy is confirmed:
-
-1. **Condition Orders** (optional, set via env):
-   - `STOP_LOSS_PCT`: Auto-sell if price drops X% from entry
-   - `TRAILING_ACTIVATE_PCT` + `TRAILING_DRAWDOWN_PCT`: Activate trailing stop after +X%, then trail Y% from peak
-
-2. **Time Limit**: Force close at `MAX_HOLD_DURATION_MINUTES` regardless of profit/loss
-
-3. **AI Evaluation**: If condition orders don't fully cover exit (e.g., missing upside or downside), AI evaluates every `POSITION_CHECK_INTERVAL_SEC` and decides **SELL** or **HOLD**
-
-### Database Schema
-
-SQLite with tables:
-- `signal_scores`: Raw score components for every evaluated token
-- `ai_decisions`: Entry/position AI decisions with reasoning
-- `trades`: Buy/sell order execution history
-- `positions`: Open and closed positions with PnL
-- `daily_stats`: Aggregated daily trading statistics
-
-## Core Modules
-
-### `src/modules/`
-
-- **scanner.ts**: Fetches graduated tokens from GMGN API, applies client filters (owner renounced, wash trading check), deduplicates against open positions
-- **scorer.ts**: Enriches token data (token info, klines, smart money holders), computes all three signal scores, gates on composite score, builds AI entry prompt
-- **executor.ts**: Executes buy/sell swaps via GMGN, builds and submits condition orders, polls for confirmation, manages position records
-- **position-manager.ts**: Main loop that checks open positions, mirrors condition orders (since GMGN doesn't return strategy_order_id), triggers AI exit decisions, closes positions with PnL calculation
-- **ai-decision.ts**: Builds position snapshot and prompt for exit evaluation
-
-### `src/services/`
-
-- **gmgn-client.ts**: Wraps GMGN OpenAPI (token info, klines, smart money holders, swaps). Handles Ed25519 and RSA-SHA256 signing for authenticated requests
-- **openrouter.ts**: Calls Claude 3 Haiku via OpenRouter for JSON-formatted entry and position decisions with structured reasoning
-- **coingecko.ts**: Fetches current SOL/USD price for position management calculations
-
-### `src/strategies/`
-
-Each exports a scoring function and signal interface:
-- **dip-recovery.ts**: `scoreDipRecovery()` — implements multi-component dip scoring with gates
-- **momentum.ts**: `scoreMomentum()` — buy pressure, volume acceleration, candle color analysis
-- **smart-money.ts**: `scoreSmartMoney()` — smart wallet activity scoring with all-exit gate
-
-### `src/db/`
-
-- **database.ts**: SQLite setup, WAL mode, migration runner
-- **queries.ts**: Typed query builders for all operations (insert trades, positions, decisions; fetch open positions; update position status; daily stats aggregation)
-
-### `src/utils/`
-
-- **logger.ts**: Winston logger to console + `logs/agent.log` + `logs/error.log`
-- **math.ts**: SOL/lamports conversion, PnL calculations, time formatting, Solscan URL builders
-- **retry.ts**: Exponential backoff retry utility for API calls
-
-## Configuration
-
-All config from environment variables (type-checked in `src/config.ts`):
-
-**Core Trading**:
-- `TRADE_SIZE_SOL`: Amount per buy
-- `MAX_CONCURRENT_POSITIONS`: Position capacity
-- `SCAN_INTERVAL_SEC`, `POSITION_CHECK_INTERVAL_SEC`: Loop frequencies
-
-**Thresholds**:
-- `MIN_SCORE_TO_BUY`: Composite score gate (0-100)
-- `AI_CONFIDENCE_THRESHOLD`: Confidence gate for AI decisions (0-1)
-
-**Exit Strategy** (optional):
-- `STOP_LOSS_PCT`, `TRAILING_ACTIVATE_PCT`, `TRAILING_DRAWDOWN_PCT`, `MAX_HOLD_DURATION_MINUTES`
-
-**Token Filters** (server-side via GMGN):
-- Liquidity, holder count, top-holder concentration, rug ratio, token age, market cap, etc.
-
-**Execution**:
-- `SLIPPAGE`, `AUTO_SLIPPAGE`, `ANTI_MEV`: Swap parameters
-- `DRY_RUN`: Set to `true` for simulation
-
-See `.env.example` for full list and descriptions.
-
-## Key Implementation Details
-
-### Composite Scoring Weights
-
-Currently: **70% dip recovery + 0% momentum + 30% smart money**
-
-The momentum score is computed but not used in the composite. To enable:
-```typescript
-// src/modules/scorer.ts, line ~92
-const composite =
-  dip.score * 0.70 +
-  momentum.score * 0.30 +  // Change from 0 to desired weight
-  smartMoney.score * 0;     // Adjust other weights
-```
-
-### Condition Order Mirroring
-
-GMGN doesn't return `strategy_order_id` in swap responses, so we can't poll condition order status. Instead, we **mirror the logic client-side** in `position-manager.ts`:
-- Compare current price to entry price and peak price
-- Trigger "STOP_LOSS" or "TRAILING_STOP" reasons when thresholds hit
-- In live mode, the condition order fires on-chain; we sync DB. In dry-run, we simulate.
-
-### AI Decision Format
-
-Expects JSON responses with this shape:
-
-```typescript
-// Entry decision
-{ action: "BUY" | "SKIP", confidence: number, reasoning: string, red_flags: string[] }
-
-// Position decision
-{ action: "HOLD" | "SELL", confidence: number, reasoning: string }
-```
-
-Both are retry-wrapped and parse-error tolerant (fallback on JSON parse failure).
-
-### Dry-Run Simulation
-
-Set `DRY_RUN=true` to:
-- Skip real swap execution
-- Simulate buy/sell at current GMGN prices
-- Use condition order thresholds locally instead of on-chain
-- Record everything to database as if live
-
-Useful for backtesting strategy parameters before going live.
-
-## Development Workflow
-
-### Testing Changes to Scoring Logic
-
-1. Adjust thresholds in strategy files (`src/strategies/*.ts`)
-2. Run in `DRY_RUN=true` mode to see scoring output
-3. Check `logs/agent.log` for token evaluations and signal breakdowns
-4. Adjust weights in `src/modules/scorer.ts` composite calculation
-5. Restart agent to apply changes
-
-### Adding New Filters
-
-Client-side filters in `src/modules/scanner.ts` `passesClientFilter()`:
-```typescript
-if (condition) {
-  logger.warn('token_skipped', { mint, symbol, reason: 'your_reason' });
-  return false;
-}
-```
-
-Server-side filters set via env vars in `.env` (validated by GMGN API).
-
-### Adding New Signal
-
-1. Create `src/strategies/your-signal.ts` with scoring function and interface
-2. Import in `src/modules/scorer.ts`
-3. Compute score and add to `AllSignalScores` interface
-4. Update composite calculation
-5. Add signal details to database insert and AI prompt
-
-### Monitoring Live Runs
-
-```bash
-# Watch agent logs in real-time
-tail -f logs/agent.log
-
-# Check errors
-tail -f logs/error.log
-
-# Query database (opens SQLite shell)
-sqlite3 data/trading-agent.db
-```
-
-Common queries:
-```sql
--- Recent entries
-SELECT * FROM ai_decisions WHERE decision_type='entry' ORDER BY decided_at DESC LIMIT 10;
-
--- Open positions
-SELECT * FROM positions WHERE status='open';
-
--- Today's PnL
-SELECT * FROM daily_stats WHERE date=date('now');
-```
-
-## Dependencies and Versions
-
-- **TypeScript 5.3+**: Strict mode, ESNext target
-- **tsx 4.7+**: TypeScript execution (supports `.ts` imports)
-- **better-sqlite3 9.6+**: Synchronous SQLite (no async needed for agent)
-- **winston 3.11+**: Structured logging
-- **dotenv 16.4+**: Env var loading
-- **Node 20+ or Bun 1.3+**: Runtime
-
-## Build and Output
-
-- **No build step needed**: `tsx` runs TypeScript directly
-- **Output**: Logs to `logs/` directory, database to `data/trading-agent.db`
-- **Artifacts**: Store trades, positions, and decisions in SQLite for audit trail
-
-## Common Patterns
-
-### Accessing Config
-```typescript
-import { getConfig } from './config.ts';
-const config = getConfig(); // Singleton, safe to call multiple times
-```
-
-### Logging Structured Events
-```typescript
-logger.info('event_name', { key: value, mint: token.address });
-logger.warn('warning_event', { reason: 'description' });
-logger.error('error_event', { error: String(err) });
-```
-
-### Retry with Backoff
-```typescript
-import { withRetry } from './utils/retry.ts';
-const result = await withRetry(() => apiCall(), { maxAttempts: 3, baseDelayMs: 2000 });
-```
-
-### Converting Prices
-```typescript
-import { solToLamports, lamportsToSol, computePnlPct } from './utils/math.ts';
-const lamports = solToLamports(0.1); // For GMGN input_amount
-const sol = lamportsToSol(lamports);
-const pnlPct = computePnlPct(entryPrice, exitPrice);
-```
-
-## Troubleshooting
-
-- **No tokens scored**: Check `MIN_SCORE_TO_BUY` is not too high; verify signal scoring gates (dip range, dead cat bounce, smart money exit)
-- **Condition orders not triggering**: In dry-run, verify thresholds in `checkConditionOrderMirror()`; in live mode, check GMGN condition order status manually
-- **AI decisions seem wrong**: Review model choice (`OPENROUTER_MODEL` env var); temperature is 0.1 (deterministic); check reasoning in logs
-- **Database locked**: SQLite WAL mode should handle concurrent access; if stuck, restart agent (closes DB handle)
-
+Two entry points share `src/agent/llm.ts` + `src/agent/skills.ts`:
+
+- `src/index.ts` — the real product. Static file server + JSON control API + SSE stream, driving `src/trading/`.
+- `src/cli.ts` — older readline chat loop. Has a `bash` tool; unrelated to the trading engine.
+
+### Storage
+
+Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/trading/db.ts`
+with `node:sqlite` — stdlib, so the zero-dependency rule holds. The split is by shape:
+bounded state that the engine mutates in place (config, cash, open positions, cooldowns,
+blacklist) is a JSON blob in `kv`; unbounded append-only series (`trades`, `equity`,
+`soundings`, `outcomes`) are rows. WAL is on, so `calibrate.ts` reads while the engine trades.
+The old `state.json` / `config.json` / `*.jsonl` are imported once on first open and renamed
+`*.migrated`; that import is skipped when `TTA_DB` is set, so tests never touch `data/`.
+
+`src/gmgn/` is the transport layer both entry points share: `endpoint.ts` (`OpenApiClient`, the
+full GMGN OpenAPI surface — auth, signing, retries, and the one process-wide promise queue +
+leaky bucket, since GMGN adds 5s to the cooldown per 429 and retry spam makes it worse),
+`signer.ts`, and `client.ts` (the env-configured singleton). Two auth modes: *exist* (API key)
+for reads, *signed* (API key + `X-Signature`) for the swap and order routes.
+
+`src/agent/llm.ts` is a ~80-line OpenRouter tool-calling loop (`runAgent`): tools are
+`{description, parameters (JSON Schema), run}`, it loops until the model replies without tool calls.
+
+`src/agent/skills.ts` implements progressive disclosure: only each skill's `name` + `description` go into
+the system prompt (`skillIndex`); the full `SKILL.md` body is returned by the `load_skill` tool.
+Skills live in `<root>/<name>/SKILL.md` with flat `key: value` frontmatter.
+
+**There is one skill root: `skills/`,** loaded by both `src/cli.ts` and the trading analyst.
+`token-analysis` is the procedure both use — it is written against the `gmgn_*` tool names and
+closes with a section for the headless analyst. The seven vendored `gmgn-*` skills alongside it
+are the original CLI ones: their data and thresholds are good, their `gmgn-cli` shell commands are
+a second path to the same endpoints, and `token-analysis` opens with a table mapping one to the
+other. There used to be a second root at `src/trading/skills/` (`scanning` + `analysis`) written
+against a separate analyst tool set; both went when the analyst moved onto the shared tools.
+
+### The central split (`src/trading/plan.ts` header states it; respect it)
+
+**Gates, sizing, and exit *execution* are deterministic code. The model only ranks, writes theses,
+and — in dynamic mode — proposes the shape of an exit plan.**
+A position must never depend on an LLM call succeeding in order to be closed. The model can veto a
+trade or request an early exit; it can never widen a risk limit. When adding features, keep new
+risk logic in `plan.ts`/`config.ts` — not in prompts.
+
+`cfg.fixedStrategy` picks who writes the plan. On: the operator's rows from the dashboard's exit
+builder (`cfg.strategy`). Off: the analyst returns a `strategy` array per entry. Either way the
+rules are snapshotted onto `Position.strategy` at entry by `entryStrategy` and run by
+`evaluateExit` every monitor tick with no further model involvement — a proposal is clamped by
+`sanitizeStrategy`, can't put a stop deeper than `cfg.stopLossPct`, gets a stop appended if it
+omits one, and falls back to the config's stop/trail/ladder if it is unusable. An empty
+`Position.strategy` is that legacy path.
+
+### `src/trading/` layering (import order, roughly)
+
+| File | Role |
+|---|---|
+| `types.ts` | shared types, no logic |
+| `config.ts` | defaults, per-chain constants, `num`, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady`. Imports nothing but `types.ts` — keep it that way, it is what lets `plan.ts` stay I/O-free |
+| `db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path |
+| `store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE |
+| `market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing above this file speaks HTTP or touches `gmgnClient()` |
+| `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`. No I/O, and importing it must not open the database or the API client — this is where tests concentrate |
+| `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
+| `analyst.ts` | the model half of a cycle: the read-only tool allowlist, the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
+| `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
+| `soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
+| `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
+
+Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
+top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) → `buyableSet` →
+`broker.buy/sell` → `store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs
+independently and never touches the LLM.
+
+**`gatherCandidates` is the whole search.** Only what the sweep surfaced can be bought: the
+analyst has read-only tools and can research anything, but an address outside the brief never went
+through `toCandidate` or the gates, so there is nothing to size and `buyableSet` refuses it. The
+operator steers the sweep through the dashboard's Refine panel (`refineQuery`), not through the
+prompt — `cfg.prompt` shapes selection, not fetching, because the sweep runs before the model is
+called. The analyst used to have a `find_tokens` tool that widened the search mid-cycle; it and its
+`discovered` plumbing were dropped once Refine covered the same ground from the dashboard.
+
+## Invariants worth knowing before you edit
+
+- **Never set `GMGN_ALLOW_AUTOMATED_TRADES` from code.** `OpenApiClient` throws on every route
+  that spends — swap, multi-swap, strategy create, token create — if it isn't already in the
+  environment. That variable is the operator's standing consent to headless execution;
+  the process is not entitled to grant it on their behalf. Same reasoning behind `liveReady()`.
+  This process signs its own trade requests, so that check is now the *entire* barrier — there is
+  no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
+- **The analyst's tool set is an allowlist, and that is the whole safety barrier.** It shares
+  `src/agent/tools.ts` with the interactive CLI, which has `bash` and the spend routes. `analyst.ts`
+  names the read-only tools it wants one by one in `ANALYST_TOOL_NAMES`, so a tool added to the
+  shared file is *not* in the analyst's hands until someone adds its name — the safe default when
+  that file grows is "no". A test in `plan.test.ts` asserts `bash` and the spend routes stay out;
+  it fails the moment the allowlist grows something it should not have. Never invert it into a
+  denylist: this loop runs unattended on rows named by whoever deployed the contract.
+- **`securityRisk` is a pre-trade refusal, not a gate, and that is deliberate.** It runs once per
+  entry in `openPosition` (paper and live alike) against `token_security`, because only that route
+  answers reliably — `trenches` rows report `renounced_*: false` on tokens the security route
+  reports as `true`, so gating on a feed row would kill the whole feed. Runs on every chain now:
+  the tax half (`buy_tax`/`sell_tax` > 10%) applies everywhere, the mint/freeze and burn halves
+  are Solana-only — those authorities do not exist on EVM and EVM liquidity is locked rather than
+  burned. Fails closed on all chains, so EVM entries now cost one `token_security` call each.
+  Measured on live candidates: the authority half never fires (launchpads revoke at creation),
+  the burn half refuses about 1 in 14 otherwise-clean candidates.
+- **`runGates` no longer screens structure — that was an operator decision, not an oversight.**
+  It rejects wash trading, honeypots, and rows with no address or no price. That is all. The
+  graded properties it used to gate on (smart-money count, `rug_ratio`, top-10 rate, liquidity
+  depth, dev still holding) are read, scored by `score()`, shown to the analyst, and filterable
+  per-feed from the dashboard's **Refine** panel — but they disqualify nothing. Consequence to
+  keep in mind when editing: a candidate with a $2k pool, no smart money and a dev still holding
+  reaches `askAnalyst` looking like any other row, and only the analyst, the Refine filters and
+  `securityRisk` stand between it and a position. `SKIP` still exists in `config.ts` but is now
+  only a default for the sweep's feed query. Don't reintroduce a structural gate without asking:
+  the dashboard is where that policy lives now.
+- **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
+  blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
+  the model's requested exits have run, since closing a position puts its address straight onto
+  cooldown. An address the analyst names that is not in the set is logged and skipped, with the
+  address included in the log line: a mistyped or omitted one is indistinguishable from a gate
+  failure without it.
+- **Token names/symbols are attacker-controlled data.** The system prompt says so; don't add code
+  paths that treat scanned text as instructions.
+- **GMGN percent conventions differ per field.** `rug_ratio` and `top_10_holder_rate` are ratios
+  (0–1); `price_change_percent1h`/`5m` already arrive as percent. Mixing them silently breaks gates.
+- **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
+  wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes
+  `input_amount_bps` (basis points: 50% → `"5000"`) and `input_amount` is a `"0"` placeholder.
+- **`kline` takes milliseconds**; every other timestamp in `market.ts` is seconds.
+- **In live mode, sizing comes from the real wallet** (`syncLiveBalance` → `/v1/user/info`),
+  not the paper bankroll. If the balance can't be read, entries are skipped for that cycle rather
+  than sized off a guess — GMGN rate-limits `insufficient token balance` errors specifically.
+- Per-chain floors exist for a reason: `MIN_POSITION_USD` (round-trip friction) and `GAS_RESERVE`
+  (a fully deployed wallet must still be able to pay to exit).
+
+## Frontend
+
+`public/` is vanilla HTML/CSS/JS with no build step — `src/index.ts` serves the directory as-is and
+`app.js` consumes `/api/stream` (SSE). Keep it dependency-free.
+
+## Extending
+
+- **New tool**: add it to `tools` in `src/agent/tools.ts` (`description`, `parameters`, `run`).
+  The CLI picks it up immediately. To give it to the trading analyst as well, add its name to
+  `ANALYST_TOOL_NAMES` in `src/trading/analyst.ts` — read-only only, and never `bash`.
+- **New skill**: `skills/<name>/SKILL.md`, with `name` + `description` frontmatter. Only those two
+  lines reach the system prompt; the body is returned by `load_skill`, which hands the model an
+  absolute path, so supporting files can live in the same directory. Both entry points load this
+  root, so a skill must work with or without a human at the prompt: describe tools, and don't ask
+  the reader questions.
+- **New config knob**: `types.ts` → `DEFAULT_CONFIG` → a clamp in `sanitizeConfig` → the UI.
