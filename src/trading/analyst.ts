@@ -263,7 +263,18 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
   try {
     // Research is per-token now rather than per-feed, so the ceiling is about how many
     // candidates get a second look. Raise it only if logs show the analyst running out.
-    const res = await runAgent(prompt, { tools: analystTools, system, maxSteps: 22 });
+    const res = await runAgent(prompt, {
+      tools: analystTools,
+      system,
+      maxSteps: 22,
+      // Tool names are ours; args and results are attacker-influenced text — they go in the
+      // log's detail field as data, truncated, never interpreted.
+      onTool: (name, args, result) => {
+        const a = JSON.stringify(args) ?? "";
+        const r = typeof result === "string" ? result : JSON.stringify(result) ?? "";
+        store.log("model", `🔧 ${name} ${a.slice(0, 160)}`, `→ ${r.replace(/\s+/g, " ").slice(0, 300)}`);
+      },
+    });
     const decision = extractJson(res.text);
     if (!decision) {
       store.log("warn", "Analyst reply wasn't valid JSON — no action this cycle.", res.text.slice(0, 400));

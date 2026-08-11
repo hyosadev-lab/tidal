@@ -19,6 +19,8 @@ export type AgentOptions = {
   apiKey?: string;
   /** Previous `messages` from an earlier run, to continue the conversation. */
   history?: Message[];
+  /** Called after each tool call, for logging. Must not throw. */
+  onTool?: (name: string, args: unknown, result: unknown) => void;
 };
 
 async function complete(messages: Message[], o: AgentOptions) {
@@ -61,14 +63,15 @@ export async function runAgent(prompt: string, o: AgentOptions = {}) {
 
     for (const call of msg.tool_calls) {
       const tool = o.tools?.[call.function.name];
+      let args: unknown;
       let result: unknown;
       try {
-        result = tool
-          ? await tool.run(JSON.parse(call.function.arguments))
-          : `unknown tool: ${call.function.name}`;
+        args = JSON.parse(call.function.arguments);
+        result = tool ? await tool.run(args) : `unknown tool: ${call.function.name}`;
       } catch (e) {
         result = `error: ${e instanceof Error ? e.message : String(e)}`;
       }
+      o.onTool?.(call.function.name, args, result);
       messages.push({
         role: "tool",
         tool_call_id: call.id,
