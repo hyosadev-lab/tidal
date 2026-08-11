@@ -13,7 +13,7 @@ export type RunState = "stopped" | "running" | "halted";
  */
 export type StrategyRule = { kind: "tp" | "sl" | "ttp" | "tsl"; at?: number; dd?: number; sell: number };
 
-/** Everything the dashboard can change. Persisted to data/config.json. */
+/** Everything the dashboard can change. Persisted to the `kv` table in data/tta.db. */
 export type TradeConfig = {
   chain: Chain;
   mode: Mode;

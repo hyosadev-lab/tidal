@@ -19,8 +19,8 @@
  */
 import * as gmgn from "./market.ts";
 import { num } from "./market.ts";
-import { OUTCOMES_PATH, SOUNDINGS_PATH, readJsonl, recordOutcome, soundingKey } from "./soundings.ts";
-import type { Outcome, Sounding } from "./soundings.ts";
+import { recordOutcome, resolvedPairs, soundingCount, soundingKey, unresolved } from "./soundings.ts";
+import type { Sounding } from "./soundings.ts";
 import type { Candidate } from "./types.ts";
 
 /** The terms `score()` actually reads. Keep in step with it, or a new term goes unmeasured. */
@@ -122,16 +122,11 @@ export function bands(rows: { score: number; ret: number }[], edges = [20, 40, 6
  * would lock in a meaningless answer forever.
  */
 async function resolve(minAgeH: number, maxAgeH: number, limit: number): Promise<number> {
-  const done = new Set(readJsonl<Outcome>(OUTCOMES_PATH).map((o) => o.key));
   const now = Date.now();
-  const pending = readJsonl<Sounding>(SOUNDINGS_PATH)
-    .filter((s) => {
-      const age = (now - s.ts) / 3_600_000;
-      return age >= minAgeH && age <= maxAgeH && s.c.priceUsd > 0 && !done.has(soundingKey(s));
-    })
-    // Oldest first: those are closest to falling out of the max-age window entirely.
-    .sort((a, b) => a.ts - b.ts)
-    .slice(0, limit);
+  // Oldest first inside the horizon — those are closest to falling out of it entirely.
+  const pending = unresolved(now - maxAgeH * 3_600_000, now - minAgeH * 3_600_000, limit).filter(
+    (s) => s.c.priceUsd > 0,
+  );
 
   if (!pending.length) return 0;
   process.stdout.write(`resolving ${pending.length} soundings`);
@@ -162,14 +157,10 @@ const pct = (x: number): string => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%
 const rho = (x: number): string => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
 
 function report(minAgeH: number, maxAgeH: number): void {
-  const soundings = new Map(readJsonl<Sounding>(SOUNDINGS_PATH).map((s) => [soundingKey(s), s]));
-  const outcomes = readJsonl<Outcome>(OUTCOMES_PATH);
-
   const rows: { s: Sounding; ret: number; age: number }[] = [];
   let unreadable = 0;
-  for (const o of outcomes) {
-    const s = soundings.get(o.key);
-    if (!s || o.priceThen <= 0) continue;
+  for (const { s, o } of resolvedPairs()) {
+    if (o.priceThen <= 0) continue;
     if (o.priceNow === null) {
       unreadable++;
       continue;
@@ -177,7 +168,7 @@ function report(minAgeH: number, maxAgeH: number): void {
     rows.push({ s, ret: (o.priceNow - o.priceThen) / o.priceThen, age: o.ageHours });
   }
 
-  console.log(`\nsoundings ${soundings.size} · resolved ${rows.length} · unreadable ${unreadable}`);
+  console.log(`\nsoundings ${soundingCount()} · resolved ${rows.length} · unreadable ${unreadable}`);
   if (unreadable) {
     const share = unreadable / (rows.length + unreadable);
     console.log(
@@ -241,8 +232,8 @@ async function main(): Promise<void> {
   const maxAge = arg("max-age", 48);
   const limit = arg("limit", 300);
 
-  if (!readJsonl<Sounding>(SOUNDINGS_PATH).length) {
-    console.log(`No soundings yet — ${SOUNDINGS_PATH} is empty. Run the agent for a few cycles first.`);
+  if (!soundingCount()) {
+    console.log(`No soundings recorded yet. Run the agent for a few cycles first.`);
     return;
   }
   if (limit > 0) await resolve(minAge, maxAge, limit);

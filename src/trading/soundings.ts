@@ -11,20 +11,15 @@
  * The whole sweep is recorded, gate failures included — an unbiased sample is the point.
  * Measuring only what was bought measures the analyst, not the score.
  *
- * Two append-only JSONL files in gitignored `data/`:
- *   soundings.jsonl — one line per candidate per cycle, written by the scan loop
- *   outcomes.jsonl  — one line per resolved sounding, written by a calibration run
+ * Two tables in `data/tta.db`:
+ *   soundings — one row per candidate per cycle, written by the scan loop
+ *   outcomes  — one row per resolved sounding, written by a calibration run
  *
- * ponytail: append-only, no rotation. ~40 rows a cycle is a few MB a month; if that ever
- * matters, drop lines older than the longest horizon you report on.
+ * ponytail: no retention policy. ~40 rows a cycle stays small for years in SQLite; if it ever
+ * matters, `delete from soundings where ts < …` older than the longest horizon you report on.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { DATA_DIR } from "./config.ts";
+import { db, insertOutcome, insertSounding, rowsJson } from "./db.ts";
 import type { Candidate, Chain } from "./types.ts";
-
-export const SOUNDINGS_PATH = join(DATA_DIR, "soundings.jsonl");
-export const OUTCOMES_PATH = join(DATA_DIR, "outcomes.jsonl");
 
 /** One candidate as `score()` saw it, at the moment it was scored. */
 export type Sounding = { ts: number; cycle: number; chain: Chain; c: Candidate };
@@ -40,35 +35,39 @@ export const soundingKey = (s: Sounding): string => `${s.cycle}:${s.c.address}`;
 
 /** Fire-and-forget: telemetry must never be able to break a scan. */
 export function recordSoundings(cycle: number, chain: Chain, candidates: Candidate[]): void {
-  if (!candidates.length) return;
   const ts = Date.now();
   try {
-    mkdirSync(DATA_DIR, { recursive: true });
-    appendFileSync(
-      SOUNDINGS_PATH,
-      candidates.map((c) => JSON.stringify({ ts, cycle, chain, c } satisfies Sounding)).join("\n") + "\n",
-    );
+    for (const c of candidates) {
+      const s: Sounding = { ts, cycle, chain, c };
+      insertSounding(soundingKey(s), s);
+    }
   } catch {
     /* a full disk is not a reason to stop trading */
   }
 }
 
 export function recordOutcome(o: Outcome): void {
-  mkdirSync(DATA_DIR, { recursive: true });
-  appendFileSync(OUTCOMES_PATH, JSON.stringify(o) + "\n");
+  insertOutcome(o.key, o);
 }
 
-/** Tolerant reader: a half-written last line (killed mid-append) is skipped, not fatal. */
-export function readJsonl<T>(path: string): T[] {
-  if (!existsSync(path)) return [];
-  const out: T[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      out.push(JSON.parse(line) as T);
-    } catch {
-      /* skip */
-    }
-  }
-  return out;
+export const soundingCount = (): number => (db.prepare("select count(*) n from soundings").get() as { n: number }).n;
+
+/** Soundings inside the horizon that no run has priced yet, oldest first — those expire soonest. */
+export function unresolved(minTs: number, maxTs: number, limit: number): Sounding[] {
+  return rowsJson<Sounding>(
+    `select s.json from soundings s left join outcomes o on o.key = s.key
+     where o.key is null and s.ts between ? and ? order by s.ts limit ?`,
+    minTs,
+    maxTs,
+    limit,
+  );
+}
+
+/** Every resolved row, sounding and outcome joined — the calibration dataset. */
+export function resolvedPairs(): { s: Sounding; o: Outcome }[] {
+  const rows = db.prepare("select s.json sj, o.json oj from outcomes o join soundings s on s.key = o.key").all() as {
+    sj: string;
+    oj: string;
+  }[];
+  return rows.map((r) => ({ s: JSON.parse(r.sj) as Sounding, o: JSON.parse(r.oj) as Outcome }));
 }

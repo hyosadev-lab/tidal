@@ -1,6 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
-import { join } from "node:path";
-import { DATA_DIR, DEFAULT_CONFIG, loadConfig, saveConfig, sanitizeConfig, liveReady } from "./config.ts";
+import { DEFAULT_CONFIG, loadConfig, saveConfig, sanitizeConfig, liveReady } from "./config.ts";
+import { db, insertEquity, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
 import type {
   Candidate,
   EquityPoint,
@@ -14,16 +13,14 @@ import type {
   TradeConfig,
 } from "./types.ts";
 
-const STATE_PATH = join(DATA_DIR, "state.json");
 const MAX_LOGS = 400;
-const MAX_TRADES = 500;
+/** Only what the tide strip draws — the table keeps the rest. */
 const MAX_EQUITY = 2000;
 
+/** The mutable half: small, rewritten whole into `kv.state`. Trades and equity are rows. */
 type Persisted = {
   cash: number;
   positions: Position[];
-  trades: Trade[];
-  equity: EquityPoint[];
   dayStartEquity: number;
   dayStamp: string;
   peakEquity: number;
@@ -41,8 +38,6 @@ function emptyState(cfg: TradeConfig): Persisted {
   return {
     cash: cfg.paperStartEquityUsd,
     positions: [],
-    trades: [],
-    equity: [],
     dayStartEquity: cfg.paperStartEquityUsd,
     dayStamp: today(),
     peakEquity: cfg.paperStartEquityUsd,
@@ -68,44 +63,41 @@ export class Store {
   private logSeq = 1;
   private subs = new Set<(ev: string, data: unknown) => void>();
   private saveTimer: NodeJS.Timeout | null = null;
+  private lastEquityAt = 0;
 
   constructor() {
     this.config = loadConfig();
     this.s = this.read();
+    this.lastEquityAt = (db.prepare("select max(at) at from equity").get() as { at: number | null }).at ?? 0;
   }
 
   private read(): Persisted {
-    try {
-      const raw = JSON.parse(readFileSync(STATE_PATH, "utf8")) as Partial<Persisted>;
-      const base = emptyState(this.config);
-      return {
-        ...base,
-        ...raw,
-        positions: Array.isArray(raw.positions) ? raw.positions : [],
-        trades: Array.isArray(raw.trades) ? raw.trades : [],
-        equity: Array.isArray(raw.equity) ? raw.equity : [],
-        cooldowns: raw.cooldowns && typeof raw.cooldowns === "object" ? raw.cooldowns : {},
-        blacklist: Array.isArray(raw.blacklist) ? raw.blacklist : [],
-      };
-    } catch {
-      return emptyState(this.config);
-    }
+    const raw = kvGet<Partial<Persisted>>("state");
+    const base = emptyState(this.config);
+    if (!raw) return base;
+    return {
+      ...base,
+      ...raw,
+      positions: Array.isArray(raw.positions) ? raw.positions : [],
+      cooldowns: raw.cooldowns && typeof raw.cooldowns === "object" ? raw.cooldowns : {},
+      blacklist: Array.isArray(raw.blacklist) ? raw.blacklist : [],
+    };
   }
 
-  /** Debounced atomic write — the loop mutates state far more often than we need to persist. */
+  /** Debounced write — the loop mutates state far more often than we need to persist. */
   save(): void {
     if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null;
-      try {
-        mkdirSync(DATA_DIR, { recursive: true });
-        const tmp = `${STATE_PATH}.tmp`;
-        writeFileSync(tmp, JSON.stringify(this.s));
-        renameSync(tmp, STATE_PATH);
-      } catch (e) {
-        console.error("state save failed:", e);
-      }
-    }, 400);
+    this.saveTimer = setTimeout(() => this.saveNow(), 400);
+  }
+
+  saveNow(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    try {
+      kvSet("state", this.s);
+    } catch (e) {
+      console.error("state save failed:", e);
+    }
   }
 
   // ── pub/sub for SSE ───────────────────────────────────────────────
@@ -148,8 +140,13 @@ export class Store {
   get positions(): Position[] {
     return this.s.positions;
   }
-  get trades(): Trade[] {
-    return this.s.trades;
+  /** Newest first, like the array this replaced. Unbounded on disk — bounded at the query. */
+  trades(limit = 120): Trade[] {
+    return rowsJson<Trade>("select json from trades order by at desc, rowid desc limit ?", limit);
+  }
+
+  tradeCount(): number {
+    return (db.prepare("select count(*) n from trades").get() as { n: number }).n;
   }
   get cycleCount(): number {
     return this.s.cycleCount;
@@ -174,9 +171,7 @@ export class Store {
   }
 
   addTrade(t: Trade): void {
-    this.s.trades.unshift(t);
-    if (this.s.trades.length > MAX_TRADES) this.s.trades.length = MAX_TRADES;
-    this.save();
+    insertTrade(t);
     this.emit("trade", t);
   }
 
@@ -233,20 +228,26 @@ export class Store {
     const eq = this.equity;
     this.s.peakEquity = Math.max(this.s.peakEquity, eq);
     this.s.troughEquity = this.s.troughEquity ? Math.min(this.s.troughEquity, eq) : eq;
-    const last = this.s.equity[this.s.equity.length - 1];
     // one point per minute is plenty for the tide strip
-    if (!last || Date.now() - last.at > 60_000) {
-      this.s.equity.push({ at: Date.now(), equity: Number(eq.toFixed(2)) });
-      if (this.s.equity.length > MAX_EQUITY) this.s.equity.splice(0, this.s.equity.length - MAX_EQUITY);
+    if (Date.now() - this.lastEquityAt > 60_000) {
+      this.lastEquityAt = Date.now();
+      insertEquity(this.lastEquityAt, Number(eq.toFixed(2)));
       this.save();
     }
   }
 
+  equitySeries(limit = MAX_EQUITY): EquityPoint[] {
+    const rows = db.prepare("select at, equity from equity order by at desc limit ?").all(limit) as EquityPoint[];
+    return rows.reverse();
+  }
+
   stats(): Stats {
-    const closed = this.s.trades.filter((t) => t.side === "sell" && typeof t.pnlUsd === "number");
-    const wins = closed.filter((t) => (t.pnlUsd ?? 0) > 0).length;
-    const losses = closed.length - wins;
-    const realised = closed.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
+    const closed = db
+      .prepare("select count(*) n, sum(case when pnl > 0 then 1 else 0 end) wins, sum(pnl) realised from trades where side = 'sell' and pnl is not null")
+      .get() as { n: number; wins: number | null; realised: number | null };
+    const wins = closed.wins ?? 0;
+    const losses = closed.n - wins;
+    const realised = closed.realised ?? 0;
     const unrealised = this.s.positions.reduce((sum, p) => sum + (p.qty * p.lastPrice - (p.costUsd - p.realisedUsd)), 0);
     const eq = this.equity;
     const peak = Math.max(this.s.peakEquity, eq);
@@ -261,7 +262,7 @@ export class Store {
       maxDrawdownPct: peak > 0 ? ((peak - (this.s.troughEquity || eq)) / peak) * 100 : 0,
       wins,
       losses,
-      winRatePct: closed.length ? (wins / closed.length) * 100 : 0,
+      winRatePct: closed.n ? (wins / closed.n) * 100 : 0,
       dayStartEquity: this.s.dayStartEquity,
       dayPnlPct: this.s.dayStartEquity > 0 ? ((eq - this.s.dayStartEquity) / this.s.dayStartEquity) * 100 : 0,
     };
@@ -276,7 +277,7 @@ export class Store {
     if (
       this.config.paperStartEquityUsd !== before.paperStartEquityUsd &&
       !this.s.positions.length &&
-      !this.s.trades.length
+      !this.tradeCount()
     ) {
       this.s.cash = this.config.paperStartEquityUsd;
       this.s.dayStartEquity = this.config.paperStartEquityUsd;
@@ -287,7 +288,10 @@ export class Store {
     return this.config;
   }
 
+  /** Soundings and outcomes survive on purpose — they are calibration data, not the ledger. */
   reset(): void {
+    db.exec("delete from trades; delete from equity;");
+    this.lastEquityAt = 0;
     this.s = emptyState(this.config);
     this.logs = [];
     this.lastCandidates = [];
@@ -305,9 +309,9 @@ export class Store {
       haltReason: this.haltReason,
       config: this.config,
       positions: this.s.positions,
-      trades: this.s.trades.slice(0, 120),
+      trades: this.trades(120),
       logs: this.logs.slice(-160),
-      equity: this.s.equity,
+      equity: this.equitySeries(),
       stats: this.stats(),
       cycle: {
         count: this.s.cycleCount,

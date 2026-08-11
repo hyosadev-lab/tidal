@@ -4,10 +4,10 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/index.ts",
-    "cli": "node --env-file-if-exists=.env src/cli.ts",
-    "calibrate": "node --env-file-if-exists=.env src/trading/calibrate.ts",
-    "test": "node --env-file-if-exists=.env --test"
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.ts",
+    "cli": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/cli.ts",
+    "calibrate": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/trading/calibrate.ts",
+    "test": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --test"
   },
   "devDependencies": {
     "@types/node": "^26.1.2"

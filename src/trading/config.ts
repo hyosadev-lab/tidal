@@ -1,11 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { kvGet, kvSet } from "./db.ts";
 import type { Chain, Mode, StrategyRule, TradeConfig } from "./types.ts";
 
-/** Repo root — `data/` stays beside the sources, not inside `src/`. */
-export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-export const DATA_DIR = join(ROOT, "data");
+export { ROOT, DATA_DIR } from "./db.ts";
 
 export const CHAINS: Chain[] = ["sol", "bsc", "base", "eth"];
 
@@ -164,7 +160,6 @@ export const gasReserve = (cfg: TradeConfig): number => cfg.gasReserveNative || 
 /** Paper's impact cap. Live reads `slippagePct === 0` directly — that is the auto flag. */
 export const slippage = (cfg: TradeConfig): number => cfg.slippagePct || AUTO_SLIPPAGE_CAP;
 
-const CONFIG_PATH = join(DATA_DIR, "config.json");
 
 function clamp(n: unknown, lo: number, hi: number, fallback: number): number {
   const v = typeof n === "number" ? n : Number(n);
@@ -249,16 +244,12 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
 }
 
 export function loadConfig(): TradeConfig {
-  try {
-    return sanitizeConfig(JSON.parse(readFileSync(CONFIG_PATH, "utf8")));
-  } catch {
-    return { ...DEFAULT_CONFIG };
-  }
+  const saved = kvGet<Partial<TradeConfig>>("config");
+  return saved ? sanitizeConfig(saved) : { ...DEFAULT_CONFIG };
 }
 
 export function saveConfig(cfg: TradeConfig): void {
-  mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  kvSet("config", cfg);
 }
 
 /**

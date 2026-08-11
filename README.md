@@ -142,7 +142,7 @@ Yang bisa dilihat: kurva equity (garis pasang tertinggi & surut terendah), posis
 dengan P&L jalan, **Soundings** — semua token hasil scan terakhir lengkap sama alasan kenapa
 ditolak, riwayat fill, dan log streaming. Update lewat SSE, gak ada polling.
 
-State disimpan di `data/` — ledger dan setelan tetap ada setelah restart.
+State disimpan di `data/tta.db` (SQLite) — ledger dan setelan tetap ada setelah restart.
 
 ### Prompt: contoh yang bagus
 
@@ -200,6 +200,7 @@ src/
   trading/
     types.ts           tipe bersama
     config.ts          default + sanitasi (semua input dari UI diclamp di sini)
+    db.ts              satu file SQLite (data/tta.db) lewat node:sqlite
     store.ts           state, persistensi, event bus
     market.ts          feed & harga GMGN dalam bahasa engine (batas cast)
     plan.ts            gate, skor, sizing, aturan exit, prompt analis

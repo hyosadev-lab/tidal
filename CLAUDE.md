@@ -9,8 +9,9 @@ Node 22+ running TypeScript directly (native type stripping) — no build step, 
 peerDependency used for type-checking only.
 
 This is deliberate: the code sticks to `fetch` + Node stdlib so it also runs under Bun and Deno.
-Do not reach for Bun-specific APIs (`Bun.serve`, `bun:sqlite`, `Bun.file`, `Bun.$`), and do not
-add npm dependencies without being asked.
+Persistence is `node:sqlite` (stdlib, Node 22.5+; Bun 1.2+ and Deno 2.2+ implement the same
+module) — do not reach for Bun-specific APIs (`Bun.serve`, `bun:sqlite`, `Bun.file`, `Bun.$`),
+and do not add npm dependencies without being asked.
 
 ## Commands
 
@@ -31,8 +32,9 @@ it signs `swap` and `query_order`, the two routes GMGN requires a signature on. 
 to look up endpoint shapes and field semantics, and excluded from `tsconfig.json`.
 
 **One test file is not hermetic.** `src/trading/engine.test.ts` calls `engine.start()`, which
-schedules a real scan 1.5s later; that scan hits the live GMGN API and writes `data/state.json` /
-`data/config.json`. Expect network calls, a few seconds of runtime, and mutated `data/` (gitignored).
+schedules a real scan 1.5s later; that scan hits the live GMGN API and writes to `data/tta.db`.
+Expect network calls, a few seconds of runtime, and a mutated `data/` (gitignored). Point `TTA_DB`
+at a scratch file to keep a test off the real ledger — `db.test.ts` does exactly that.
 It also drives the shared `store` singleton. Every other test file is pure — put new tests in
 `plan.test.ts` unless they genuinely need the network or the store. `npm test` loads `.env`
 so the key is present.
@@ -43,6 +45,16 @@ Two entry points share `src/agent/llm.ts` + `src/agent/skills.ts`:
 
 - `src/index.ts` — the real product. Static file server + JSON control API + SSE stream, driving `src/trading/`.
 - `src/cli.ts` — older readline chat loop. Has a `bash` tool; unrelated to the trading engine.
+
+### Storage
+
+Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/trading/db.ts`
+with `node:sqlite` — stdlib, so the zero-dependency rule holds. The split is by shape:
+bounded state that the engine mutates in place (config, cash, open positions, cooldowns,
+blacklist) is a JSON blob in `kv`; unbounded append-only series (`trades`, `equity`,
+`soundings`, `outcomes`) are rows. WAL is on, so `calibrate.ts` reads while the engine trades.
+The old `state.json` / `config.json` / `*.jsonl` are imported once on first open and renamed
+`*.migrated`; that import is skipped when `TTA_DB` is set, so tests never touch `data/`.
 
 `src/gmgn/` is the transport layer both entry points share: `endpoint.ts` (`OpenApiClient`, the
 full GMGN OpenAPI surface — auth, signing, retries, and the one process-wide promise queue +
@@ -87,13 +99,14 @@ omits one, and falls back to the config's stop/trail/ladder if it is unusable. A
 |---|---|
 | `types.ts` | shared types, no logic |
 | `config.ts` | defaults, per-chain constants, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady` |
-| `store.ts` | **module-level singleton** `store`; reads `data/` on import, debounced atomic writes, pub/sub for SSE |
+| `db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path |
+| `store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE |
 | `market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing above this file speaks HTTP or touches `gmgnClient()` |
 | `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`, prompts. No I/O — this is where tests concentrate |
 | `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
 | `analyst.ts` | the model half of a cycle: the read-only tool allowlist, the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
-| `soundings.ts` | append-only JSONL of every scanned candidate + its price at scan time; written by the scan, costs no API call |
+| `soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
 
 Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
