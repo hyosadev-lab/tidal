@@ -15,6 +15,7 @@ import {
   securityRisk,
   toCandidate,
 } from "./plan.ts";
+import { recordSoundings } from "./soundings.ts";
 import { store } from "./store.ts";
 import type { Candidate, Position, StrategyRule } from "./types.ts";
 
@@ -142,6 +143,9 @@ async function runScan(): Promise<void> {
         !store.isBlacklisted(c.address),
     );
     store.lastCandidates = all.slice(0, 40);
+    // The whole sweep, not just the shown 40: `calibrate.ts` needs the rows nobody looked at
+    // as much as the ones that scored well, or it only measures what we already believed.
+    recordSoundings(cycle, cfg.chain, all);
     store.log(
       "info",
       `Cycle ${cycle}: ${all.length} tokens scanned, ${eligible.length} through the gates.`,

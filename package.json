@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/index.ts",
     "cli": "node --env-file-if-exists=.env src/cli.ts",
+    "calibrate": "node --env-file-if-exists=.env src/trading/calibrate.ts",
     "test": "node --env-file-if-exists=.env --test"
   },
   "devDependencies": {

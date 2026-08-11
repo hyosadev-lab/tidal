@@ -21,6 +21,7 @@ npm test                                      # node --test, all *.test.ts
 node --test src/trading/plan.test.ts          # one file
 node --test --test-name-pattern="stop-loss"   # one test by name
 npx tsc --noEmit                              # type check
+npm run calibrate -- --limit=0                # is score() ranking anything? (--limit=0 spends nothing)
 ```
 
 `GMGN_API_KEY` is required — every market read is an HTTP call to the GMGN OpenAPI.
@@ -92,6 +93,8 @@ omits one, and falls back to the config's stop/trail/ladder if it is unusable. A
 | `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
 | `analyst.ts` | the model half of a cycle: the read-only tool allowlist, the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
+| `soundings.ts` | append-only JSONL of every scanned candidate + its price at scan time; written by the scan, costs no API call |
+| `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
 
 Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
 top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) → `buyableSet` →

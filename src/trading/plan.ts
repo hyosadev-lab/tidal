@@ -184,7 +184,14 @@ export function gateTally(candidates: Candidate[]): string {
     .join(" · ");
 }
 
-/** 0–100 conviction from structure alone, before the model looks at it. */
+/**
+ * 0–100 conviction from structure alone, before the model looks at it.
+ *
+ * The break points that come from GMGN's published bands are marked below; every weight is
+ * judgement. `npm run calibrate` is what turns that into a measurement — it re-prices past
+ * soundings and reports each term's rank correlation with the forward return. Change a weight
+ * because that report says to, not because a number here looks tidy.
+ */
 export function score(c: Candidate): number {
   let s = 0;
 
@@ -194,11 +201,12 @@ export function score(c: Candidate): number {
 
   // Momentum, but the reward curve turns down once a move is already extended:
   // buying +400% in an hour is buying someone else's exit.
+  // The turn is at +120%; the project heuristic written down in skills/token-analysis is +150%.
   const m = c.change1hPct;
   s += m <= 0 ? 0 : m < 120 ? (m / 120) * 18 : Math.max(-16, 18 - (m - 120) / 25);
   if (c.change5mPct > 0 && c.change5mPct < 40) s += 5;
 
-  // Depth: you need to be able to get out at size.
+  // Depth: you need to be able to get out at size. Zero at $10k — GMGN's published Skip floor.
   s += Math.min(14, Math.log10(Math.max(1, c.liquidityUsd / 10_000)) * 9);
 
   // Turnover — real two-way flow rather than a single whale print.
@@ -206,7 +214,8 @@ export function score(c: Candidate): number {
   s += Math.min(12, turnover * 30);
   if (c.swaps1h > 300) s += 4;
 
-  // Structure.
+  // Structure. 0.3 is GMGN's published Skip line for rug_ratio; the 0.4 below is judgement
+  // (their bands are Pass < 0.2, Skip > 0.5).
   s += (1 - Math.min(1, c.rugRatio / 0.3)) * 8;
   s += (1 - Math.min(1, c.top10HolderRate / 0.4)) * 6;
   if (c.holderCount > 500) s += 3;

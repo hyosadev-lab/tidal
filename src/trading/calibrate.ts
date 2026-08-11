@@ -1,0 +1,252 @@
+/**
+ * Does the score rank anything? — the evidence behind `score()` in plan.ts.
+ *
+ * Reads `data/soundings.jsonl` (written by every scan), re-prices each row once it is old
+ * enough to have an answer, and reports three things:
+ *
+ *   1. score band → what those tokens actually did. If the bands are flat, the score is noise.
+ *   2. the production cut: rows the sweep ranked top-18 in their cycle vs. everything else,
+ *      since that slice is exactly what reaches the analyst.
+ *   3. rank correlation per feature. A term whose ρ is ~0 is not earning its weight; a term
+ *      whose ρ has the opposite sign to its weight is actively costing money.
+ *
+ * This does not tune anything. It hands you numbers; the weights stay hand-edited in plan.ts,
+ * because a curve fitted to a few hundred memecoins is a worse prior than a stated judgement.
+ *
+ *   npm run calibrate -- --min-age=6 --max-age=48 --limit=300
+ *
+ * `--limit=0` reports on what is already resolved without spending a single API call.
+ */
+import * as gmgn from "./market.ts";
+import { num } from "./market.ts";
+import { OUTCOMES_PATH, SOUNDINGS_PATH, readJsonl, recordOutcome, soundingKey } from "./soundings.ts";
+import type { Outcome, Sounding } from "./soundings.ts";
+import type { Candidate } from "./types.ts";
+
+/** The terms `score()` actually reads. Keep in step with it, or a new term goes unmeasured. */
+const FEATURES = [
+  "smartDegenCount",
+  "renownedCount",
+  "change1hPct",
+  "change5mPct",
+  "liquidityUsd",
+  "volume1hUsd",
+  "swaps1h",
+  "holderCount",
+  "rugRatio",
+  "top10HolderRate",
+  "ageMinutes",
+  "marketCapUsd",
+] as const satisfies readonly (keyof Candidate)[];
+
+// ── statistics (pure; tested in plan.test.ts) ─────────────────────────
+
+const mean = (v: number[]): number => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0);
+
+export function median(v: number[]): number {
+  if (!v.length) return 0;
+  const s = [...v].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+}
+
+/** Ranks with ties averaged, so a constant column ranks flat instead of by input order. */
+function ranks(v: number[]): number[] {
+  const order = v.map((x, i) => [x, i] as const).sort((a, b) => a[0] - b[0]);
+  const out = new Array<number>(v.length);
+  for (let i = 0; i < order.length; ) {
+    let j = i;
+    while (j + 1 < order.length && order[j + 1]![0] === order[i]![0]) j++;
+    const avg = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) out[order[k]![1]!] = avg;
+    i = j + 1;
+  }
+  return out;
+}
+
+/**
+ * Spearman ρ. Rank correlation rather than Pearson because memecoin returns are wildly
+ * heavy-tailed — one 40x would otherwise decide the answer on its own.
+ * Returns 0 when there is nothing to correlate (too few rows, or a constant column).
+ */
+export function spearman(xs: number[], ys: number[]): number {
+  if (xs.length !== ys.length || xs.length < 3) return 0;
+  const rx = ranks(xs);
+  const ry = ranks(ys);
+  const mx = mean(rx);
+  const my = mean(ry);
+  let cov = 0;
+  let vx = 0;
+  let vy = 0;
+  for (let i = 0; i < rx.length; i++) {
+    const a = rx[i]! - mx;
+    const b = ry[i]! - my;
+    cov += a * b;
+    vx += a * a;
+    vy += b * b;
+  }
+  return vx > 0 && vy > 0 ? cov / Math.sqrt(vx * vy) : 0;
+}
+
+export type Band = { label: string; n: number; median: number; mean: number; winRate: number; bigWinRate: number };
+
+/** Buckets rows by score into `[0,20) [20,40) …`, and describes what each bucket returned. */
+export function bands(rows: { score: number; ret: number }[], edges = [20, 40, 60, 80]): Band[] {
+  const bounds = [0, ...edges, Infinity];
+  const out: Band[] = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const lo = bounds[i]!;
+    const hi = bounds[i + 1]!;
+    const hit = rows.filter((r) => r.score >= lo && r.score < hi);
+    const rets = hit.map((r) => r.ret);
+    out.push({
+      label: hi === Infinity ? `${lo}+` : `${lo}–${hi - 1}`,
+      n: hit.length,
+      median: median(rets),
+      mean: mean(rets),
+      winRate: rets.length ? rets.filter((r) => r > 0).length / rets.length : 0,
+      bigWinRate: rets.length ? rets.filter((r) => r > 0.2).length / rets.length : 0,
+    });
+  }
+  return out;
+}
+
+// ── resolving (the only part that spends API calls) ───────────────────
+
+/**
+ * Prices every sounding old enough to have an answer, once. Results are appended to
+ * outcomes.jsonl, so a later run never re-fetches a row — the dataset accumulates across
+ * runs instead of being rebuilt.
+ *
+ * Rows younger than `minAgeH` are left alone deliberately: resolving one at 10 minutes old
+ * would lock in a meaningless answer forever.
+ */
+async function resolve(minAgeH: number, maxAgeH: number, limit: number): Promise<number> {
+  const done = new Set(readJsonl<Outcome>(OUTCOMES_PATH).map((o) => o.key));
+  const now = Date.now();
+  const pending = readJsonl<Sounding>(SOUNDINGS_PATH)
+    .filter((s) => {
+      const age = (now - s.ts) / 3_600_000;
+      return age >= minAgeH && age <= maxAgeH && s.c.priceUsd > 0 && !done.has(soundingKey(s));
+    })
+    // Oldest first: those are closest to falling out of the max-age window entirely.
+    .sort((a, b) => a.ts - b.ts)
+    .slice(0, limit);
+
+  if (!pending.length) return 0;
+  process.stdout.write(`resolving ${pending.length} soundings`);
+  for (const s of pending) {
+    let priceNow: number | null = null;
+    try {
+      const info = await gmgn.tokenInfo(s.chain, s.c.address);
+      const p = num(info?.price?.price);
+      priceNow = p > 0 ? p : null;
+    } catch {
+      priceNow = null; // delisted, or the call failed — indistinguishable from here
+    }
+    recordOutcome({
+      key: soundingKey(s),
+      ageHours: Number(((now - s.ts) / 3_600_000).toFixed(2)),
+      priceThen: s.c.priceUsd,
+      priceNow,
+    });
+    process.stdout.write(".");
+  }
+  process.stdout.write("\n");
+  return pending.length;
+}
+
+// ── report ────────────────────────────────────────────────────────────
+
+const pct = (x: number): string => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+const rho = (x: number): string => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
+
+function report(minAgeH: number, maxAgeH: number): void {
+  const soundings = new Map(readJsonl<Sounding>(SOUNDINGS_PATH).map((s) => [soundingKey(s), s]));
+  const outcomes = readJsonl<Outcome>(OUTCOMES_PATH);
+
+  const rows: { s: Sounding; ret: number; age: number }[] = [];
+  let unreadable = 0;
+  for (const o of outcomes) {
+    const s = soundings.get(o.key);
+    if (!s || o.priceThen <= 0) continue;
+    if (o.priceNow === null) {
+      unreadable++;
+      continue;
+    }
+    rows.push({ s, ret: (o.priceNow - o.priceThen) / o.priceThen, age: o.ageHours });
+  }
+
+  console.log(`\nsoundings ${soundings.size} · resolved ${rows.length} · unreadable ${unreadable}`);
+  if (unreadable) {
+    const share = unreadable / (rows.length + unreadable);
+    console.log(
+      `  ${pct(share).replace("+", "")} of resolved rows had no readable price. A delisted token and a` +
+        ` failed call look the same from here, so they are excluded — if most were dead tokens,` +
+        ` every number below is optimistic.`,
+    );
+  }
+  if (rows.length < 30) {
+    console.log(`\nToo few resolved rows to read anything into. Let the agent run; re-run this in a day.`);
+    console.log(`(rows become resolvable ${minAgeH}h after their scan, and expire at ${maxAgeH}h.)\n`);
+    return;
+  }
+
+  const ages = rows.map((r) => r.age);
+  console.log(`horizon ${minAgeH}–${maxAgeH}h · median hold ${median(ages).toFixed(1)}h\n`);
+
+  console.log(`score      n     median      mean     win%    >+20%`);
+  for (const b of bands(rows.map((r) => ({ score: r.s.c.score, ret: r.ret })))) {
+    if (!b.n) continue;
+    console.log(
+      `${b.label.padEnd(8)}${String(b.n).padStart(4)}` +
+        `${pct(b.median).padStart(11)}${pct(b.mean).padStart(10)}` +
+        `${(b.winRate * 100).toFixed(0).padStart(8)}%${(b.bigWinRate * 100).toFixed(0).padStart(8)}%`,
+    );
+  }
+
+  // The cut the engine actually makes: top 18 by score within each cycle reaches the analyst.
+  const byCycle = new Map<number, typeof rows>();
+  for (const r of rows) byCycle.set(r.s.cycle, [...(byCycle.get(r.s.cycle) ?? []), r]);
+  const shown: number[] = [];
+  const rest: number[] = [];
+  for (const group of byCycle.values()) {
+    const ranked = [...group].sort((a, b) => b.s.c.score - a.s.c.score);
+    ranked.forEach((r, i) => (i < 18 ? shown : rest).push(r.ret));
+  }
+  console.log(
+    `\ntop-18 cut (what reaches the analyst): median ${pct(median(shown))} on ${shown.length}` +
+      ` · rest ${pct(median(rest))} on ${rest.length}`,
+  );
+
+  const rets = rows.map((r) => r.ret);
+  console.log(`\nrank correlation with forward return`);
+  console.log(`  ${"score (composite)".padEnd(20)}${rho(spearman(rows.map((r) => r.s.c.score), rets))}`);
+  const ranked = FEATURES.map(
+    (f) => [f, spearman(rows.map((r) => Number(r.s.c[f] ?? 0)), rets)] as const,
+  ).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  for (const [f, r] of ranked) console.log(`  ${f.padEnd(20)}${rho(r)}`);
+  console.log(
+    `\nρ is Spearman on ${rows.length} rows: +1 perfect ranking, 0 none, −1 inverted. Anything` +
+      ` inside ±0.05 here is indistinguishable from noise at this sample size.\n`,
+  );
+}
+
+async function main(): Promise<void> {
+  const arg = (k: string, d: number): number => {
+    const v = process.argv.find((a) => a.startsWith(`--${k}=`))?.split("=")[1];
+    return v === undefined || Number.isNaN(Number(v)) ? d : Number(v);
+  };
+  const minAge = arg("min-age", 6);
+  const maxAge = arg("max-age", 48);
+  const limit = arg("limit", 300);
+
+  if (!readJsonl<Sounding>(SOUNDINGS_PATH).length) {
+    console.log(`No soundings yet — ${SOUNDINGS_PATH} is empty. Run the agent for a few cycles first.`);
+    return;
+  }
+  if (limit > 0) await resolve(minAge, maxAge, limit);
+  report(minAge, maxAge);
+}
+
+if (process.argv[1]?.endsWith("calibrate.ts")) await main();
