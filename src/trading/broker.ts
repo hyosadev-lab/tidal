@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { NATIVE, slippage } from "./config.ts";
+import { NATIVE, num, slippage } from "./config.ts";
 import * as gmgn from "./market.ts";
-import { num } from "./market.ts";
 import type { store as Store } from "./store.ts";
 import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "./types.ts";
 

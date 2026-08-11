@@ -98,13 +98,13 @@ omits one, and falls back to the config's stop/trail/ladder if it is unusable. A
 | File | Role |
 |---|---|
 | `types.ts` | shared types, no logic |
-| `config.ts` | defaults, per-chain constants, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady` |
+| `config.ts` | defaults, per-chain constants, `num`, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady`. Imports nothing but `types.ts` — keep it that way, it is what lets `plan.ts` stay I/O-free |
 | `db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path |
 | `store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE |
 | `market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing above this file speaks HTTP or touches `gmgnClient()` |
-| `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`, prompts. No I/O — this is where tests concentrate |
+| `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`. No I/O, and importing it must not open the database or the API client — this is where tests concentrate |
 | `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
-| `analyst.ts` | the model half of a cycle: the read-only tool allowlist, the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
+| `analyst.ts` | the model half of a cycle: the read-only tool allowlist, the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
 | `soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |

@@ -17,8 +17,8 @@
  *
  * `--limit=0` reports on what is already resolved without spending a single API call.
  */
+import { num } from "./config.ts";
 import * as gmgn from "./market.ts";
-import { num } from "./market.ts";
 import { recordOutcome, resolvedPairs, soundingCount, soundingKey, unresolved } from "./soundings.ts";
 import type { Sounding } from "./soundings.ts";
 import type { Candidate } from "./types.ts";

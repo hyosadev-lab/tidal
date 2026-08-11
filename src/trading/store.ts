@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, loadConfig, saveConfig, sanitizeConfig, liveReady } from "./config.ts";
+import { DEFAULT_CONFIG, sanitizeConfig, liveReady } from "./config.ts";
 import { db, insertEquity, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
 import type {
   Candidate,
@@ -32,6 +32,16 @@ type Persisted = {
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** The config is persisted state like any other, so it is read and written here, not in `config.ts`. */
+function loadConfig(): TradeConfig {
+  const saved = kvGet<Partial<TradeConfig>>("config");
+  return saved ? sanitizeConfig(saved) : { ...DEFAULT_CONFIG };
+}
+
+function saveConfig(cfg: TradeConfig): void {
+  kvSet("config", cfg);
 }
 
 function emptyState(cfg: TradeConfig): Persisted {

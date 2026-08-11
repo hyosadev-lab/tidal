@@ -1,7 +1,11 @@
-import { kvGet, kvSet } from "./db.ts";
 import type { Chain, Mode, StrategyRule, TradeConfig } from "./types.ts";
 
-export { ROOT, DATA_DIR } from "./db.ts";
+/**
+ * Constants, defaults and the clamps every dashboard input passes through — and nothing else.
+ * This file has no imports beyond types on purpose: it is the floor of the pure layer, so
+ * `plan.ts` can reach the clamps without dragging the database in behind them. Persistence
+ * of the config lives with the rest of the persisted state, in `store.ts`.
+ */
 
 export const CHAINS: Chain[] = ["sol", "bsc", "base", "eth"];
 
@@ -161,6 +165,16 @@ export const gasReserve = (cfg: TradeConfig): number => cfg.gasReserveNative || 
 export const slippage = (cfg: TradeConfig): number => cfg.slippagePct || AUTO_SLIPPAGE_CAP;
 
 
+/**
+ * Every number off the GMGN wire arrives as `unknown` — string, number, null, or absent.
+ * This is the one coercion for all of them, and it lives here rather than in `market.ts`
+ * so the pure layer can read a feed row without importing the HTTP client to do it.
+ */
+export const num = (v: unknown, d = 0): number => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : d;
+};
+
 function clamp(n: unknown, lo: number, hi: number, fallback: number): number {
   const v = typeof n === "number" ? n : Number(n);
   if (!Number.isFinite(v)) return fallback;
@@ -241,15 +255,6 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     paperStartEquityUsd: clamp(input.paperStartEquityUsd, 10, 10_000_000, base.paperStartEquityUsd),
     walletAddress: typeof input.walletAddress === "string" ? input.walletAddress.trim().slice(0, 80) : base.walletAddress,
   };
-}
-
-export function loadConfig(): TradeConfig {
-  const saved = kvGet<Partial<TradeConfig>>("config");
-  return saved ? sanitizeConfig(saved) : { ...DEFAULT_CONFIG };
-}
-
-export function saveConfig(cfg: TradeConfig): void {
-  kvSet("config", cfg);
 }
 
 /**

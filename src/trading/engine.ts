@@ -1,8 +1,8 @@
 import { askAnalyst } from "./analyst.ts";
-import { SKIP, gasReserve, liveReady, minPosition, refineQuery } from "./config.ts";
+import { SKIP, gasReserve, liveReady, minPosition, num, refineQuery } from "./config.ts";
 import * as broker from "./broker.ts";
 import * as gmgn from "./market.ts";
-import { NATIVE_SYMBOL, num } from "./market.ts";
+import { NATIVE_SYMBOL } from "./market.ts";
 import {
   buyableSet,
   entryStrategy,

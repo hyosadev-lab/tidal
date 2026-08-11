@@ -1,5 +1,6 @@
 import { gmgnClient } from "../gmgn/client.ts";
 import type { SwapParams } from "../gmgn/endpoint.ts";
+import { num } from "./config.ts";
 import type { Chain } from "./types.ts";
 
 /**
@@ -13,11 +14,6 @@ import type { Chain } from "./types.ts";
  */
 
 const client = () => gmgnClient();
-
-export const num = (v: unknown, d = 0): number => {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : d;
-};
 
 /** Rows arrive at the top level, under a named key, or under `data.<key>` depending on the route. */
 const list = (r: any, ...keys: string[]): any[] => {
