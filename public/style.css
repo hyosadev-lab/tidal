@@ -592,6 +592,10 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
   padding: 22px;
 }
 
+/* The native <dialog> used for confirmations — same panel, UA colours reset. */
+dialog.dialog { color: var(--foam); }
+dialog.dialog::backdrop { background: rgba(3, 10, 12, .82); }
+
 .dialog h3 { margin: 0 0 12px; font-family: var(--serif); font-size: 24px; font-weight: 400; }
 .dialog p { margin: 0 0 12px; font-size: 13px; color: var(--foam); }
 .dialog .fine { font-size: 11.5px; color: var(--haze); }

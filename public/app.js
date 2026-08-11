@@ -580,14 +580,37 @@ $("btn-run").addEventListener("click", async () => {
 
 $("btn-scan").addEventListener("click", () => post("/api/scan"));
 
-$("btn-reset").addEventListener("click", () => {
-  if (confirm("Clear all positions, trades and the equity history? This cannot be undone.")) post("/api/reset");
+/**
+ * In-page confirmation. window.confirm() is auto-dismissed — it returns false without ever
+ * painting — inside embedded browsers, which made every guarded action silently do nothing.
+ */
+function ask(text, okLabel) {
+  const d = $("ask");
+  $("ask-text").textContent = text;
+  $("ask-ok").textContent = okLabel;
+  d.returnValue = "";
+  d.showModal();
+  return new Promise((resolve) => d.addEventListener("close", () => resolve(d.returnValue === "ok"), { once: true }));
+}
+
+$("btn-reset").addEventListener("click", async () => {
+  if (await ask("Clear all positions, trades and the equity history? This cannot be undone.", "Clear ledger"))
+    post("/api/reset");
 });
 
-document.addEventListener("click", (e) => {
+// No confirmation on the way out: getting out fast is the point, and the sell is one click.
+document.addEventListener("click", async (e) => {
   const b = e.target.closest("[data-close]");
   if (!b) return;
-  if (confirm("Sell this position in full?")) post("/api/close", { id: b.dataset.close, percent: 100 });
+  // A live sell is a swap plus a price read — several seconds. Say so, and don't let it be
+  // clicked twice; the row disappears on the snapshot that follows.
+  b.disabled = true;
+  b.textContent = "Closing…";
+  await post("/api/close", { id: b.dataset.close, percent: 100 });
+  if (b.isConnected) {
+    b.disabled = false;
+    b.textContent = "Close";
+  }
 });
 
 // ── stream ────────────────────────────────────────────────────────────

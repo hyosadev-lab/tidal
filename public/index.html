@@ -241,6 +241,18 @@
   </div>
 </div>
 
+<!-- confirmations. Not window.confirm(): embedded browsers (the preview pane, some webviews)
+     auto-dismiss native dialogs, so it returns false instantly and the click does nothing. -->
+<dialog class="dialog" id="ask">
+  <form method="dialog">
+    <p id="ask-text"></p>
+    <div class="dialog-actions">
+      <button class="btn btn-quiet" value="">Cancel</button>
+      <button class="btn btn-danger" id="ask-ok" value="ok">Confirm</button>
+    </div>
+  </form>
+</dialog>
+
 <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -328,6 +328,9 @@ async function closePosition(p: Position, percentOfOriginal: number, reason: str
       store.save();
     }
     checkDailyLoss();
+    // The dashboard only repaints on a snapshot. Without this, a sell is invisible until the
+    // next monitor tick — and if the agent is stopped, a manual close never appears at all.
+    store.push();
   } catch (e) {
     store.log("error", `Sell ${p.symbol} errored: ${short(e)}`);
   }
