@@ -51,6 +51,12 @@ const dur = (ms) => {
   return h < 24 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
 };
 
+// dur() rounds to the minute — fine for ages, useless for a countdown ticking every second.
+const countdown = (ms) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : dur(ms);
+};
+
 const clock = (ts) =>
   new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
@@ -156,7 +162,7 @@ function render(s) {
   $("s-winrate").textContent = st.wins + st.losses ? `${st.winRatePct.toFixed(0)}% · ${st.wins}/${st.wins + st.losses}` : "—";
   $("s-dd").textContent = `${st.maxDrawdownPct.toFixed(1)}%`;
   $("s-next").textContent =
-    s.runState === "running" && s.cycle.nextRunAt ? dur(Math.max(0, s.cycle.nextRunAt - Date.now())) : "—";
+    s.runState === "running" && s.cycle.nextRunAt ? countdown(s.cycle.nextRunAt - Date.now()) : "—";
 
   if (!dirty) fillForm(c, s);
   renderPositions(s);
@@ -636,6 +642,6 @@ setInterval(() => {
   if (!state) return;
   $("s-next").textContent =
     state.runState === "running" && state.cycle.nextRunAt
-      ? dur(Math.max(0, state.cycle.nextRunAt - Date.now()))
+      ? countdown(state.cycle.nextRunAt - Date.now())
       : "—";
 }, 1000);
