@@ -38,3 +38,6 @@ data/
 
 # reference clone of the gmgn-cli source, read-only (see CLAUDE.md)
 gmgn-skills/
+
+# knowledge graph output (/graphify)
+graphify-out/

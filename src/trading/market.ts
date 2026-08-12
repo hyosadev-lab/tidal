@@ -71,7 +71,7 @@ export async function trending(
   if (opts.minCreated) q["min_created"] = opts.minCreated;
   if (opts.platforms?.length) q["platforms"] = opts.platforms;
   // Last word to the operator: a Refine row overrides the caller's floor for the same param.
-  // Only the query moves — `runGates` still disqualifies whatever comes back below SKIP.
+  // Only the query moves — what comes back is scored, not gated on these.
   Object.assign(q, opts.refine);
   return list(await client().getTrendingSwaps(chain, opts.interval ?? "1h", q), "rank");
 }

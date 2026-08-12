@@ -258,6 +258,10 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
   };
 
   const system = systemPrompt(cfg) + userPromptBlock(cfg) + skillIndex(skills);
+  // Model and skill loading are both env-dependent and both fail silently: a missing .env
+  // falls back to the default model, a missing skills/ dir drops load_skill. Print both so
+  // two hosts behaving differently can be compared from the log alone.
+  store.log("model", `Analyst: ${process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5 (default)"} · ${Object.keys(analystTools).length} tools · ${skills.length} skills`);
   const prompt = `Cycle brief:\n\n${JSON.stringify(brief, null, 1)}\n\nReturn the JSON decision.`;
 
   try {

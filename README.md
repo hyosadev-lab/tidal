@@ -35,31 +35,32 @@ Tiga feed digabung: `market trending` 1 jam, `market trending` 5 menit, dan `mar
 
 ### 2. Gate — gagal satu, gugur
 
-Gate adalah salinan kolom 🔴 Skip dari tabel "Pass / Watch / Skip Criteria" di dokumentasi
-GMGN (`skills/gmgn-market/SKILL.md`). Tidak ada angka karangan sendiri di sini.
+Gate-nya cuma empat, dan gak ada satu pun yang menilai struktur token:
 
-| Gate | Default |
+| Gate | Kenapa |
 |---|---|
-| smart money | >= 1 wallet |
-| `rug_ratio` | <= 0.3 |
-| `creator_token_status` | bukan `creator_hold` |
-| wash trading | tolak langsung |
-| top-10 holder | <= 50% |
-| likuiditas | >= $10k |
-| honeypot | tolak langsung |
+| wash trading | volumenya palsu, angka apa pun di atasnya gak ada artinya |
+| honeypot | bisa beli, gak bisa jual (EVM saja — di Solana kolomnya kosong) |
+| tanpa alamat | integritas data |
+| tanpa harga | integritas data |
 
-Ambang ini adalah batas "jangan disentuh sama sekali", bukan batas "layak dibeli". Pita
-🟡 Watch sengaja diloloskan — yang menghukumnya skor, bukan gate. Token dengan kolam $12k dan
-rug 0.28 akan lolos, lalu jadi urusan analis untuk menolaknya.
+Dua yang pertama kebijakan risiko, dua terakhir penjaga integritas data supaya kandidat rusak
+gak lolos ke sizing. Itu isi `runGates` (`src/trading/plan.ts`) selengkapnya.
 
-**Tidak ada satu pun yang bisa diatur dari dashboard.** Angkanya ada di konstanta `SKIP`
-(`src/trading/config.ts`) dan bukan bagian dari `TradeConfig` — ini ambang yang dipublikasikan
-untuk hal yang didiskualifikasi, jadi tidak ada yang perlu ditala. Kalau mau berdagang lebih
-ketat dari lantai ini, tulis di kolom instruksi dashboard: di situ analis bisa menindaklanjutinya,
-tanpa membuat angka karangan yang menyandang nama tabel.
+**Smart money, `rug_ratio`, top-10 holder, kedalaman kolam, dan status dev gak menggugurkan
+apa-apa.** Semuanya tetap dibaca, dikasih bobot sama `score()`, ditampilin ke analis, dan bisa
+disaring per-feed lewat panel **Refine** di dashboard — tapi gak ada yang didiskualifikasi
+karenanya. Ini keputusan operator, bukan kelupaan, dan konsekuensinya perlu diinget: token
+dengan kolam $2k, tanpa smart money, dan dev masih megang bakal nyampe ke analis kelihatan sama
+aja kayak baris lain. Yang berdiri antara dia dan posisi cuma analis, filter Refine, dan
+penolakan pre-trade di bawah.
 
-Dua hal yang bukan kebijakan risiko juga masih menggugurkan kandidat: token tanpa alamat dan
-tanpa harga. Itu penjaga integritas data, supaya kandidat rusak tidak lolos ke sizing.
+Konstanta `SKIP` (`src/trading/config.ts`) masih ada, tapi sekarang cuma jadi bibit query
+sweep-nya: `minLiquidityUsd` dan `minSmartDegenCount` dikirim sebagai filter feed di
+`gatherCandidates` (`src/trading/engine.ts`). Jadi mereka nentuin apa yang **diambil**, bukan
+apa yang **ditolak** — baris Refine yang diisi bakal nimpa mereka. Angkanya sendiri tetap
+salinan kolom 🔴 Skip dari tabel "Pass / Watch / Skip Criteria" di
+`skills/gmgn-market/SKILL.md`; gak ada angka karangan sendiri di sini.
 
 Sisanya bukan gate, tapi **penolakan pre-trade** — sekali per entry, lewat `token_security`,
 karena cuma route itu yang jawabannya bisa dipercaya (baris feed sering mengosongkannya):
@@ -135,7 +136,9 @@ jalan lagi sampai besok atau sampai kamu start manual. Reset otomatis tengah mal
 - **Start / Stop** — posisi terbuka sengaja dibiarkan pas stop; tutup manual kalau mau keluar
 - **Instructions** — prompt opsional buat ngarahin analis, plus 4 preset siap pakai
 - **Interval** — menit antar scan; exit tetap dicek tiap 30 detik
-- **Risk envelope & Entry gates** — semua angka di atas bisa diubah dari UI
+- **Risk envelope** — semua angka di atas bisa diubah dari UI
+- **Refine** — filter per-feed (umur, likuiditas, mcap, KOL, smart money, top-10, dev, insider);
+  nyaring apa yang di-fetch, bukan gate
 - **Scan now** — paksa satu siklus tanpa nunggu timer
 
 Yang bisa dilihat: kurva equity (garis pasang tertinggi & surut terendah), posisi terbuka

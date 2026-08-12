@@ -40,18 +40,19 @@ export const EXPLORER: Record<Chain, string> = {
 };
 
 /**
- * GMGN's 🔴 Skip column, transcribed from the "Pass / Watch / Skip Criteria" table in
- * `skills/gmgn-market/SKILL.md`. Not in `TradeConfig` and not on the dashboard: these are the
- * published thresholds for what is disqualified, so there is nothing here for an operator to
- * tune — a different number would just be an invented one wearing the table's name.
+ * What the sweep asks GMGN for by default — transcribed from the 🔴 Skip column of the
+ * "Pass / Watch / Skip Criteria" table in `skills/gmgn-market/SKILL.md`, because GMGN's own
+ * floor for "not worth looking at" is a reasonable floor for "not worth fetching".
  *
- * They are a floor, not a strategy. Everything above them still has to earn its place through
- * `score()` and the analyst. To trade something tighter, say so in the dashboard prompt.
+ * These are **not** gates and nothing downstream disqualifies a row for falling under them:
+ * `runGates` never reads this. `gatherCandidates` (engine.ts) passes them as feed query
+ * params, and a Refine row overrides them. Structural quality is `score()`'s job now.
+ *
+ * Only the two fields the feeds actually take live here — `rug_ratio` and top-10 rate were
+ * dropped when this stopped being a gate; the graduates feed caps rug at 0.3 on its own.
  */
 export const SKIP = {
   minLiquidityUsd: 10_000,
-  maxRugRatio: 0.3,
-  maxTop10HolderRate: 0.5,
   minSmartDegenCount: 1,
 } as const;
 
@@ -245,7 +246,7 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     timeStopMinPnlPct: clamp(input.timeStopMinPnlPct, -50, 500, base.timeStopMinPnlPct),
     cooldownMinutes: clamp(input.cooldownMinutes, 0, 10080, base.cooldownMinutes),
 
-    // The gate thresholds are not here — see SKIP. These only narrow the feed queries.
+    // Feed query filters, not gates — they narrow what the sweep fetches. See SKIP.
     refine: sanitizeRefine(input.refine),
     // 0 is not a tolerance, it is the auto flag — same convention as the two fields below.
     slippagePct: Math.round(clamp(input.slippagePct, 0, 100, base.slippagePct)),
