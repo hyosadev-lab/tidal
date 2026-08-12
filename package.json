@@ -5,7 +5,6 @@
   "private": true,
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.ts",
-    "cli": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/cli.ts",
     "calibrate": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/trading/calibrate.ts",
     "test": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --test"
   },

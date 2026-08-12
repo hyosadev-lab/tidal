@@ -86,9 +86,8 @@ export function buyableSet(eligible: Candidate[], blocked: Set<string>): Map<str
  * Three things are checked:
  *   • buy / sell tax above 10% — every chain. A token you can buy and sell but only at a 40%
  *     haircut is not a honeypot and no gate in the GMGN criteria table covers it; the
- *     threshold is that table's own 🔴 band for `buy_tax` / `sell_tax`
- *     (skills/gmgn-token/SKILL.md). Absent fields read as 0, as they do on Solana, where the
- *     concept does not exist.
+ *     threshold is that table's own 🔴 band for `buy_tax` / `sell_tax`. Absent fields read as
+ *     0, as they do on Solana, where the concept does not exist.
  *   • mint / freeze authority — Solana only. A live mint authority lets the creator print
  *     supply on top of you; a live freeze authority lets them freeze the account so you can
  *     never sell. Solana launchpads revoke both at creation, so in practice this only
@@ -200,7 +199,7 @@ export function score(c: Candidate): number {
 
   // Momentum, but the reward curve turns down once a move is already extended:
   // buying +400% in an hour is buying someone else's exit.
-  // The turn is at +120%; the project heuristic written down in skills/token-analysis is +150%.
+  // The turn is at +120%; the project's own written heuristic was +150%.
   const m = c.change1hPct;
   s += m <= 0 ? 0 : m < 120 ? (m / 120) * 18 : Math.max(-16, 18 - (m - 120) / 25);
   if (c.change5mPct > 0 && c.change5mPct < 40) s += 5;

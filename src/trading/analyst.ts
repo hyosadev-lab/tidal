@@ -1,106 +1,17 @@
-import { runAgent, type Tool } from "../agent/llm.ts";
-import { loadSkills, skillIndex, skillTool } from "../agent/skills.ts";
-import { tools as allTools } from "../agent/tools.ts";
+import { runAgent } from "../agent/llm.ts";
 import { entryStrategy, pnlPct } from "./plan.ts";
 import { store } from "./store.ts";
 import type { Candidate, Decision, StrategyRule, TradeConfig } from "./types.ts";
 
 /**
- * The model half of a cycle: what the analyst is told, what it may look up, and what
- * comes back. `engine.ts` owns everything that spends money; nothing here does.
+ * The model half of a cycle: what the analyst is told, and what comes back.
+ * `engine.ts` owns everything that spends money; nothing here does.
  *
- * Both the tools and the skills are now the shared ones — `src/agent/tools.ts` and the
- * top-level `skills/` — so there is one description of the GMGN surface instead of two
- * that drift. What the analyst may *do* with them is narrowed here, by allowlist.
+ * One call, no tools. The brief already carries price, size, age, concentration and
+ * smart-money counts for every row — that is what the analyst judges on. It cannot look
+ * anything up, which also means it cannot spend GMGN's rate limit (shared with the sweep
+ * that feeds it) or be talked into calling a route by a token name.
  */
-const skills = await loadSkills(new URL("../../skills", import.meta.url).pathname).catch(() => []);
-
-/**
- * The analyst's tool set: read-only research, named one by one.
- *
- * An allowlist, not a filter over `allTools` — a tool added to `src/agent/tools.ts` is not in
- * the analyst's hands until someone writes its name here. That is the point: this loop runs
- * unattended every few minutes, on rows whose names and descriptions were written by whoever
- * deployed the contract, so the safe default when the shared tool set grows is "no".
- *
- * Deliberately absent: `bash` (a shell on the operator's machine), every route that spends or
- * commits to spending, and the operator's own wallet routes. Execution is the engine's job;
- * an analyst that cannot spend money cannot be talked into spending money by a token name.
- */
-const ANALYST_TOOL_NAMES = [
-  // No discovery feeds. `gmgn_trending`, `gmgn_trenches`, `gmgn_token_signal` and
-  // `gmgn_hot_searches` all answer "which tokens exist" — that is `gatherCandidates`, and only
-  // the brief is buyable, so a feed pull here just costs a call. This list is now exactly the
-  // routes `skills/token-analysis` walks. Cost of that: `sniper_count` is unreachable (no
-  // `stat.*` equivalent); bundler rate and dev status still come from `gmgn_token_info`.
-  // one token, in depth
-  "gmgn_token_info",
-  "gmgn_token_security",
-  "gmgn_token_pool_info",
-  "gmgn_token_top_holders",
-  "gmgn_token_top_traders",
-  "gmgn_token_kline",
-  // whose money is moving
-  "gmgn_smart_money",
-  "gmgn_kol",
-  "gmgn_wallet_stats",
-] as const;
-
-const analystTools: Record<string, Tool> = {};
-for (const name of ANALYST_TOOL_NAMES) {
-  const tool = allTools[name];
-  // Fail at import rather than run silently with a smaller tool set: a rename in
-  // agent/tools.ts should break the build, not quietly remove a research step.
-  if (!tool) throw new Error(`analyst tool "${name}" is missing from src/agent/tools.ts`);
-  analystTools[name] = tool;
-}
-Object.assign(analystTools, skillTool(skills));
-
-/**
- * The research budget, enforced here rather than asked for in the prompt.
- *
- * GMGN's limiter is a leaky bucket — 20 tokens, refilled at 20/s, shared process-wide — and the
- * routes this loop wants are not free: `token_top_holders` weighs 5, `token_kline` 2. An analyst
- * that walks a shortlist of 18 spends the bucket in one cycle, and every 429 adds 5s to the
- * cooldown, so the punishment for over-researching outlives the cycle that caused it.
- *
- * So one candidate gets the deep dive and the rest are judged from the brief, which already
- * carries price, size, age, concentration and smart-money counts for every row. Open positions
- * are exempt: they are already ours, bounded by `maxOpenPositions`, and an early exit has to be
- * argued from evidence the mechanical rules cannot see.
- *
- * Over budget returns a sentence, never a throw — the model reads it as a result and decides with
- * what it has, where an exception would end the cycle with no decision at all.
- */
-const RESEARCH_CANDIDATES = 1;
-const RESEARCH_CALLS = 12;
-
-function budgetedTools(held: Set<string>, base: Record<string, Tool> = analystTools): Record<string, Tool> {
-  let calls = 0;
-  const researched = new Set<string>();
-  const out: Record<string, Tool> = {};
-  for (const [name, tool] of Object.entries(base)) {
-    // Skill loads cost no API call, so they are not part of the budget.
-    if (!name.startsWith("gmgn_")) {
-      out[name] = tool;
-      continue;
-    }
-    out[name] = {
-      ...tool,
-      run: async (args: any) => {
-        const address = typeof args?.address === "string" ? args.address.toLowerCase() : "";
-        if (address && !held.has(address) && !researched.has(address)) {
-          if (researched.size >= RESEARCH_CANDIDATES)
-            return `Refused: one candidate gets researched per cycle and this cycle it is ${[...researched][0]}. Judge the rest from the brief.`;
-          researched.add(address);
-        }
-        if (++calls > RESEARCH_CALLS) return `Refused: the ${RESEARCH_CALLS}-call research budget for this cycle is spent. Decide with what you have.`;
-        return tool.run(args);
-      },
-    };
-  }
-  return out;
-}
 
 // ── the brief ─────────────────────────────────────────────────────────
 //
@@ -175,15 +86,7 @@ function systemPrompt(cfg: TradeConfig): string {
 
 Each cycle you read the pre-screened candidates and the open book, then return a JSON decision. You do not place orders and you do not manage exits — the engine does that.
 
-The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. You have read-only GMGN tools to research those candidates as deeply as you like, and you may look at anything else for context, but an address that is not in the brief has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot. Every tool call takes a \`chain\` argument: it is always "${cfg.chain}".
-
-RESEARCH BUDGET — read this before your first tool call.
-
-Rank the brief first, on the numbers already in it. Then pick the **single** most promising candidate and research that one; the tools refuse a second candidate's address for the rest of the cycle, and the whole cycle is capped at ${RESEARCH_CALLS} GMGN calls. This is not a suggestion you can spend your way around: the API's rate limiter is shared with the sweep that feeds you, and exhausting it delays the next cycle for everyone. Addresses already in \`open_positions\` are exempt — check those whenever an exit needs evidence.
-
-A candidate you did not research is still buyable on the brief alone, and passing on all of them is still a complete answer. Choose the one worth the calls.
-
-Load the \`token-analysis\` skill before you judge a token. It has the procedure, the hard refusals, and the field-level traps — it tells you which route actually carries each number (bundler rate and dev status are \`stat.*\`/\`dev.*\` in the token detail, not top-level), which ones nothing you can call will give you, and the ratio-versus-percentage mistake, which is the most expensive one available here. Your tools analyse one token at a time; there is no feed to browse, so a number you cannot reach is a stated blank, not a reason to go looking.
+The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. You have no tools and cannot look anything up: the brief is the whole evidence base, and an address that is not in it has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot. A number the brief does not carry is a stated blank, not something to guess at.
 
 THE PLAN YOU ARE OPERATING INSIDE
 
@@ -212,7 +115,7 @@ Prefer no trade to a marginal trade. An empty entries array is a valid, common, 
 
 EARLY EXITS
 
-Ask for one only on evidence the mechanical rules cannot see: smart money that bought is now distributing, the dev is dumping, liquidity is being pulled, the thesis you wrote is plainly dead. Do not ask for an exit merely because a position is red — the stop-loss owns that decision.
+Ask for one only on evidence the mechanical rules cannot see — the thesis you wrote is plainly dead on the numbers now in front of you. Do not ask for an exit merely because a position is red: the stop-loss owns that decision.
 
 OUTPUT
 
@@ -309,28 +212,14 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
     })),
   };
 
-  const system = systemPrompt(cfg) + userPromptBlock(cfg) + skillIndex(skills);
-  // Model and skill loading are both env-dependent and both fail silently: a missing .env
-  // falls back to the default model, a missing skills/ dir drops load_skill. Print both so
-  // two hosts behaving differently can be compared from the log alone.
-  store.log("model", `Analyst: ${process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5 (default)"} · ${Object.keys(analystTools).length} tools · ${skills.length} skills`);
+  const system = systemPrompt(cfg) + userPromptBlock(cfg);
+  // The model is env-dependent and fails silently — a missing .env falls back to the
+  // default. Print it so two hosts behaving differently can be compared from the log alone.
+  store.log("model", `Analyst: ${process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5 (default)"}`);
   const prompt = `Cycle brief:\n\n${JSON.stringify(brief, null, 1)}\n\nReturn the JSON decision.`;
 
   try {
-    // Research is per-token now rather than per-feed, so the ceiling is about how many
-    // candidates get a second look. Raise it only if logs show the analyst running out.
-    const res = await runAgent(prompt, {
-      tools: budgetedTools(new Set(store.positions.map((p) => p.address.toLowerCase()))),
-      system,
-      maxSteps: 22,
-      // Tool names are ours; args and results are attacker-influenced text — they go in the
-      // log's detail field as data, truncated, never interpreted.
-      onTool: (name, args, result) => {
-        const a = JSON.stringify(args) ?? "";
-        const r = typeof result === "string" ? result : JSON.stringify(result) ?? "";
-        store.log("model", `🔧 ${name} ${a.slice(0, 160)}`, `→ ${r.replace(/\s+/g, " ").slice(0, 300)}`);
-      },
-    });
+    const res = await runAgent(prompt, { system, maxSteps: 1 });
     const decision = extractJson(res.text);
     if (!decision) {
       store.log("warn", "Analyst reply wasn't valid JSON — no action this cycle.", res.text.slice(0, 400));
@@ -343,5 +232,3 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
     return null;
   }
 }
-
-export const _internals = { ANALYST_TOOL_NAMES, analystTools, budgetedTools, RESEARCH_CALLS, RESEARCH_CANDIDATES };

@@ -10,7 +10,6 @@ cp .env.example .env         # isi OPENROUTER_API_KEY + GMGN_API_KEY
                              # (GMGN_PRIVATE_KEY cuma perlu buat live mode)
 
 npm start                    # dashboard di http://127.0.0.1:3111
-npm run cli                  # chat interaktif (mode lama, /reset & /exit)
 npm test
 ```
 
@@ -66,7 +65,7 @@ karena cuma route itu yang jawabannya bisa dipercaya (baris feed sering mengoson
 
 - **buy/sell tax > 10%** — semua chain. Token yang bisa dibeli dan dijual tapi dipotong 40%
   bukan honeypot, dan tabel kriteria di atas tidak punya barisnya. Ambang 10% diambil dari
-  band 🔴 milik `buy_tax`/`sell_tax` di `skills/gmgn-token/SKILL.md`.
+  band 🔴 milik `buy_tax`/`sell_tax` di tabel kriteria GMGN.
 - **mint / freeze authority masih hidup, atau likuiditas belum dibakar** — Solana saja. Di EVM
   kedua konsep itu tidak ada, dan likuiditasnya dikunci, bukan dibakar.
 
@@ -81,11 +80,11 @@ status dev, dan umur token.
 
 ### 4. Analis (LLM)
 
-Kandidat yang lolos dikirim ke model bareng posisi terbuka dan instruksi kamu. Model punya
-tool read-only: `token_detail`, `token_security`, `top_holders`, `price_history`,
-`smart_money_flow`, plus semua skill `gmgn-*`. **Sengaja gak ada tool bash dan gak ada tool
-swap** — analis yang gak bisa belanja gak bisa dibujuk buat belanja sama teks yang dia baca
-di nama token.
+Kandidat yang lolos dikirim ke model bareng posisi terbuka dan instruksi kamu — satu panggilan
+LLM, **tanpa tool sama sekali**. Brief-nya yang jadi seluruh bahan: harga, mcap, likuiditas,
+volume, umur, konsentrasi holder, smart money. Model gak bisa nyari data tambahan, jadi juga gak
+bisa dibujuk manggil route apa pun sama teks yang dia baca di nama token, dan rate limit GMGN
+utuh buat sweep. Angka yang gak ada di brief ditulis sebagai kosong, bukan ditebak.
 
 Model balikin JSON: `entries`, `exits`, `notes`. Conviction di bawah 40 otomatis ditolak kode.
 
@@ -190,14 +189,10 @@ bikin rugi lebih cepat.
 
 ```
 public/                dashboard (vanilla, tanpa build step)
-skills/                skill gmgn-* bawaan, buat chat CLI (butuh bash)
 src/
-  index.ts             HTTP + SSE, API kontrol
-  cli.ts               chat CLI (mode lama, punya tool bash)
+  index.ts             HTTP + SSE, API kontrol — satu-satunya entry point
   agent/
-    llm.ts             loop tool-calling (dipakai analis)
-    skills.ts          loader <root>/<nama>/SKILL.md
-    tools.ts           tool GMGN lengkap buat CLI (termasuk bash)
+    llm.ts             loop OpenRouter (analis manggil ini tanpa tool)
   gmgn/                transport: OpenApiClient, signing, antrian + leaky bucket
   trading/
     types.ts           tipe bersama
@@ -207,7 +202,7 @@ src/
     market.ts          feed & harga GMGN dalam bahasa engine (batas cast)
     plan.ts            gate, skor, sizing, aturan exit, prompt analis
     broker.ts          eksekusi paper & live
-    analyst.ts         allowlist tool read-only, brief, askAnalyst
+    analyst.ts         prompt + brief + askAnalyst (satu panggilan LLM, tanpa tool)
     engine.ts          loop scan + monitor
 ```
 
@@ -218,29 +213,15 @@ jalanin semuanya.
 
 ---
 
-## Nambah tool / skill
+## Nambah bahan buat analis
 
-Nambah tool = tambah entry di `tools` (`src/agent/tools.ts`): `description`, `parameters`
-(JSON Schema), `run`. CLI langsung dapat. Biar analis trading dapat juga, tambahin namanya ke
-`ANALYST_TOOL_NAMES` di `src/trading/analyst.ts` — read-only saja, dan jangan pernah `bash`.
+Gak ada tool dan gak ada skill lagi — chat CLI, `src/agent/tools.ts`, `src/agent/skills.ts`, dan
+folder `skills/` udah dihapus semua. Analis cuma baca `brief`.
 
-Root skill-nya **satu**: `skills/`, dimuat sama CLI dan analis trading. `token-analysis` isinya
-prosedur analisa yang dipakai dua-duanya. Nambah skill = bikin `skills/<nama>/SKILL.md`. Karena
-dua-duanya muat root yang sama, skill harus tetap jalan tanpa manusia di depan prompt: bahas tool,
-jangan nanya balik ke pembaca.
-
-```md
----
-name: gmgn-token
-description: kapan skill ini dipakai — ini yang dibaca model buat mutusin
----
-
-Instruksi lengkapnya di sini.
-```
-
-Nama + deskripsi doang yang masuk system prompt; isi lengkapnya baru dikirim kalau model
-manggil tool `load_skill`. File pendukung taro di folder yang sama — `load_skill` ngasih path
-absolut folder-nya ke model.
+Mau dia mempertimbangkan sesuatu yang baru? Tambahin field-nya di objek `brief` dalam `askAnalyst`
+(`src/trading/analyst.ts`), dari data yang udah diambil sweep. Kalau butuh route GMGN baru:
+tambah di `OpenApiClient` (`src/gmgn/endpoint.ts`), bungkus di `market.ts`, baru masuk brief —
+dan inget itu dibayar pakai jatah rate limit sweep.
 
 ## Environment
 

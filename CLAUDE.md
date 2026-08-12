@@ -17,7 +17,6 @@ and do not add npm dependencies without being asked.
 
 ```bash
 npm start                                     # dashboard + engine → http://127.0.0.1:3111
-npm run cli                                   # legacy interactive CLI chat (has a bash tool)
 npm test                                      # node --test, all *.test.ts
 node --test src/trading/plan.test.ts          # one file
 node --test --test-name-pattern="stop-loss"   # one test by name
@@ -41,10 +40,14 @@ so the key is present.
 
 ## Architecture
 
-Two entry points share `src/agent/llm.ts` + `src/agent/skills.ts`:
+One entry point: `src/index.ts` — static file server + JSON control API + SSE stream, driving
+`src/trading/`. Its analyst is one tool-less LLM call per cycle, through `src/agent/llm.ts`.
 
-- `src/index.ts` — the real product. Static file server + JSON control API + SSE stream, driving `src/trading/`.
-- `src/cli.ts` — older readline chat loop. Has a `bash` tool; unrelated to the trading engine.
+There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
+GMGN tool set (`src/agent/tools.ts`) plus a skill loader (`src/agent/skills.ts`, `skills/`).
+All of it went with the analyst's tools — nothing in the engine loaded it. Bringing back a
+tool-calling surface means bringing back the allowlist discipline that came with it; `runAgent`
+still supports tools, nothing in this repo passes any.
 
 ### Storage
 
@@ -71,20 +74,10 @@ with a reset time closes it for *every* route until then and doubles the pacing 
 successes decay back. That gate is the fix for the real failure mode — a 429 is survivable, but
 the two requests already queued behind it are what turn a 30s cooldown into `RATE_LIMIT_BANNED`.
 
-`src/agent/llm.ts` is a ~80-line OpenRouter tool-calling loop (`runAgent`): tools are
-`{description, parameters (JSON Schema), run}`, it loops until the model replies without tool calls.
-
-`src/agent/skills.ts` implements progressive disclosure: only each skill's `name` + `description` go into
-the system prompt (`skillIndex`); the full `SKILL.md` body is returned by the `load_skill` tool.
-Skills live in `<root>/<name>/SKILL.md` with flat `key: value` frontmatter.
-
-**There is one skill root: `skills/`,** loaded by both `src/cli.ts` and the trading analyst.
-`token-analysis` is the procedure both use — it is written against the `gmgn_*` tool names and
-closes with a section for the headless analyst. The seven vendored `gmgn-*` skills alongside it
-are the original CLI ones: their data and thresholds are good, their `gmgn-cli` shell commands are
-a second path to the same endpoints, and `token-analysis` opens with a table mapping one to the
-other. There used to be a second root at `src/trading/skills/` (`scanning` + `analysis`) written
-against a separate analyst tool set; both went when the analyst moved onto the shared tools.
+`src/agent/llm.ts` is a ~80-line OpenRouter loop (`runAgent`) and the only file left under
+`src/agent/`. It still supports tools (`{description, parameters (JSON Schema), run}`) and loops
+until the model replies without tool calls; the analyst passes none, so in practice it is one
+request.
 
 ### The central split (`src/trading/plan.ts` header states it; respect it)
 
@@ -113,7 +106,7 @@ omits one, and falls back to the config's stop/trail/ladder if it is unusable. A
 | `market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing above this file speaks HTTP or touches `gmgnClient()` |
 | `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`. No I/O, and importing it must not open the database or the API client — this is where tests concentrate |
 | `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
-| `analyst.ts` | the model half of a cycle: the read-only tool allowlist, the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. Spends nothing |
+| `analyst.ts` | the model half of a cycle: the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. One LLM call, no tools, spends nothing |
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
 | `soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
@@ -123,19 +116,15 @@ top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) �
 `broker.buy/sell` → `store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs
 independently and never touches the LLM.
 
-**`gatherCandidates` is the whole search.** Only what the sweep surfaced can be bought: the
-analyst has read-only tools and can research anything, but an address outside the brief never went
-through `toCandidate` or the gates, so there is nothing to size and `buyableSet` refuses it. The
-operator steers the sweep through the dashboard's Refine panel (`refineQuery`), not through the
-prompt — `cfg.prompt` shapes selection, not fetching, because the sweep runs before the model is
-called. The analyst used to have a `find_tokens` tool that widened the search mid-cycle; it and its
-`discovered` plumbing were dropped once Refine covered the same ground from the dashboard.
-`ANALYST_TOOL_NAMES` now carries no discovery feed at all — `gmgn_trending`, `gmgn_trenches`,
-`gmgn_token_signal` and `gmgn_hot_searches` are out, leaving exactly the per-token routes
-`skills/token-analysis` walks, and a test asserts they stay out. The analyst analyses the brief; it
-does not re-sweep. Consequence: `sniper_count` lives only on a feed row, so it is now a stated
-blank unless the brief carries it — `bundler_rate` and dev status survive as `stat.*` / `dev.*`
-in `gmgn_token_info`.
+**`gatherCandidates` is the whole search, and the brief is the whole evidence base.** The analyst
+has no tools at all: one LLM call, in, out. An address outside the brief never went through
+`toCandidate` or the gates, so there is nothing to size and `buyableSet` refuses it; a number the
+brief does not carry (`sniper_count`, `bundler_rate`, dev status) is a stated blank, not something
+the model can go and look up. The operator steers the sweep through the dashboard's Refine panel
+(`refineQuery`), not through the prompt — `cfg.prompt` shapes selection, not fetching, because the
+sweep runs before the model is called. Everything the model needs must therefore be on the
+candidate row: widening the analyst's view means adding a field in `askAnalyst`'s `brief`, not
+giving it a tool back.
 
 ## Invariants worth knowing before you edit
 
@@ -145,13 +134,11 @@ in `gmgn_token_info`.
   the process is not entitled to grant it on their behalf. Same reasoning behind `liveReady()`.
   This process signs its own trade requests, so that check is now the *entire* barrier — there is
   no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
-- **The analyst's tool set is an allowlist, and that is the whole safety barrier.** It shares
-  `src/agent/tools.ts` with the interactive CLI, which has `bash` and the spend routes. `analyst.ts`
-  names the read-only tools it wants one by one in `ANALYST_TOOL_NAMES`, so a tool added to the
-  shared file is *not* in the analyst's hands until someone adds its name — the safe default when
-  that file grows is "no". A test in `plan.test.ts` asserts `bash` and the spend routes stay out;
-  it fails the moment the allowlist grows something it should not have. Never invert it into a
-  denylist: this loop runs unattended on rows named by whoever deployed the contract.
+- **The analyst has no tools, and that is the whole safety barrier.** `askAnalyst` calls
+  `runAgent` with no `tools` — the unattended loop cannot reach a shell, a spend route, or the
+  operator's wallet, because there is nothing to reach them with. There is no tool file left in
+  the repo to import by accident. If research ever comes back, it comes back as a named read-only
+  allowlist — one tool at a time, never a shared module the analyst takes wholesale.
 - **`securityRisk` is a pre-trade refusal, not a gate, and that is deliberate.** It runs once per
   entry in `openPosition` (paper and live alike) against `token_security`, because only that route
   answers reliably — `trenches` rows report `renounced_*: false` on tokens the security route
@@ -172,15 +159,9 @@ in `gmgn_token_info`.
   sends only the operator's Refine rows, so a blank Refine fetches the feeds unfiltered. Don't
   reintroduce a structural gate — or a hardcoded feed floor — without asking: the dashboard is
   where that policy lives now.
-- **The analyst researches one candidate per cycle, and the tool wrapper enforces it.**
-  `budgetedTools` in `analyst.ts` wraps every `gmgn_*` tool with a per-cycle budget:
-  `RESEARCH_CANDIDATES = 1` distinct candidate address, `RESEARCH_CALLS = 12` calls total, skill
-  loads free, open-position addresses exempt so an early exit can still be evidenced. Over budget
-  returns a sentence, never a throw — a thrown error would end the cycle with no decision, a
-  refusal the model can read just makes it decide from the brief. This exists because GMGN's
-  bucket (20 tokens, 20/s, process-wide) is shared with the sweep and `token_top_holders` weighs
-  5: an analyst walking all 18 shortlisted rows earns 429s whose 5s penalties outlive the cycle.
-  The prompt states the same limit, but the prompt is not what enforces it.
+- **A cycle costs exactly one LLM call and zero GMGN calls.** The analyst used to research a
+  candidate with a per-cycle budget wrapper; both went. GMGN's bucket (20 tokens, process-wide) is
+  now the sweep's alone, which is what it was always being starved by.
 - **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
   blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto
@@ -208,18 +189,9 @@ in `gmgn_token_info`.
 
 ## Extending
 
-- **New tool**: add it to `tools` in `src/agent/tools.ts` (`description`, `parameters`, `run`).
-  The CLI picks it up immediately. To give it to the trading analyst as well, add its name to
-  `ANALYST_TOOL_NAMES` in `src/trading/analyst.ts` — read-only only, and never `bash`.
-  **Spell every query param out in `parameters`, with `enum` where the API has a fixed set.**
-  There is no passthrough `extra` object any more: the schema is the model's only description of
-  the route, and GMGN drops unknown keys silently, so a param it cannot see is one it cannot use
-  and a param it guesses looks like a call that worked. The `min_*`/`max_*` filter surfaces come
-  from the `bounds()` helper and the two tables above it; the vendored `skills/gmgn-*` docs are
-  the reference for accepted values. A test asserts no tool reintroduces a free-form object.
-- **New skill**: `skills/<name>/SKILL.md`, with `name` + `description` frontmatter. Only those two
-  lines reach the system prompt; the body is returned by `load_skill`, which hands the model an
-  absolute path, so supporting files can live in the same directory. Both entry points load this
-  root, so a skill must work with or without a human at the prompt: describe tools, and don't ask
-  the reader questions.
+- **More for the analyst to judge on**: add the field to the `brief` object in `askAnalyst`, from
+  data the sweep already fetched. Not a tool — the analyst has none, and a new GMGN call per
+  candidate is paid out of the sweep's rate limit.
+- **New GMGN route**: add it to `OpenApiClient` in `src/gmgn/endpoint.ts` and wrap it in
+  `market.ts`, which is the cast boundary. Nothing above `market.ts` speaks HTTP.
 - **New config knob**: `types.ts` → `DEFAULT_CONFIG` → a clamp in `sanitizeConfig` → the UI.

@@ -22,8 +22,7 @@ import {
   securityRisk,
   toCandidate,
 } from "./plan.ts";
-import { extractJson, _internals as analyst } from "./analyst.ts";
-import { tools as allTools } from "../agent/tools.ts";
+import { extractJson } from "./analyst.ts";
 import { trenchesFilters } from "./market.ts";
 import { bands, median, spearman } from "./calibrate.ts";
 import { candidate, position } from "./fixtures.ts";
@@ -88,76 +87,6 @@ test("a tax above 10% is refused on every chain", () => {
 
 test("an unreadable response fails closed on EVM too, not just Solana", () => {
   assert.notEqual(securityRisk(null, "bsc"), "");
-});
-
-// ── what the analyst is allowed to do ─────────────────────────────────
-
-// The analyst shares src/agent/tools.ts with the interactive CLI, which has a shell and
-// spend routes. The allowlist is the only thing keeping them out of an unattended loop, so
-// it gets a test: this fails the moment someone adds a name they should not have.
-test("the analyst has no shell and no route that spends", () => {
-  const names = Object.keys(analyst.analystTools);
-  assert.ok(names.length > 5, "the analyst should still have its research tools");
-  for (const banned of ["bash", "gmgn_swap", "gmgn_multi_swap", "gmgn_strategy_create", "gmgn_create_token"])
-    assert.ok(!names.includes(banned), `${banned} must never be in the analyst's tool set`);
-  // Discovery is `gatherCandidates`; the analyst analyses the brief and does not re-sweep.
-  for (const feed of ["gmgn_trending", "gmgn_trenches", "gmgn_token_signal", "gmgn_hot_searches"])
-    assert.ok(!names.includes(feed), `${feed} is discovery, not analysis — keep it out`);
-  // Everything it does have is either a gmgn_* read or the skill loader.
-  for (const n of names) assert.ok(n.startsWith("gmgn_") || n === "load_skill", `unexpected analyst tool: ${n}`);
-});
-
-// ── the research budget ───────────────────────────────────────────────
-
-// GMGN's bucket is shared with the sweep, and token_top_holders weighs 5 of its 20 tokens. The
-// budget is what stops a shortlist of 18 from spending the next cycle's headroom, so it is
-// enforced on the tool, not asked for in the prompt.
-let reached = 0;
-const budgeted = (held: string[]) => {
-  reached = 0;
-  const tool = () => ({ description: "", parameters: {}, run: async () => `ok ${++reached}` });
-  const base = { gmgn_token_info: tool(), gmgn_token_security: tool(), load_skill: tool() };
-  const t = analyst.budgetedTools(new Set(held), base);
-  return (name: keyof typeof base, address?: string) => t[name]!.run({ address }) as Promise<string>;
-};
-
-test("only one candidate can be researched per cycle", async () => {
-  const call = budgeted([]);
-  assert.match(await call("gmgn_token_info", "AAA"), /^ok/);
-  assert.match(await call("gmgn_token_security", "aaa"), /^ok/, "same address, different route, still allowed");
-  const refused = await call("gmgn_token_info", "BBB");
-  assert.match(refused, /one candidate/i);
-  assert.ok(refused.includes("aaa"), "the refusal names the address that won the budget");
-});
-
-test("open positions are exempt, and skill loads are not a GMGN call", async () => {
-  const call = budgeted(["held"]);
-  assert.match(await call("gmgn_token_info", "HELD"), /^ok/);
-  assert.match(await call("gmgn_token_info", "cand"), /^ok/, "the held address did not spend the candidate slot");
-  for (let i = 0; i < 40; i++) await call("load_skill");
-  assert.match(await call("gmgn_token_info", "cand"), /^ok/, "skill loads do not count against the call cap");
-});
-
-test("the per-cycle call cap refuses rather than throws", async () => {
-  const call = budgeted(["held"]);
-  for (let i = 0; i < analyst.RESEARCH_CALLS; i++) assert.match(await call("gmgn_token_info", "held"), /^ok/);
-  const over = await call("gmgn_token_info", "held");
-  assert.match(over, /budget/i, "a refusal the model can read, not an exception that ends the cycle");
-  assert.equal(reached, analyst.RESEARCH_CALLS, "nothing reached the API past the cap");
-});
-
-// The schema is the model's only description of a tool. A passthrough object hides the real
-// query surface behind "send whatever you like", and GMGN drops unknown keys silently — so the
-// model cannot tell a working filter from an ignored one. Every param stays spelled out.
-test("no tool hides its query params behind an opaque passthrough object", () => {
-  const walk = (schema: any, where: string) => {
-    if (!schema || typeof schema !== "object") return;
-    if (schema.type === "object" && schema.additionalProperties === true)
-      assert.ok(Object.keys(schema.properties ?? {}).length > 0, `${where} accepts free-form keys but names none`);
-    for (const [k, v] of Object.entries(schema.properties ?? {})) walk(v, `${where}.${k}`);
-    walk(schema.items, `${where}[]`);
-  };
-  for (const [name, tool] of Object.entries(allTools)) walk(tool.parameters, name);
 });
 
 // ── what the analyst is allowed to buy ────────────────────────────────

@@ -596,9 +596,9 @@ export class OpenApiClient {
   /**
    * Standing operator consent for any endpoint that spends real funds or commits to a
    * future spend (swap, multi-swap, strategy orders, token creation+buy) — mirrors the
-   * gate trading/gmgn.ts puts on its own `swap()`. Read it, never write it: the caller
-   * (a tool-calling LLM loop, in src/agent/tools.ts) is not entitled to grant this on the
-   * operator's behalf, and no config knob should be able to substitute for it.
+   * gate trading/gmgn.ts puts on its own `swap()`. Read it, never write it: the process is
+   * not entitled to grant this on the operator's behalf, and no config knob should be able
+   * to substitute for it.
    */
   private assertTradeConsent(): void {
     if (process.env.GMGN_ALLOW_AUTOMATED_TRADES !== "1") {
