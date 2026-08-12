@@ -286,26 +286,52 @@ const ruleTitle = (r) =>
     tsl: `trailing stop loss — once in profit, sells ${r.sell}% on a ${r.dd}% giveback from peak. Below break-even the stop loss owns the position`,
   })[r.kind] ?? "";
 
+/** One labelled figure inside a sounding card. `title` is the long form, on hover. */
+const kv = (k, v, title, cls = "") =>
+  `<div class="kv" title="${esc(title)}"><span class="kv-k">${k}</span><span class="kv-v ${cls}">${v}</span></div>`;
+
 function renderCandidates(s) {
   const rows = s.cycle.lastCandidates || [];
-  const tb = $("tbl-candidates").querySelector("tbody");
+  const box = $("list-candidates");
   $("c-cand").textContent = rows.length;
   $("e-cand").hidden = rows.length > 0;
-  tb.innerHTML = rows
-    .slice(0, 25)
+  box.innerHTML = rows
     .map((c) => {
       const pass = !c.gateFailures.length;
-      return `<tr>
-        <td class="sym"><a class="linkish" href="${esc(tokenUrl(s.config.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
-          <small>${esc(c.source)}</small></td>
-        <td class="r">${pass ? c.score : "—"}</td>
-        <td class="r">${usd(c.liquidityUsd, 0)}</td>
-        <td class="r">${usd(c.volume1hUsd, 0)}</td>
-        <td class="r ${tone(c.change1hPct)}">${pct(c.change1hPct, 0)}</td>
-        <td class="r">${c.smartDegenCount}</td>
-        <td class="r">${c.rugRatio.toFixed(2)}</td>
-        <td class="why">${pass ? '<span class="pill pill-pass">eligible</span>' : `<span class="pill pill-fail">blocked</span> ${esc(c.gateFailures.slice(0, 2).join(", "))}`}</td>
-      </tr>`;
+      const verdict = !pass
+        ? '<span class="pill pill-fail">blocked</span>'
+        : c.analystNote === "sent"
+          ? '<span class="pill pill-pass">sent</span>'
+          : '<span class="pill">eligible</span>';
+      const note = pass
+        ? c.analystNote === "sent"
+          ? "shown to the analyst"
+          : (c.analystNote ?? "")
+        : c.gateFailures.join(", ");
+      const meta = [c.source, c.launchpad, `${dur(c.ageMinutes * 60000)} old`].filter(Boolean).join(" · ");
+      return `<article class="sounding${pass ? "" : " is-blocked"}">
+        <header class="sounding-head">
+          <a class="sounding-sym linkish" href="${esc(tokenUrl(s.config.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
+          <span class="sounding-meta">${esc(meta)}</span>
+          <span class="sounding-score" title="structure score, 0-100 — ranking only, it disqualifies nothing">${pass ? c.score : "—"}</span>
+          ${verdict}<span class="sounding-note">${esc(note)}</span>
+        </header>
+        <div class="sounding-grid">
+          ${kv("price", price(c.priceUsd), "price at the moment of the scan")}
+          ${kv("mcap", usd(c.marketCapUsd, 0), "market cap")}
+          ${kv("liq", usd(c.liquidityUsd, 0), "pool liquidity — what you can actually exit into")}
+          ${kv("vol 1h", usd(c.volume1hUsd, 0), "trading volume over the last hour")}
+          ${kv("swaps 1h", c.swaps1h, "swap count over the last hour")}
+          ${kv("5m", pct(c.change5mPct, 0), "price change over the last 5 minutes", tone(c.change5mPct))}
+          ${kv("1h", pct(c.change1hPct, 0), "price change over the last hour", tone(c.change1hPct))}
+          ${kv("holders", c.holderCount, "holder count")}
+          ${kv("smart money", c.smartDegenCount, "smart-money wallets holding")}
+          ${kv("kols", c.renownedCount, "KOL / renowned wallets holding")}
+          ${kv("top 10", `${(c.top10HolderRate * 100).toFixed(0)}%`, "share of supply in the top 10 wallets")}
+          ${kv("rug", c.rugRatio.toFixed(2), "GMGN rug-pull risk score, 0-1")}
+          ${kv("dev", c.devHolding ? "holds" : "out", "is the deployer still holding their allocation?", c.devHolding ? "down" : "")}
+        </div>
+      </article>`;
     })
     .join("");
 }

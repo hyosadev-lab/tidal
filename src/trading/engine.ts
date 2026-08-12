@@ -19,6 +19,9 @@ import { recordSoundings } from "./soundings.ts";
 import { store } from "./store.ts";
 import type { Candidate, Position, StrategyRule } from "./types.ts";
 
+/** How many of the eligible rows, best score first, are put in front of the analyst. */
+const ANALYST_SHORTLIST = 18;
+
 let monitorTimer: NodeJS.Timeout | null = null;
 let scanTimer: NodeJS.Timeout | null = null;
 let scanning = false;
@@ -137,6 +140,24 @@ async function runScan(): Promise<void> {
         !store.onCooldown(c.address) &&
         !store.isBlacklisted(c.address),
     );
+    // Why each row did or did not reach the model, decided here rather than in the dashboard:
+    // held / cooldown / blacklist live in the store and never travel on a Candidate. Written
+    // before the soundings so calibrate can tell the rows the model actually saw from the ones
+    // that merely scored well.
+    const shortlist = eligible.slice(0, ANALYST_SHORTLIST);
+    const shown = new Set(shortlist.map((c) => c.address));
+    for (const c of all)
+      c.analystNote = c.gateFailures.length
+        ? ""
+        : shown.has(c.address)
+          ? "sent"
+          : store.position(c.address)
+            ? "already held"
+            : store.onCooldown(c.address)
+              ? "on cooldown after a recent exit"
+              : store.isBlacklisted(c.address)
+                ? "blacklisted"
+                : `ranked below the top ${ANALYST_SHORTLIST}`;
     store.lastCandidates = all.slice(0, 40);
     // The whole sweep, not just the shown 40: `calibrate.ts` needs the rows nobody looked at
     // as much as the ones that scored well, or it only measures what we already believed.
@@ -161,7 +182,7 @@ async function runScan(): Promise<void> {
     store.phase = "analysing";
     store.push();
 
-    const decision = await askAnalyst(eligible.slice(0, 18), cfg.maxOpenPositions - store.positions.length);
+    const decision = await askAnalyst(shortlist, cfg.maxOpenPositions - store.positions.length);
     if (!decision) return;
     if (decision.notes) store.log("model", decision.notes);
 

@@ -548,6 +548,50 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .why { white-space: normal; color: var(--haze); font-size: 11px; max-width: 34ch; }
 
 .empty { margin: 12px 0 0; font-size: 12px; color: var(--haze); }
+.panel .fine { margin: 12px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--haze); max-width: 88ch; }
+.panel .fine b { color: var(--foam); font-weight: 400; }
+
+/* ── soundings: one card per candidate ──────────────────────────── */
+/* A row here is 13 figures wide. As a table that is a horizontal scrollbar on every
+   screen; as a wrapping grid it reflows instead, and the card header stays readable. */
+.soundings { display: flex; flex-direction: column; gap: 8px; }
+
+.sounding {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 10px 12px 11px;
+  background: var(--hull-2);
+}
+.sounding.is-blocked { opacity: .55; }
+.sounding:hover { border-color: var(--rule-2); }
+
+.sounding-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 9px;
+}
+.sounding-sym { font-family: var(--mono); font-size: 13px; color: var(--foam); border-bottom-color: var(--rule); }
+.sounding-sym:hover { color: var(--flood); }
+.sounding-meta { font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em; color: var(--rule-2); }
+/* Score sits hard right, the pill and its note after it — the eye scans scores down the list. */
+.sounding-score { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--foam); }
+.sounding-note { font-family: var(--mono); font-size: 10px; color: var(--haze); }
+
+.sounding-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px 10px;
+}
+.kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kv-k { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--haze); }
+.kv-v { font-family: var(--mono); font-size: 12px; color: var(--foam); overflow: hidden; text-overflow: ellipsis; }
+/* .up / .down are declared earlier in this file, so the bare `.kv-v` colour would win on
+   source order alone and every change would read white. Restate them at this specificity. */
+.kv-v.up { color: var(--flood); }
+.kv-v.down { color: var(--ebb); }
+.kv-v.flat { color: var(--haze); }
 
 .linkish { color: var(--haze); text-decoration: none; border-bottom: 1px dotted var(--rule-2); }
 .linkish:hover { color: var(--flood); border-color: var(--flood); }

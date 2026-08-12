@@ -196,16 +196,15 @@
     </section>
 
     <section class="panel">
-      <h2 class="eyebrow">Soundings <span class="count" id="c-cand">0</span><span class="eyebrow-note">last scan</span></h2>
-      <div class="table-wrap">
-        <table class="tbl" id="tbl-candidates">
-          <thead><tr>
-            <th>Token</th><th class="r">Score</th><th class="r">Liq</th><th class="r">Vol 1h</th><th class="r">1h</th><th class="r">SM</th><th class="r">Rug</th><th>Verdict</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
+      <h2 class="eyebrow">Soundings <span class="count" id="c-cand">0</span><span class="eyebrow-note">last scan · every field the analyst was given</span></h2>
+      <div class="soundings" id="list-candidates"></div>
       <p class="empty" id="e-cand">No scan yet. Start the agent, or run one scan by hand.</p>
+      <p class="fine">Top 40 of the sweep, best score first. <b>Sent</b> marks the rows that actually reached the
+        analyst — the top 18 eligible ones. <b>Eligible</b> rows passed the gates but did not make that cut, and
+        say why (ranked out, already held, on cooldown); <b>blocked</b> rows failed a gate. Only wash trading,
+        honeypots and unreadable rows are gates: everything
+        else in this table is reported to the analyst and judged, never screened. Use Refine to change what the
+        sweep fetches, and the instruction box to change what gets picked out of it.</p>
     </section>
 
     <section class="panel">

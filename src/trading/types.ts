@@ -97,6 +97,12 @@ export type Candidate = {
   /** Populated by the gate pass. */
   gateFailures: string[];
   score: number;
+  /**
+   * Set by the scan for rows that passed the gates: `"sent"` if the analyst was shown this
+   * row, otherwise why it wasn't. Written here because held / cooldown / blacklist live in
+   * the store and never travel on a Candidate — the dashboard cannot work it out.
+   */
+  analystNote?: string;
 };
 
 export type Position = {
