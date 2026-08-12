@@ -62,6 +62,15 @@ leaky bucket, since GMGN adds 5s to the cooldown per 429 and retry spam makes it
 `signer.ts`, and `client.ts` (the env-configured singleton). Two auth modes: *exist* (API key)
 for reads, *signed* (API key + `X-Signature`) for the swap and order routes.
 
+**Two limiters, and only one of them is documented.** The bucket's published numbers (rate 20,
+capacity 20) describe the per-key limit; the 429s this project actually gets say *IP rate limit*
+and are far stricter — measured twice on live cycles, ~18-20 weight inside one 30s window is the
+wall, which is also the cooldown the 429 returns. So the bucket refills 20 tokens over 30s, not
+over 1s (`GMGN_RATE_PER_SEC` overrides). Alongside it there is one process-wide gate: any 429
+with a reset time closes it for *every* route until then and doubles the pacing gap, which
+successes decay back. That gate is the fix for the real failure mode — a 429 is survivable, but
+the two requests already queued behind it are what turn a 30s cooldown into `RATE_LIMIT_BANNED`.
+
 `src/agent/llm.ts` is a ~80-line OpenRouter tool-calling loop (`runAgent`): tools are
 `{description, parameters (JSON Schema), run}`, it loops until the model replies without tool calls.
 
@@ -163,6 +172,15 @@ in `gmgn_token_info`.
   sends only the operator's Refine rows, so a blank Refine fetches the feeds unfiltered. Don't
   reintroduce a structural gate — or a hardcoded feed floor — without asking: the dashboard is
   where that policy lives now.
+- **The analyst researches one candidate per cycle, and the tool wrapper enforces it.**
+  `budgetedTools` in `analyst.ts` wraps every `gmgn_*` tool with a per-cycle budget:
+  `RESEARCH_CANDIDATES = 1` distinct candidate address, `RESEARCH_CALLS = 12` calls total, skill
+  loads free, open-position addresses exempt so an early exit can still be evidenced. Over budget
+  returns a sentence, never a throw — a thrown error would end the cycle with no decision, a
+  refusal the model can read just makes it decide from the brief. This exists because GMGN's
+  bucket (20 tokens, 20/s, process-wide) is shared with the sweep and `token_top_holders` weighs
+  5: an analyst walking all 18 shortlisted rows earns 429s whose 5s penalties outlive the cycle.
+  The prompt states the same limit, but the prompt is not what enforces it.
 - **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
   blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto

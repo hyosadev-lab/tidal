@@ -17,6 +17,16 @@ else was never screened, priced or sized, so it cannot be bought no matter what 
 
 `chain` is fixed for the whole cycle and stated in your instructions; every tool call takes it.
 
+**You get one candidate per cycle, and about a dozen calls.** The tools refuse a second
+candidate's address once you have committed to one, because GMGN's rate limiter is shared with
+the sweep that feeds you — `gmgn_token_top_holders` alone costs a quarter of the bucket. So rank
+the brief first and spend the budget on the row that most deserves it; the others are still
+buyable on brief evidence alone. Addresses you already hold are exempt from the limit, so an exit
+can always be argued from fresh data.
+
+Steps 1–3 are the ones that change the answer. Steps 4–6 are for when the first three left the
+thesis alive and you still have calls.
+
 ## What the brief already gives you
 
 Per candidate, without a single call:
@@ -109,6 +119,10 @@ The brief's `top10_rate` is one number for all of this. What you are testing is 
   `start_holding_at` and `avg_cost` across the tagged rows.
 - `tag` filters to one group instead of the top by size (`smart_degen`, `renowned`, `dev`,
   `sniper`, `bundler`, `rat_trader`, and more — the accepted values are in the tool's own schema).
+  **Make one call, not one per tag.** This route costs five times a normal call against the rate
+  limit, and every row already carries its own `tags`, so the untagged top-20 answers "who is
+  smart money / dev / a sniper here" in a single request. Re-call with a `tag` only when the
+  group you want fell outside the top 20 by size.
 
 This is where a thesis usually dies. Do not skip it because the brief's headline numbers looked
 good.

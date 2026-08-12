@@ -187,13 +187,15 @@ export const tools: Record<string, Tool> = {
     {
       chain,
       address,
-      resolution: { type: "string", description: "30s | 1m | 5m | 15m | 1h | 4h | 1d" },
-      from: { type: "number", description: "Start time, Unix seconds (optional)" },
-      to: { type: "number", description: "End time, Unix seconds (optional)" },
+      resolution: { type: "string", enum: ["30s", "1m", "5m", "15m", "1h", "4h", "1d"], description: "candle size" },
+      from: { type: "number", description: "start time, Unix SECONDS. Omit for the most recent candles — 0 is not 'from the beginning', the API rejects it" },
+      to: { type: "number", description: "end time, Unix seconds. Omit for now" },
     },
     ["chain", "address", "resolution"],
+    // A sentinel `from: 0` / an out-of-range `to` is a 400 from the API ("must be a valid
+    // timestamp in ms"), so treat anything non-positive as omitted rather than passing it on.
     ({ chain, address, resolution, from, to }) =>
-      gmgnClient().getTokenKline(chain, address, resolution, from != null ? from * 1000 : undefined, to != null ? to * 1000 : undefined),
+      gmgnClient().getTokenKline(chain, address, resolution, from > 0 ? from * 1000 : undefined, to > 0 ? to * 1000 : undefined),
   ),
 
   // ---- GMGN: Wallet / portfolio ----

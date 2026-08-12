@@ -43,8 +43,19 @@ const ROUTE: Record<string, { weight?: number; timeoutMs?: number }> = {
  * honest under concurrency, and so the timestamp (validated within ±5s) and client_id
  * are built after the wait, not before it.
  */
-const RATE = 20;
-const CAPACITY = 20;
+// GMGN documents this bucket as rate=20, capacity=20 — 20 tokens per *second*. Measured against
+// the live API that is far too generous, because the documented figure is the per-key limiter and
+// the one that actually answers 429 is per IP. Two cycles, both banned: 15 weight over 7s, then
+// 13 weight over 10s with the next weight-5 route refused. Both land at ~18-20 weight inside one
+// 30s window, which is also the cooldown the 429 hands back. So refill the same 20-token bucket
+// over 30s instead of over 1s. Raise GMGN_RATE_PER_SEC if your key is on a different tier — the
+// number is measured, not published, and it is the one knob worth turning here.
+// Capacity is the burst allowance, and it is not 20 either: a bucket that starts full let the
+// sweep (5) plus the analyst's first six calls (18) out inside 15s and earned another 429. Half
+// the sustained budget is enough headroom for one weight-5 route without handing a fresh process
+// a burst the IP limiter will not forgive.
+const RATE = Number(process.env.GMGN_RATE_PER_SEC) || 20 / 30;
+const CAPACITY = Number(process.env.GMGN_RATE_BURST) || 10;
 let tokens = CAPACITY;
 let lastRefill = Date.now();
 let queue: Promise<unknown> = Promise.resolve();
@@ -62,10 +73,44 @@ async function takeTokens(weight: number): Promise<void> {
   }
 }
 
+/**
+ * The bucket above models the documented per-API-key limiter. GMGN enforces a second, stricter
+ * one per IP, and that is the one this loop actually trips: measured on a live cycle, ~15 weight
+ * spread over 7 seconds — which the bucket waves through, since it refills 20/s — came back
+ * `RATE_LIMIT_EXCEEDED`, and the two requests already queued behind it turned that into
+ * `RATE_LIMIT_BANNED`. A per-request retry cannot fix that: the damage is done by the *next*
+ * request, not the one that failed.
+ *
+ * So the whole process holds one gate. Any 429 that names a reset time closes it for everyone
+ * until then, and the pacing gap doubles; clean requests decay it back toward the floor. The gap
+ * self-tunes because the real IP limit is undocumented — a fixed number would either crawl or
+ * get banned, and which one is not knowable from here.
+ */
+const GAP_FLOOR_MS = Number(process.env.GMGN_MIN_REQUEST_GAP_MS) || 400;
+const GAP_CEILING_MS = 10_000;
+let gapMs = GAP_FLOOR_MS;
+let gateOpensAt = 0;
+
+/** Called on every 429 that carries a reset time. Shuts the gate for every route, not just this one. */
+function noteRateLimited(resetAtUnix?: number): void {
+  gapMs = Math.min(GAP_CEILING_MS, gapMs * 2);
+  const until = (resetAtUnix ? resetAtUnix * 1000 : Date.now() + gapMs) + 1_000;
+  gateOpensAt = Math.max(gateOpensAt, until);
+}
+
+function noteSucceeded(): void {
+  gapMs = Math.max(GAP_FLOOR_MS, gapMs * 0.9);
+}
+
 function schedule<T>(weight: number, run: () => Promise<T>): Promise<T> {
   const result = queue.then(async () => {
     await takeTokens(weight);
-    return run();
+    const wait = gateOpensAt - Date.now();
+    if (wait > 0) await sleep(wait);
+    gateOpensAt = Date.now() + gapMs;
+    const out = await run();
+    noteSucceeded();
+    return out;
   });
   queue = result.catch(() => undefined);
   return result;
@@ -627,6 +672,10 @@ export class OpenApiClient {
           return this.parseResponse(request.method, request.subPath, res, request.curlStr);
         });
       } catch (err) {
+        // Shut the shared gate before anything else: the requests already queued behind this one
+        // are what turn a 30s cooldown into a ban.
+        if (err instanceof OpenApiError && (err.status === 429 || err.apiError === "RATE_LIMIT_EXCEEDED" || err.apiError === "RATE_LIMIT_BANNED"))
+          noteRateLimited(err.resetAtUnix);
         const retryDelayMs = getRateLimitRetryDelayMs(err, attempt, maxAttempts, autoRetryOnRateLimit);
         if (retryDelayMs == null) throw err;
 

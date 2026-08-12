@@ -56,6 +56,52 @@ for (const name of ANALYST_TOOL_NAMES) {
 }
 Object.assign(analystTools, skillTool(skills));
 
+/**
+ * The research budget, enforced here rather than asked for in the prompt.
+ *
+ * GMGN's limiter is a leaky bucket — 20 tokens, refilled at 20/s, shared process-wide — and the
+ * routes this loop wants are not free: `token_top_holders` weighs 5, `token_kline` 2. An analyst
+ * that walks a shortlist of 18 spends the bucket in one cycle, and every 429 adds 5s to the
+ * cooldown, so the punishment for over-researching outlives the cycle that caused it.
+ *
+ * So one candidate gets the deep dive and the rest are judged from the brief, which already
+ * carries price, size, age, concentration and smart-money counts for every row. Open positions
+ * are exempt: they are already ours, bounded by `maxOpenPositions`, and an early exit has to be
+ * argued from evidence the mechanical rules cannot see.
+ *
+ * Over budget returns a sentence, never a throw — the model reads it as a result and decides with
+ * what it has, where an exception would end the cycle with no decision at all.
+ */
+const RESEARCH_CANDIDATES = 1;
+const RESEARCH_CALLS = 12;
+
+function budgetedTools(held: Set<string>, base: Record<string, Tool> = analystTools): Record<string, Tool> {
+  let calls = 0;
+  const researched = new Set<string>();
+  const out: Record<string, Tool> = {};
+  for (const [name, tool] of Object.entries(base)) {
+    // Skill loads cost no API call, so they are not part of the budget.
+    if (!name.startsWith("gmgn_")) {
+      out[name] = tool;
+      continue;
+    }
+    out[name] = {
+      ...tool,
+      run: async (args: any) => {
+        const address = typeof args?.address === "string" ? args.address.toLowerCase() : "";
+        if (address && !held.has(address) && !researched.has(address)) {
+          if (researched.size >= RESEARCH_CANDIDATES)
+            return `Refused: one candidate gets researched per cycle and this cycle it is ${[...researched][0]}. Judge the rest from the brief.`;
+          researched.add(address);
+        }
+        if (++calls > RESEARCH_CALLS) return `Refused: the ${RESEARCH_CALLS}-call research budget for this cycle is spent. Decide with what you have.`;
+        return tool.run(args);
+      },
+    };
+  }
+  return out;
+}
+
 // ── the brief ─────────────────────────────────────────────────────────
 //
 // What the analyst is told, in full. It lives here rather than in `plan.ts` because it is
@@ -130,6 +176,12 @@ function systemPrompt(cfg: TradeConfig): string {
 Each cycle you read the pre-screened candidates and the open book, then return a JSON decision. You do not place orders and you do not manage exits — the engine does that.
 
 The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. You have read-only GMGN tools to research those candidates as deeply as you like, and you may look at anything else for context, but an address that is not in the brief has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot. Every tool call takes a \`chain\` argument: it is always "${cfg.chain}".
+
+RESEARCH BUDGET — read this before your first tool call.
+
+Rank the brief first, on the numbers already in it. Then pick the **single** most promising candidate and research that one; the tools refuse a second candidate's address for the rest of the cycle, and the whole cycle is capped at ${RESEARCH_CALLS} GMGN calls. This is not a suggestion you can spend your way around: the API's rate limiter is shared with the sweep that feeds you, and exhausting it delays the next cycle for everyone. Addresses already in \`open_positions\` are exempt — check those whenever an exit needs evidence.
+
+A candidate you did not research is still buyable on the brief alone, and passing on all of them is still a complete answer. Choose the one worth the calls.
 
 Load the \`token-analysis\` skill before you judge a token. It has the procedure, the hard refusals, and the field-level traps — it tells you which route actually carries each number (bundler rate and dev status are \`stat.*\`/\`dev.*\` in the token detail, not top-level), which ones nothing you can call will give you, and the ratio-versus-percentage mistake, which is the most expensive one available here. Your tools analyse one token at a time; there is no feed to browse, so a number you cannot reach is a stated blank, not a reason to go looking.
 
@@ -268,7 +320,7 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
     // Research is per-token now rather than per-feed, so the ceiling is about how many
     // candidates get a second look. Raise it only if logs show the analyst running out.
     const res = await runAgent(prompt, {
-      tools: analystTools,
+      tools: budgetedTools(new Set(store.positions.map((p) => p.address.toLowerCase()))),
       system,
       maxSteps: 22,
       // Tool names are ours; args and results are attacker-influenced text — they go in the
@@ -292,4 +344,4 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
   }
 }
 
-export const _internals = { ANALYST_TOOL_NAMES, analystTools };
+export const _internals = { ANALYST_TOOL_NAMES, analystTools, budgetedTools, RESEARCH_CALLS, RESEARCH_CANDIDATES };
