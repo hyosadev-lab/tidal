@@ -44,10 +44,9 @@ One entry point: `src/index.ts` — static file server + JSON control API + SSE 
 `src/trading/`. Its analyst is one tool-less LLM call per cycle, through `src/agent/llm.ts`.
 
 There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
-GMGN tool set (`src/agent/tools.ts`) plus a skill loader (`src/agent/skills.ts`, `skills/`).
-All of it went with the analyst's tools — nothing in the engine loaded it. Bringing back a
-tool-calling surface means bringing back the allowlist discipline that came with it; `runAgent`
-still supports tools, nothing in this repo passes any.
+GMGN tool set plus a skill loader (`src/agent/skills.ts`, `skills/`). All of it went with the
+analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` survives as an empty
+template (`git log` it for the old set); `runAgent` still supports tools, nothing passes any.
 
 ### Storage
 
@@ -136,9 +135,10 @@ giving it a tool back.
   no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
 - **The analyst has no tools, and that is the whole safety barrier.** `askAnalyst` calls
   `runAgent` with no `tools` — the unattended loop cannot reach a shell, a spend route, or the
-  operator's wallet, because there is nothing to reach them with. There is no tool file left in
-  the repo to import by accident. If research ever comes back, it comes back as a named read-only
-  allowlist — one tool at a time, never a shared module the analyst takes wholesale.
+  operator's wallet, because there is nothing to reach them with. `src/agent/tools.ts` is an
+  empty template kept for the day someone wants a tool back; filling it in does not hand the
+  analyst anything, and it must never be passed wholesale — a named read-only allowlist, one
+  tool at a time, or nothing.
 - **`securityRisk` is a pre-trade refusal, not a gate, and that is deliberate.** It runs once per
   entry in `openPosition` (paper and live alike) against `token_security`, because only that route
   answers reliably — `trenches` rows report `renounced_*: false` on tokens the security route
@@ -194,4 +194,6 @@ giving it a tool back.
   candidate is paid out of the sweep's rate limit.
 - **New GMGN route**: add it to `OpenApiClient` in `src/gmgn/endpoint.ts` and wrap it in
   `market.ts`, which is the cast boundary. Nothing above `market.ts` speaks HTTP.
+- **A tool, if it ever comes back**: `src/agent/tools.ts` is the empty template — shape,
+  schema rules and the allowlist discipline are in its header.
 - **New config knob**: `types.ts` → `DEFAULT_CONFIG` → a clamp in `sanitizeConfig` → the UI.

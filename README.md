@@ -193,6 +193,7 @@ src/
   index.ts             HTTP + SSE, API kontrol — satu-satunya entry point
   agent/
     llm.ts             loop OpenRouter (analis manggil ini tanpa tool)
+    tools.ts           template kosong buat nambah tool nanti
   gmgn/                transport: OpenApiClient, signing, antrian + leaky bucket
   trading/
     types.ts           tipe bersama
@@ -215,8 +216,10 @@ jalanin semuanya.
 
 ## Nambah bahan buat analis
 
-Gak ada tool dan gak ada skill lagi — chat CLI, `src/agent/tools.ts`, `src/agent/skills.ts`, dan
-folder `skills/` udah dihapus semua. Analis cuma baca `brief`.
+Gak ada tool dan gak ada skill lagi — chat CLI, `src/agent/skills.ts`, dan folder `skills/` udah
+dihapus. Analis cuma baca `brief`. `src/agent/tools.ts` masih ada tapi kosong: template doang,
+lengkap sama contoh + aturannya, buat kalau suatu saat mau nambah tool (`git log` file-nya buat
+lihat set GMGN yang lama).
 
 Mau dia mempertimbangkan sesuatu yang baru? Tambahin field-nya di objek `brief` dalam `askAnalyst`
 (`src/trading/analyst.ts`), dari data yang udah diambil sweep. Kalau butuh route GMGN baru:
