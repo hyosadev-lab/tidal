@@ -153,9 +153,10 @@ called. The analyst used to have a `find_tokens` tool that widened the search mi
   per-feed from the dashboard's **Refine** panel — but they disqualify nothing. Consequence to
   keep in mind when editing: a candidate with a $2k pool, no smart money and a dev still holding
   reaches `askAnalyst` looking like any other row, and only the analyst, the Refine filters and
-  `securityRisk` stand between it and a position. `SKIP` still exists in `config.ts` but is now
-  only a default for the sweep's feed query. Don't reintroduce a structural gate without asking:
-  the dashboard is where that policy lives now.
+  `securityRisk` stand between it and a position. `SKIP` is gone entirely: `gatherCandidates`
+  sends only the operator's Refine rows, so a blank Refine fetches the feeds unfiltered. Don't
+  reintroduce a structural gate — or a hardcoded feed floor — without asking: the dashboard is
+  where that policy lives now.
 - **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
   blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto

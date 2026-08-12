@@ -52,9 +52,9 @@ export type TradeConfig = {
   // ── Discovery / execution ───────────────────────────────────────────
   /**
    * Dashboard "Refine" rows, keyed `<field>Min` / `<field>Max` — see `REFINE_FIELDS`
-   * (config.ts) for the fields and their per-feed GMGN params. Feed query filters, not
-   * gates: they narrow what the sweep fetches, and override `SKIP`'s defaults for the
-   * same param. Nothing here disqualifies a candidate — `runGates` is the only thing that does.
+   * (config.ts) for the fields and their per-feed GMGN params. Feed query filters, not gates:
+   * they are the only thing narrowing what the sweep fetches, and blank means unfiltered.
+   * Nothing here disqualifies a candidate — `runGates` is the only thing that does.
    */
   refine: Record<string, number>;
   /** Swap tolerance, %. 0 = auto: GMGN picks per route, paper uses `AUTO_SLIPPAGE_CAP`. */

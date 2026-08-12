@@ -40,23 +40,6 @@ export const EXPLORER: Record<Chain, string> = {
 };
 
 /**
- * What the sweep asks GMGN for by default — transcribed from the 🔴 Skip column of the
- * "Pass / Watch / Skip Criteria" table in `skills/gmgn-market/SKILL.md`, because GMGN's own
- * floor for "not worth looking at" is a reasonable floor for "not worth fetching".
- *
- * These are **not** gates and nothing downstream disqualifies a row for falling under them:
- * `runGates` never reads this. `gatherCandidates` (engine.ts) passes them as feed query
- * params, and a Refine row overrides them. Structural quality is `score()`'s job now.
- *
- * Only the two fields the feeds actually take live here — `rug_ratio` and top-10 rate were
- * dropped when this stopped being a gate; the graduates feed caps rug at 0.3 on its own.
- */
-export const SKIP = {
-  minLiquidityUsd: 10_000,
-  minSmartDegenCount: 1,
-} as const;
-
-/**
  * The dashboard's "Refine" panel → GMGN feed filters, one min/max pair per row. These narrow
  * what the feeds *return*; they are not gates and cannot loosen one — `runGates` still runs on
  * every row that comes back, so a slack refine value costs wasted rows, never a wider risk
@@ -246,7 +229,7 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     timeStopMinPnlPct: clamp(input.timeStopMinPnlPct, -50, 500, base.timeStopMinPnlPct),
     cooldownMinutes: clamp(input.cooldownMinutes, 0, 10080, base.cooldownMinutes),
 
-    // Feed query filters, not gates — they narrow what the sweep fetches. See SKIP.
+    // Feed query filters, not gates — the only thing that narrows what the sweep fetches.
     refine: sanitizeRefine(input.refine),
     // 0 is not a tolerance, it is the auto flag — same convention as the two fields below.
     slippagePct: Math.round(clamp(input.slippagePct, 0, 100, base.slippagePct)),

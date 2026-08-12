@@ -1,5 +1,5 @@
 import { askAnalyst } from "./analyst.ts";
-import { SKIP, gasReserve, liveReady, minPosition, num, refineQuery } from "./config.ts";
+import { gasReserve, liveReady, minPosition, num, refineQuery } from "./config.ts";
 import * as broker from "./broker.ts";
 import * as gmgn from "./market.ts";
 import { NATIVE_SYMBOL } from "./market.ts";
@@ -42,24 +42,19 @@ async function gatherCandidates(): Promise<Candidate[]> {
     }
   };
 
-  // SKIP still seeds the sweep's own query — GMGN's published skip band is a reasonable
-  // default for what to fetch — but it is only a feed filter now: nothing downstream
-  // disqualifies a row for being under it, and a Refine row overrides it either way.
+  // The sweep applies no floor of its own: Refine is the only thing that narrows these feeds,
+  // and an empty Refine means an unfiltered feed. That is the point — structural quality is
+  // `score()`'s job and the operator's, so a hardcoded default here would be a gate wearing a
+  // different name. Expect more noise per cycle when Refine is blank.
   const feeds: Promise<void>[] = [
     gmgn
-      .trending(cfg.chain, {
-        interval: "1h",
-        limit: 50,
-        minLiquidity: SKIP.minLiquidityUsd,
-        minSmartDegen: SKIP.minSmartDegenCount || undefined,
-        refine: refineQuery(cfg.refine),
-      })
+      .trending(cfg.chain, { interval: "1h", limit: 50, refine: refineQuery(cfg.refine) })
       .then((r) => add(r, "trending-1h"))
       .catch((e) => {
         store.log("warn", `Trending feed failed: ${short(e)}`);
       }),
     gmgn
-      .trending(cfg.chain, { interval: "5m", limit: 30, minLiquidity: SKIP.minLiquidityUsd, refine: refineQuery(cfg.refine) })
+      .trending(cfg.chain, { interval: "5m", limit: 30, refine: refineQuery(cfg.refine) })
       .then((r) => add(r, "trending-5m"))
       .catch(() => undefined),
   ];

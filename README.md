@@ -31,7 +31,8 @@ Pembagiannya disengaja:
 ### 1. Scan (tiap `interval` menit)
 
 Tiga feed digabung: `market trending` 1 jam, `market trending` 5 menit, dan `market trenches`
-(token yang udah graduate). Filter awal didorong ke server GMGN biar hemat rate limit.
+(token yang udah graduate). Baris **Refine** didorong ke server GMGN biar hemat rate limit —
+kalau Refine kosong, feed-nya diambil apa adanya.
 
 ### 2. Gate — gagal satu, gugur
 
@@ -55,12 +56,10 @@ dengan kolam $2k, tanpa smart money, dan dev masih megang bakal nyampe ke analis
 aja kayak baris lain. Yang berdiri antara dia dan posisi cuma analis, filter Refine, dan
 penolakan pre-trade di bawah.
 
-Konstanta `SKIP` (`src/trading/config.ts`) masih ada, tapi sekarang cuma jadi bibit query
-sweep-nya: `minLiquidityUsd` dan `minSmartDegenCount` dikirim sebagai filter feed di
-`gatherCandidates` (`src/trading/engine.ts`). Jadi mereka nentuin apa yang **diambil**, bukan
-apa yang **ditolak** — baris Refine yang diisi bakal nimpa mereka. Angkanya sendiri tetap
-salinan kolom 🔴 Skip dari tabel "Pass / Watch / Skip Criteria" di
-`skills/gmgn-market/SKILL.md`; gak ada angka karangan sendiri di sini.
+Sweep-nya juga gak punya lantai sendiri. `gatherCandidates` (`src/trading/engine.ts`) cuma
+ngirim baris **Refine** ke GMGN — Refine kosong artinya feed-nya gak disaring sama sekali, dan
+sesi kayak gitu bakal nyeret jauh lebih banyak sampah per siklus. Itu memang disengaja: satu
+angka default di kode cuma bakal jadi gate yang ganti nama. Kalau mau lantai, isi Refine.
 
 Sisanya bukan gate, tapi **penolakan pre-trade** — sekali per entry, lewat `token_security`,
 karena cuma route itu yang jawabannya bisa dipercaya (baris feed sering mengosongkannya):

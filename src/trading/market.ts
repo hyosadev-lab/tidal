@@ -39,40 +39,25 @@ export async function apiReady(): Promise<boolean> {
 
 export type RankItem = Record<string, any>;
 
+/**
+ * The rank feed. Every filter param GMGN accepts here now comes from one place — the operator's
+ * Refine rows — so this takes no floors of its own; see `REFINE_FIELDS` (config.ts) for the
+ * mapping. Only the query moves: what comes back is scored, never gated on these.
+ */
 export async function trending(
   chain: Chain,
   opts: {
     interval?: string;
     limit?: number;
-    minLiquidity?: number;
-    minVolume?: number;
-    maxRugRatio?: number;
-    minSmartDegen?: number;
-    maxCreated?: string;
-    minCreated?: string;
-    minRenowned?: number;
-    maxTop10Rate?: number;
-    orderBy?: string;
-    platforms?: string[];
     /** Operator's Refine rows, already mapped to rank params by `refineQuery`. */
     refine?: Record<string, string | number>;
   } = {},
 ): Promise<RankItem[]> {
-  const q: Record<string, string | number | string[]> = {
-    order_by: opts.orderBy ?? "volume",
+  const q: Record<string, string | number> = {
+    order_by: "volume",
     limit: opts.limit ?? 50,
+    ...opts.refine,
   };
-  if (opts.minLiquidity) q["min_liquidity"] = Math.round(opts.minLiquidity);
-  if (opts.minVolume) q["min_volume"] = Math.round(opts.minVolume);
-  if (opts.minSmartDegen) q["min_smart_degen_count"] = opts.minSmartDegen;
-  if (opts.minRenowned) q["min_renowned_count"] = opts.minRenowned;
-  if (opts.maxTop10Rate) q["max_top10_holder_rate"] = opts.maxTop10Rate;
-  if (opts.maxCreated) q["max_created"] = opts.maxCreated;
-  if (opts.minCreated) q["min_created"] = opts.minCreated;
-  if (opts.platforms?.length) q["platforms"] = opts.platforms;
-  // Last word to the operator: a Refine row overrides the caller's floor for the same param.
-  // Only the query moves — what comes back is scored, not gated on these.
-  Object.assign(q, opts.refine);
   return list(await client().getTrendingSwaps(chain, opts.interval ?? "1h", q), "rank");
 }
 
