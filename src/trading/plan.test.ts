@@ -280,6 +280,34 @@ test("a trailing stop tighter than the stop loss does not shadow it on the way d
   assert.equal(evaluateExit(won, cfg)?.kind, "rule1");
 });
 
+test("the stop loss wins a tick a trailing rule listed above it also triggers on", () => {
+  // Memecoins gap between two 30s polls, so one tick can satisfy both rules. Order in the
+  // list must not decide it: a `ttp` first would sell its own 50% down here and leave the
+  // other half to the stop a tick later, which is how a stop stops mattering.
+  const rules: StrategyRule[] = [
+    { kind: "ttp", at: 20, dd: 60, sell: 50 },
+    { kind: "sl", at: -30, sell: 100 },
+  ];
+  // Peaked at +30% (arming the ttp), now -50%: past the stop, and 62% off the peak.
+  const gapped = position({ strategy: rules, peakPrice: 0.0013, lastPrice: 0.0005 });
+  const e = evaluateExit(gapped, cfg);
+  assert.equal(e?.kind, "rule1", "the stop, not the ttp written above it");
+  assert.equal(e?.percent, 100);
+});
+
+test("a trailing take-profit does not fire underwater either", () => {
+  // Same guard the tsl has: armed at +140%, 60% off the peak, but the position is at -5%.
+  // Above the stop, so the answer is to wait for the stop — not to book a loss as a "profit".
+  const rules: StrategyRule[] = [
+    { kind: "ttp", at: 20, dd: 60, sell: 50 },
+    { kind: "sl", at: -30, sell: 100 },
+  ];
+  assert.equal(evaluateExit(position({ strategy: rules, peakPrice: 0.0024, lastPrice: 0.00095 }), cfg), null);
+  // Still in profit at +8% after the same giveback: now it is genuinely profit protection.
+  const inProfit = position({ strategy: rules, peakPrice: 0.0027, lastPrice: 0.00108 });
+  assert.equal(evaluateExit(inProfit, cfg)?.kind, "rule0");
+});
+
 test("a filled rule is not sold twice", () => {
   const p = position({ strategy: RULES, lastPrice: 0.0016, peakPrice: 0.0016, filledRungs: [1] });
   assert.equal(evaluateExit(p, cfg), null);

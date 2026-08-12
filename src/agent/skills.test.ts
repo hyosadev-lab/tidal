@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadSkills, parseSkill, skillIndex, skillTool } from "./skills.ts";
 
 test("parses frontmatter and strips it from the body", () => {
@@ -21,19 +24,24 @@ test("missing skills directory yields no skills and no tool", async () => {
   assert.equal(skillIndex(skills), "");
 });
 
-test("loads every skills/<name>/SKILL.md and indexes it", async () => {
-  const skills = await loadSkills();
-  assert.ok(skills.length >= 7, `expected the gmgn skills, got ${skills.length}`);
-  assert.ok(skills.every((s) => s.name && s.description && s.body));
-  assert.match(skillIndex(skills), /- gmgn-token: Research any crypto/);
-});
+// Against a temp root, not the repo: nothing loads this module any more (the CLI that did is
+// gone), so there is no `skills/` directory left to read. The loader is kept for the day one
+// comes back — see src/agent/tools.ts, same reasoning.
+test("loads <root>/<name>/SKILL.md, indexes it, and skips folders without one", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tta-skills-"));
+  await mkdir(join(root, "demo"));
+  await writeFile(join(root, "demo", "SKILL.md"), "---\nname: demo\ndescription: does demo things\n---\n\nstep one\n");
+  await mkdir(join(root, "empty-dir"));
 
-test("load_skill returns the body prefixed with its real directory", async () => {
-  const skills = await loadSkills();
+  const skills = await loadSkills(root);
+  assert.deepEqual(skills.map((s) => s.name), ["demo"]);
+  assert.match(skillIndex(skills), /- demo: does demo things/);
+
   const tool = skillTool(skills).load_skill!;
-
-  const out = String(await tool.run({ name: "gmgn-holder-analysis" }));
-  assert.match(out, /^Skill directory: .*[/\\]skills[/\\]gmgn-holder-analysis\n/);
-  assert.match(out, /analyze\.py/);
+  const out = String(await tool.run({ name: "demo" }));
+  assert.match(out, /^Skill directory: .*[/\\]demo\n/);
+  assert.match(out, /step one$/);
   assert.equal(await tool.run({ name: "nope" }), "unknown skill: nope");
+
+  await rm(root, { recursive: true, force: true });
 });

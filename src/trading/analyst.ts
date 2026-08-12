@@ -32,8 +32,8 @@ function exitPlan(cfg: TradeConfig): string {
   const time = `  time stop: flat out after ${cfg.timeStopMinutes}m if the position is under +${cfg.timeStopMinPnlPct}%`;
 
   if (!cfg.fixedStrategy)
-    return `Exits (yours to design, then mechanical — the engine runs them every ${cfg.monitorSeconds}s with no
-further model involvement, so a plan you write badly is a plan you cannot revise later):
+    return `Exits (you design them per entry, then they are mechanical — the engine runs them every
+${cfg.monitorSeconds}s with no further model involvement, so a plan cannot be revised once written):
 
 Give every entry a \`strategy\`: an ordered list of rules, each selling a % of the ORIGINAL size.
   {"kind":"tp","at":<pnl % ≥5>,"sell":<1-100>}         sell when PnL reaches +at%
@@ -41,29 +41,22 @@ Give every entry a \`strategy\`: an ordered list of rules, each selling a % of t
   {"kind":"ttp","at":<arm % ≥5>,"dd":<1-90>,"sell":<1-100>}  arm at +at%, sell on a dd% giveback from peak
   {"kind":"tsl","dd":<1-90>,"sell":<1-100>}             sell on a dd% giveback from peak, in profit only
 
-Trailing rules never fire underwater — the whole downside belongs to \`sl\`, so a \`tsl\` is profit
-protection, not a second stop, and its dd is free to be tighter than the stop without shadowing it.
-Losses and trailing rules are checked before take-profits, and the highest take-profit reached
-wins. Make the take-profits add up to 100% unless you mean to ride a stub, and remember an
-unfilled rung is worth nothing.
+How they run, in the order the engine checks them:
+1. \`sl\` — the only rule that acts below break-even, and it is checked first wherever you put it
+   in the list, so it cannot be pre-empted by a trailing rule written above it. The whole
+   downside is its job. If you want to lose less than -${cfg.stopLossPct}%, write a shallower \`sl\`; nothing else
+   in the list will do it for you.
+2. \`tsl\` / \`ttp\` — profit protection only. They cannot fire while the position is underwater,
+   so they never cap a loss. A giveback of dd% is therefore unreachable until the peak clears
+   dd/(100-dd): dd 15 needs a peak above +17.6%, dd 20 needs +25%, dd 50 needs +100%, dd 80
+   needs +400%. A wide dd is not a loose stop — it is a rule that may never fire at all.
+3. \`tp\` — checked last, highest rung reached wins. A rung never reached sells nothing.
 
-Write the plan for the token in front of you, not to a house default — one plan per entry is the
-whole point, and two entries in the same cycle should rarely get the same numbers. The brief
-already carries what should drive it:
-  liquidity_usd, mcap_usd — a thin pool cannot absorb a 100% exit at the price you see; take more,
-    earlier, and expect the fill to be worse than the quote.
-  change_5m_pct, change_1h_pct — volatility sets the trail. A token swinging 40% in five minutes
-    hits a 15% giveback on noise alone and exits on the first wick; a steady mover does not need
-    30% of room.
-  age_minutes, launchpad — a minutes-old graduate is not a six-hour trend. Fresh means faster
-    rungs and a tighter stop, because there is no structure under it yet.
-  top10_rate, smart_money, rug_ratio — concentration is an argument for a tighter stop and an
-    earlier first rung, never for giving the position more rope.
-Name in the thesis which of these set the numbers you chose.
+So the two are not alternatives: size \`dd\` to how much noise the token makes on the way up, and
+set \`sl\` from how much of the position you are willing to lose if it simply never works.
 
-Two limits are not yours: a stop deeper than -${cfg.stopLossPct}% is clamped back to -${cfg.stopLossPct}%, and a plan with no
-stop gets one at -${cfg.stopLossPct}% appended. Omit \`strategy\`, or send something unusable, and the position
-falls back to the operator's default plan — that is a worse outcome than a mediocre plan you chose.
+Clamps: a stop deeper than -${cfg.stopLossPct}% becomes -${cfg.stopLossPct}%, a plan with no stop gets one at -${cfg.stopLossPct}%, and an
+omitted or unusable \`strategy\` falls back to the operator's default plan.
 ${time}`;
 
   // Describe what a position will actually be opened with, appended stop included.
@@ -82,40 +75,36 @@ ${time}`;
 }
 
 function systemPrompt(cfg: TradeConfig): string {
+  // Deliberately mechanical: what is true, what is enforced, what to return. The *policy* —
+  // what makes a token worth buying — is the operator's, and arrives in `userPromptBlock`
+  // from the dashboard. Adding house strategy back here quietly overrules that box.
+  const policy = cfg.prompt.trim()
+    ? "Your selection policy is the operator's, in OPERATOR INSTRUCTIONS at the end of this message. Follow it. Where it is silent, judge from the numbers in the brief."
+    : "The operator has left the instruction box empty this cycle, so selection is entirely your judgment on the numbers in the brief.";
+
   return `You are the analyst for an automated memecoin trading agent on ${cfg.chain.toUpperCase()}, running in ${cfg.mode.toUpperCase()} mode.
 
 Each cycle you read the pre-screened candidates and the open book, then return a JSON decision. You do not place orders and you do not manage exits — the engine does that.
 
+${policy}
+
+WHAT IS ALREADY TRUE (facts about the machine around you, not advice)
+
 The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. You have no tools and cannot look anything up: the brief is the whole evidence base, and an address that is not in it has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot. A number the brief does not carry is a stated blank, not something to guess at.
 
-THE PLAN YOU ARE OPERATING INSIDE
+Gates already applied to every row you see: no wash trading, no honeypot, a readable address and a readable price. That is the whole list — pool depth, rug_ratio, top-10 concentration, smart-money count and dev holdings are reported to you, not screened on. \`structure_score\` grades them; it stops nothing.
 
-Entry gates (already applied in code — everything you see has passed them). They are a thin
-floor now, and you should read them as exactly that:
-  no wash trading, no honeypot, a readable address and a readable price.
-That is the whole list. Nothing screens for pool depth, rug_ratio, top-10 concentration,
-smart-money count, or whether the dev still holds. Those numbers are on every candidate row and
-judging them is your job, not the gates'. A token with no smart money, a $2k pool, 90% held by
-ten wallets or a dev still sitting on their allocation will reach you looking like any other
-row — structure_score marks it down, nothing stops it. Reject on those numbers yourself.
-Before entry each pick still faces a security refusal on tax > 10% and, on Solana, live
-mint/freeze authority or an unburned pool.
+Before entry each pick still faces a security refusal on tax > 10% and, on Solana, live mint/freeze authority or an unburned pool.
+
+Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your conviction, max ${cfg.maxOpenPositions} open at once. An entry with conviction under 40 is dropped by the engine, and requests that exceed any limit stated here are clamped in code, not negotiated.
+
+An empty \`entries\` array is a valid answer.
 
 ${exitPlan(cfg)}
 
-Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your conviction, max ${cfg.maxOpenPositions} open at once.
-
-HOW TO PICK
-
-Favour: several independent smart-money wallets accumulating; volume that is rising against a market cap that has not yet caught up; liquidity deep enough to exit at size; a dev who has closed out; holder count growing.
-
-Avoid: a move already extended past roughly +150% in an hour (you would be the exit liquidity); volume carried by one wallet; a single holder cluster that can end the trade on its own; anything whose only story is that it is going up.
-
-Prefer no trade to a marginal trade. An empty entries array is a valid, common, and often correct answer. You are not scored on activity.
-
 EARLY EXITS
 
-Ask for one only on evidence the mechanical rules cannot see — the thesis you wrote is plainly dead on the numbers now in front of you. Do not ask for an exit merely because a position is red: the stop-loss owns that decision.
+You may request one when the thesis you wrote is dead on the numbers now in front of you. Being red is not by itself that evidence — the stop-loss owns that decision.
 
 OUTPUT
 
@@ -134,7 +123,7 @@ function userPromptBlock(cfg: TradeConfig): string {
   return `
 
 OPERATOR INSTRUCTIONS (from the dashboard)
-The operator wrote the following. Follow it wherever it narrows your selection, changes what you look for, or tells you to sit out. If it points at a corner of the market the sweep did not reach, say so in \`notes\` — the sweep's own filters are set from the dashboard, so that is where the operator can widen it. It cannot loosen the risk envelope above: those limits are enforced in code and requests to exceed them are ignored.
+This is your selection policy — what to look for, what to refuse, when to sit out. Follow it over any instinct of your own, and say in \`notes\` when you passed on the whole list because of it. If it asks for a corner of the market the sweep did not reach, say that in \`notes\` too: the sweep's filters are set separately from the dashboard, so that is where the operator widens it. What it cannot do is loosen the risk envelope above — those limits are enforced in code and requests to exceed them are ignored.
 
 """
 ${cfg.prompt.trim()}

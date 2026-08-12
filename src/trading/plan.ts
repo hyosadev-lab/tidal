@@ -289,8 +289,8 @@ function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | n
 }
 
 /**
- * The rule-set exits. Losses first, then the highest take-profit reached, so a spike
- * between two ticks fills the top rung rather than the bottom one. Arming is derived
+ * The rule-set exits. Losses first, then trailing rules, then the highest take-profit reached,
+ * so a spike between two ticks fills the top rung rather than the bottom one. Arming is derived
  * from `peakPrice` rather than latched, so several trailing rules can coexist.
  * Trailing rules never fire underwater — that half of the range is the stop loss's.
  */
@@ -301,18 +301,26 @@ function ruleExit(p: Position, pnlPct: number): ExitSignal | null {
   const live = (i: number) => !p.filledRungs.includes(i);
   const sig = (i: number, reason: string): ExitSignal => ({ percent: rules[i]!.sell, reason, kind: `rule${i}` });
 
+  // The stop owns the downside wherever the model happened to list it. Checked in its own pass
+  // ahead of the trails, because a tick can satisfy both — memecoins gap 50% between two 30s
+  // polls — and whichever rule is reached first wins the tick. Interleaved, a trailing rule
+  // written above the `sl` took that tick and sold only its own (often partial) percent, and
+  // the stop the rest of the plan was sized around fired a tick late, further down, on what
+  // was left. That is the "the stop-loss never does anything" shape.
+  for (let i = 0; i < rules.length; i++)
+    if (rules[i]!.kind === "sl" && live(i) && pnlPct <= (rules[i]!.at ?? 0))
+      return sig(i, `stop loss at ${pnlPct.toFixed(1)}%`);
+
   for (let i = 0; i < rules.length; i++) {
     const r = rules[i]!;
-    if (!live(i)) continue;
-    if (r.kind === "sl" && pnlPct <= (r.at ?? 0))
-      return sig(i, `stop loss at ${pnlPct.toFixed(1)}%`);
     // A trail only exits in profit: below break-even the position belongs to the stop loss.
-    // Without this a `tsl` shallower than the `sl` fires first on the way down, and the stop
-    // the rest of the plan was written around is unreachable.
-    if (r.kind === "tsl" && pnlPct > 0 && giveback >= (r.dd ?? Infinity))
+    // Both trailing kinds, so the split stays the one the analyst is briefed on — a `ttp`
+    // exempt from this fires underwater and shadows the stop exactly like a `tsl` would.
+    if (!live(i) || pnlPct <= 0) continue;
+    if (r.kind === "tsl" && giveback >= (r.dd ?? Infinity))
       return sig(i, `trailing stop loss — gave back ${giveback.toFixed(1)}% from peak (still +${pnlPct.toFixed(1)}%)`);
     if (r.kind === "ttp" && peakPnl >= (r.at ?? Infinity) && giveback >= (r.dd ?? Infinity))
-      return sig(i, `trailing take-profit — armed at +${r.at}%, gave back ${giveback.toFixed(1)}% (still ${pnlPct.toFixed(1)}%)`);
+      return sig(i, `trailing take-profit — armed at +${r.at}%, gave back ${giveback.toFixed(1)}% (still +${pnlPct.toFixed(1)}%)`);
   }
 
   let best = -1;

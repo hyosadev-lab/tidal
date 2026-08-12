@@ -87,11 +87,13 @@
       <textarea id="in-prompt" rows="6" spellcheck="false"
         placeholder="e.g. Only take tokens where at least 3 smart-money wallets bought in the last hour and the dev has fully exited. Skip anything already up more than 80% today. Size down after two losses in a row."></textarea>
       <div class="presets" id="presets">
+        <button data-preset="house">House default</button>
         <button data-preset="smart">Smart-money only</button>
         <button data-preset="patient">Patient / low churn</button>
         <button data-preset="momentum">Early momentum</button>
         <button data-preset="defensive">Defensive</button>
       </div>
+      <span class="hint">This is where the strategy lives. The analyst's own prompt only states the rules it cannot break (gates, sizing, exit format) — what counts as a good token is whatever you write here. Leave it empty and that judgment is the model's alone. It shapes <b>selection</b>, not the sweep: to change which tokens get fetched, use Refine.</span>
     </label>
 
     <details class="fold">

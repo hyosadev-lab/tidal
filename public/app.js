@@ -2,6 +2,10 @@ const $ = (id) => document.getElementById(id);
 const tokenUrl = (chain, address) => `https://gmgn.ai/${chain || "sol"}/token/${address}`;
 
 const PRESETS = {
+  // What the system prompt used to assert on its own. It is a preset now, not a default:
+  // the analyst's prompt states facts and limits, this box states policy.
+  house:
+    "Favour several independent smart-money wallets accumulating, volume rising against a market cap that has not caught up, liquidity deep enough to exit at size, a dev who has closed out, and a holder count still growing. Avoid a move already extended past roughly +150% in an hour, volume carried by one wallet, and a single holder cluster that could end the trade on its own. Prefer no trade to a marginal one — an empty cycle is a good outcome.",
   smart:
     "Only enter when at least 3 distinct smart-money wallets have bought in the last hour and none of them have started selling. Check the top holders before committing. If the smart money is already distributing, skip it no matter how good the chart looks.",
   patient:
