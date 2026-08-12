@@ -24,15 +24,104 @@ const execAsync = promisify(exec);
 const chain = { type: "string", description: "sol | bsc | base | eth | robinhood | arc | stable" };
 const address = { type: "string", description: "token contract address" };
 const walletAddress = { type: "string", description: "wallet address" };
-const extra = {
-  type: "object",
-  description: "Optional extra query params passed through as-is (e.g. limit, cursor, order_by).",
-  additionalProperties: true,
-};
+// Every optional query param is spelled out below rather than hidden behind a passthrough
+// `extra` object. The schema is the model's only description of a tool — a key it cannot see is
+// a key it cannot send, and GMGN ignores unknown params silently, so a guess reads as a
+// successful call that quietly returned the default ordering. Values come from the vendored
+// `skills/gmgn-*` docs; the enums are the accepted values, not suggestions.
+const limitOf = (max: number, def: number) => ({ type: "number", description: `results, max ${max} (default ${def})` });
+const cursor = { type: "string", description: "pagination cursor — the `next` value from the previous response" };
+const direction = { type: "string", enum: ["asc", "desc"], description: "sort direction (default desc)" };
+const oneOf = (values: string[], description: string) => ({ type: "string", enum: values, description });
+const manyOf = (values: string[], description: string) => ({ type: "array", items: { type: "string", enum: values }, description });
+const flag = (description: string) => ({ type: "boolean", description });
+
+/** `min_<field>` / `max_<field>` pairs as real properties, so the whole filter surface is visible. */
+function bounds(fields: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [field, what] of Object.entries(fields)) {
+    out[`min_${field}`] = { type: "number", description: `minimum ${what}` };
+    out[`max_${field}`] = { type: "number", description: `maximum ${what}` };
+  }
+  return out;
+}
 
 function gmgnTool(description: string, properties: Record<string, unknown>, required: string[], run: (a: any) => Promise<unknown>): Tool {
   return { description, parameters: { type: "object", properties, required }, run };
 }
+
+/** Range filters the rank feed accepts — `gmgn_hot_searches` here, and `gmgn_trending` if it is
+ *  ever uncommented. The engine's own sweep sends the same keys via `refineQuery` (config.ts). */
+const RANK_BOUNDS = {
+  volume: "trading volume over the interval (USD)",
+  liquidity: "liquidity (USD)",
+  marketcap: "market cap (USD)",
+  history_highest_marketcap: "all-time highest market cap (USD)",
+  swaps: "swap count",
+  holder_count: "holder count",
+  gas_fee: "gas fee",
+  renowned_count: "KOL wallet count",
+  smart_degen_count: "smart-money holder count",
+  bot_degen_count: "bot-degen wallet count",
+  visiting_count: "visitor count",
+  price_change_percent: "price change over the interval, as a ratio",
+  insider_rate: "insider trading ratio (0–1); tokens missing this field are excluded",
+  bundler_rate: "bundle-bot trading ratio (0–1); tokens missing this field are excluded",
+  entrapment_ratio: "entrapment trading ratio (0–1); tokens missing this field are excluded",
+  top10_holder_rate: "top-10 holder concentration (0–1)",
+  top70_sniper_hold_rate: "top-70 sniper holding ratio (0–1)",
+  dev_team_hold_rate: "dev-team holding ratio (0–1); the min side also excludes creator-close tokens",
+};
+
+/** Range filters the launchpad feed accepts. Same idea, different field names — `top_holder_rate`
+ *  here is `top10_holder_rate` on the rank feed, and the creator fields have no rank equivalent.
+ *  Commented out with `gmgn_trenches` below; uncomment both together. */
+// const TRENCHES_BOUNDS = {
+//   volume_24h: "24h trading volume (USD)",
+//   net_buy_24h: "24h net buy volume (USD)",
+//   swaps_24h: "24h swap count",
+//   buys_24h: "24h buy count",
+//   sells_24h: "24h sell count",
+//   visiting_count: "visitor count",
+//   progress: "bonding curve progress (0–1)",
+//   marketcap: "market cap (USD)",
+//   liquidity: "liquidity (USD)",
+//   holder_count: "holder count",
+//   top_holder_rate: "top-10 holder concentration (0–1)",
+//   rug_ratio: "rug-pull risk score (0–1)",
+//   bundler_rate: "bundle-bot trading ratio (0–1)",
+//   insider_ratio: "insider trading ratio (0–1)",
+//   entrapment_ratio: "entrapment/phishing trading ratio (0–1)",
+//   private_vault_hold_rate: "private vault holding ratio (0–1)",
+//   top70_sniper_hold_rate: "top-70 sniper holding ratio (0–1)",
+//   bot_count: "bot wallet count",
+//   bot_degen_rate: "bot-degen wallet ratio (0–1)",
+//   fresh_wallet_rate: "fresh wallet ratio (0–1)",
+//   total_fee: "total fee",
+//   smart_degen_count: "smart-money holder count",
+//   renowned_count: "KOL wallet count",
+//   creator_balance_rate: "creator holding ratio (0–1)",
+//   creator_created_count: "tokens this creator has launched",
+//   creator_created_open_count: "tokens by this creator that graduated",
+//   creator_created_open_ratio: "this creator's graduation ratio (0–1)",
+//   x_follower: "X/Twitter follower count",
+//   twitter_rename_count: "X/Twitter rename count",
+//   tg_call_count: "Telegram call count",
+// };
+
+// token_top_holders and token_top_traders take the same query.
+const holderQuery = {
+  limit: limitOf(100, 20),
+  order_by: oneOf(
+    ["amount_percentage", "profit", "unrealized_profit", "buy_volume_cur", "sell_volume_cur"],
+    "sort field (default amount_percentage). profit is realized USD; buy/sell_volume_cur shows who is accumulating or distributing",
+  ),
+  direction,
+  tag: oneOf(
+    ["smart_degen", "renowned", "fresh_wallet", "dev", "sniper", "rat_trader", "bundler", "transfer_in", "dex_bot", "bluechip_owner"],
+    "return only wallets with this tag; omit for all wallets. Independent of order_by",
+  ),
+};
 
 export const tools: Record<string, Tool> = {
   bash: {
@@ -81,16 +170,16 @@ export const tools: Record<string, Tool> = {
 
   gmgn_token_top_holders: gmgnTool(
     "Get a token's top holders by balance.",
-    { chain, address, extra },
+    { chain, address, ...holderQuery },
     ["chain", "address"],
-    ({ chain, address, extra }) => gmgnClient().getTokenTopHolders(chain, address, extra ?? {}),
+    ({ chain, address, ...q }) => gmgnClient().getTokenTopHolders(chain, address, q),
   ),
 
   gmgn_token_top_traders: gmgnTool(
     "Get a token's top traders by realized P&L.",
-    { chain, address, extra },
+    { chain, address, ...holderQuery },
     ["chain", "address"],
-    ({ chain, address, extra }) => gmgnClient().getTokenTopTraders(chain, address, extra ?? {}),
+    ({ chain, address, ...q }) => gmgnClient().getTokenTopTraders(chain, address, q),
   ),
 
   gmgn_token_kline: gmgnTool(
@@ -111,16 +200,37 @@ export const tools: Record<string, Tool> = {
 
   gmgn_wallet_holdings: gmgnTool(
     "Get a wallet's current token holdings. Signed route — requires GMGN_PRIVATE_KEY.",
-    { chain, walletAddress, extra },
+    {
+      chain,
+      walletAddress,
+      limit: limitOf(50, 20),
+      cursor,
+      order_by: oneOf(
+        ["usd_value", "last_active_timestamp", "realized_profit", "unrealized_profit", "total_profit", "history_bought_cost", "history_sold_income"],
+        "sort field (default usd_value)",
+      ),
+      direction,
+      hide_abnormal: flag("hide abnormal positions (default false)"),
+      hide_airdrop: flag("hide airdrop positions (default true)"),
+      hide_closed: flag("hide closed positions (default true)"),
+      hide_open: flag("hide open positions"),
+    },
     ["chain", "walletAddress"],
-    ({ chain, walletAddress, extra }) => gmgnClient().getWalletHoldings(chain, walletAddress, extra ?? {}),
+    ({ chain, walletAddress, ...q }) => gmgnClient().getWalletHoldings(chain, walletAddress, q),
   ),
 
   gmgn_wallet_activity: gmgnTool(
     "Get a wallet's recent trade activity.",
-    { chain, walletAddress, extra },
+    {
+      chain,
+      walletAddress,
+      token: { ...address, description: "only activity on this token (optional)" },
+      limit: limitOf(50, 20),
+      cursor,
+      type: manyOf(["buy", "sell", "transferIn", "transferOut", "add", "remove"], "activity kinds to include; omit for all"),
+    },
     ["chain", "walletAddress"],
-    ({ chain, walletAddress, extra }) => gmgnClient().getWalletActivity(chain, walletAddress, extra ?? {}),
+    ({ chain, walletAddress, ...q }) => gmgnClient().getWalletActivity(chain, walletAddress, q),
   ),
 
   gmgn_wallet_stats: gmgnTool(
@@ -128,7 +238,7 @@ export const tools: Record<string, Tool> = {
     {
       chain,
       walletAddresses: { type: "array", items: { type: "string" }, description: "one or more wallet addresses" },
-      period: { type: "string", description: "e.g. 7d, 30d (default 7d)" },
+      period: oneOf(["7d", "30d"], "stats period (default 7d)"),
     },
     ["chain", "walletAddresses"],
     ({ chain, walletAddresses, period }) => gmgnClient().getWalletStats(chain, walletAddresses, period ?? "7d"),
@@ -143,32 +253,72 @@ export const tools: Record<string, Tool> = {
 
   gmgn_created_tokens: gmgnTool(
     "List tokens a wallet has created/launched.",
-    { chain, walletAddress, extra },
+    {
+      chain,
+      walletAddress,
+      order_by: oneOf(["market_cap", "token_ath_mc"], "sort field"),
+      direction,
+      migrate_state: oneOf(["migrated", "non_migrated"], "migrated = graduated to a DEX; non_migrated = still on the bonding curve"),
+    },
     ["chain", "walletAddress"],
-    ({ chain, walletAddress, extra }) => gmgnClient().getCreatedTokens(chain, walletAddress, extra ?? {}),
+    ({ chain, walletAddress, ...q }) => gmgnClient().getCreatedTokens(chain, walletAddress, q),
   ),
 
   // ---- GMGN: Market discovery ----
 
-  gmgn_trenches: gmgnTool(
-    "Browse launchpad tokens: new_creation, near_completion, or completed (graduated).",
-    {
-      chain,
-      types: { type: "array", items: { type: "string" }, description: "subset of new_creation | near_completion | completed" },
-      platforms: { type: "array", items: { type: "string" }, description: "launchpad platform allow-list; omit for the chain default" },
-      limit: { type: "number" },
-      filters: { type: "object", additionalProperties: true, description: "e.g. max_rug_ratio, min_volume_24h" },
-    },
-    ["chain"],
-    ({ chain, types, platforms, limit, filters }) => gmgnClient().getTrenches(chain, types, platforms, limit, filters),
-  ),
+  // The two rank feeds answer "which tokens exist", which is discovery, not analysis. The engine
+  // still calls both — src/trading/market.ts goes straight to OpenApiClient, not through this
+  // file — so the sweep is unaffected; what is gone is a model's ability to re-run it mid-cycle.
+  // Uncomment to give the interactive CLI its browsing back.
 
-  gmgn_trending: gmgnTool(
-    "Get trending/top tokens ranked by volume, price change, etc.",
-    { chain, interval: { type: "string", description: "e.g. 1m, 5m, 1h, 6h, 24h" }, extra },
-    ["chain", "interval"],
-    ({ chain, interval, extra }) => gmgnClient().getTrendingSwaps(chain, interval, extra ?? {}),
-  ),
+  // gmgn_trenches: gmgnTool(
+  //   "Browse launchpad tokens: new_creation, near_completion, or completed (graduated).",
+  //   {
+  //     chain,
+  //     types: manyOf(["new_creation", "near_completion", "completed"], "categories to query (default all three)"),
+  //     platforms: {
+  //       type: "array",
+  //       items: { type: "string" },
+  //       description:
+  //         "launchpad platform allow-list; omit for the chain default. sol: Pump.fun, letsbonk, bags, believe, boop, heaven, moonshot_app, ray_launchpad… · bsc: fourmeme, flap, clanker, lunafun… · base: clanker, flaunch, zora, bankr… · eth: trench, clanker, printr… — load the gmgn-market skill for the full per-chain list",
+  //     },
+  //     limit: limitOf(80, 80),
+  //     filters: {
+  //       type: "object",
+  //       description: "server-side filters, applied before results are returned",
+  //       properties: bounds(TRENCHES_BOUNDS),
+  //       additionalProperties: true,
+  //     },
+  //   },
+  //   ["chain"],
+  //   ({ chain, types, platforms, limit, filters }) => gmgnClient().getTrenches(chain, types, platforms, limit, filters),
+  // ),
+
+  // gmgn_trending: gmgnTool(
+  //   "Get trending/top tokens ranked by volume, price change, etc.",
+  //   {
+  //     chain,
+  //     interval: oneOf(["1m", "5m", "1h", "6h", "24h"], "ranking window (default 1h)"),
+  //     limit: limitOf(100, 100),
+  //     order_by: oneOf(
+  //       ["default", "swaps", "marketcap", "history_highest_market_cap", "liquidity", "volume", "holder_count", "smart_degen_count", "renowned_count", "gas_fee", "price", "change1m", "change5m", "change1h", "creation_timestamp"],
+  //       "sort field",
+  //     ),
+  //     direction,
+  //     filter: {
+  //       type: "array",
+  //       items: { type: "string" },
+  //       description:
+  //         "boolean tags. sol: renounced, frozen, burn, token_burnt, has_social, not_social_dup, not_image_dup, dexscr_update_link, not_wash_trading, is_internal_market, is_out_market · evm: not_honeypot, verified, renounced, locked, token_burnt, has_social, not_social_dup, not_image_dup, dexscr_update_link, is_internal_market, is_out_market. Omitting this is NOT 'no filter' — sol defaults to `renounced frozen`, evm to `not_honeypot verified renounced`",
+  //     },
+  //     platform: { type: "array", items: { type: "string" }, description: "launchpad/pool allow-list; see gmgn_trenches.platforms" },
+  //     min_created: { type: "string", description: "minimum token age, duration with a unit: 30m, 6h, 7d. A bare number is rejected" },
+  //     max_created: { type: "string", description: "maximum token age, same format" },
+  //     ...bounds(RANK_BOUNDS),
+  //   },
+  //   ["chain", "interval"],
+  //   ({ chain, interval, ...q }) => gmgnClient().getTrendingSwaps(chain, interval, q),
+  // ),
 
   gmgn_token_signal: gmgnTool(
     "Get tokens matching signal criteria (e.g. smart-money buys, price spikes, ATH) grouped by filter.",
@@ -176,8 +326,21 @@ export const tools: Record<string, Tool> = {
       chain,
       groups: {
         type: "array",
-        description: "TokenSignalGroup[] — signal_type (12=smart money buy, 6=price spike, 7=ATH) plus optional mc/fee/timestamp bounds",
-        items: { type: "object", additionalProperties: true },
+        description: "one result group per entry",
+        items: {
+          type: "object",
+          properties: {
+            signal_type: { type: "array", items: { type: "number" }, description: "12 = smart-money buy, 6 = price spike, 7 = new ATH" },
+            mc_min: { type: "number", description: "minimum current market cap (USD)" },
+            mc_max: { type: "number", description: "maximum current market cap (USD)" },
+            trigger_mc_min: { type: "number", description: "minimum market cap when the signal fired" },
+            trigger_mc_max: { type: "number", description: "maximum market cap when the signal fired" },
+            total_fee_min: { type: "number", description: "minimum total fee" },
+            total_fee_max: { type: "number", description: "maximum total fee" },
+            min_create_or_open_ts: { type: "string", description: "earliest creation/open timestamp, Unix seconds as a string" },
+            max_create_or_open_ts: { type: "string", description: "latest creation/open timestamp, Unix seconds as a string" },
+          },
+        },
       },
     },
     ["chain", "groups"],
@@ -189,8 +352,26 @@ export const tools: Record<string, Tool> = {
     {
       params: {
         type: "array",
-        description: "HotSearchesParam[] — each needs chain + interval, plus optional filters/limit/min_*/max_* bounds",
-        items: { type: "object", additionalProperties: true },
+        description: "one query per chain/interval pair",
+        items: {
+          type: "object",
+          properties: {
+            chain,
+            interval: oneOf(["1m", "5m", "1h", "6h", "24h"], "search window"),
+            label: { type: "string", description: "free-form label echoed back on the matching result group" },
+            filters: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "boolean tags. sol: renounced, frozen, burn, token_burnt, has_social, not_social_dup, not_image_dup, dexscr_update_link, not_wash_trading, is_internal_market, is_out_market · evm: not_honeypot, verified, renounced, locked, token_burnt, has_social, not_social_dup, not_image_dup, dexscr_update_link, is_internal_market, is_out_market. Omitting this is NOT 'no filter' — sol defaults to `renounced frozen`, evm to `not_honeypot verified renounced`",
+            },
+            limit: { type: "number", description: "results for this entry" },
+            min_created: { type: "string", description: "minimum token age, duration with a unit: 30m, 6h, 7d" },
+            max_created: { type: "string", description: "maximum token age, same format" },
+            ...bounds(RANK_BOUNDS),
+          },
+          required: ["chain", "interval"],
+        },
       },
     },
     ["params"],
@@ -203,16 +384,34 @@ export const tools: Record<string, Tool> = {
 
   gmgn_follow_wallet: gmgnTool(
     "Get trade activity from wallets the account follows. Signed route — requires GMGN_PRIVATE_KEY.",
-    { chain, extra },
+    {
+      chain,
+      wallet: { ...walletAddress, description: "only activity from this followed wallet (optional)" },
+      limit: limitOf(100, 10),
+      side: oneOf(["buy", "sell"], "trade direction"),
+      filter: { type: "array", items: { type: "string" }, description: "filter tags" },
+      min_amount_usd: { type: "number", description: "minimum trade size (USD)" },
+      max_amount_usd: { type: "number", description: "maximum trade size (USD)" },
+    },
     ["chain"],
-    ({ chain, extra }) => gmgnClient().getFollowWallet(chain, extra ?? {}),
+    ({ chain, ...q }) => gmgnClient().getFollowWallet(chain, q),
   ),
 
   gmgn_follow_tokens: gmgnTool(
     "Get a wallet's followed/watchlisted tokens.",
-    { chain, walletAddress, extra },
+    {
+      chain,
+      walletAddress,
+      group_id: { type: "string", description: "`all_group` (every group), `default`, or a user-defined group id" },
+      interval: oneOf(["1m", "5m", "1h", "6h", "24h"], "window for the price-change stats"),
+      order_by: oneOf(["created_at", "swaps", "volume", "market_cap", "liquidity", "price", "open_timestamp"], "sort field"),
+      direction: { ...direction, description: "sort direction — required when order_by is set" },
+      limit: { type: "number", description: "results per page" },
+      cursor,
+      search: { type: "string", description: "match on token name or address" },
+    },
     ["chain", "walletAddress"],
-    ({ chain, walletAddress, extra }) => gmgnClient().getFollowTokens(chain, walletAddress, extra ?? {}),
+    ({ chain, walletAddress, ...q }) => gmgnClient().getFollowTokens(chain, walletAddress, q),
   ),
 
   gmgn_follow_group_names: gmgnTool(

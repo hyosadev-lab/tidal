@@ -23,6 +23,7 @@ import {
   toCandidate,
 } from "./plan.ts";
 import { extractJson, _internals as analyst } from "./analyst.ts";
+import { tools as allTools } from "../agent/tools.ts";
 import { trenchesFilters } from "./market.ts";
 import { bands, median, spearman } from "./calibrate.ts";
 import { candidate, position } from "./fixtures.ts";
@@ -99,8 +100,25 @@ test("the analyst has no shell and no route that spends", () => {
   assert.ok(names.length > 5, "the analyst should still have its research tools");
   for (const banned of ["bash", "gmgn_swap", "gmgn_multi_swap", "gmgn_strategy_create", "gmgn_create_token"])
     assert.ok(!names.includes(banned), `${banned} must never be in the analyst's tool set`);
+  // Discovery is `gatherCandidates`; the analyst analyses the brief and does not re-sweep.
+  for (const feed of ["gmgn_trending", "gmgn_trenches", "gmgn_token_signal", "gmgn_hot_searches"])
+    assert.ok(!names.includes(feed), `${feed} is discovery, not analysis — keep it out`);
   // Everything it does have is either a gmgn_* read or the skill loader.
   for (const n of names) assert.ok(n.startsWith("gmgn_") || n === "load_skill", `unexpected analyst tool: ${n}`);
+});
+
+// The schema is the model's only description of a tool. A passthrough object hides the real
+// query surface behind "send whatever you like", and GMGN drops unknown keys silently — so the
+// model cannot tell a working filter from an ignored one. Every param stays spelled out.
+test("no tool hides its query params behind an opaque passthrough object", () => {
+  const walk = (schema: any, where: string) => {
+    if (!schema || typeof schema !== "object") return;
+    if (schema.type === "object" && schema.additionalProperties === true)
+      assert.ok(Object.keys(schema.properties ?? {}).length > 0, `${where} accepts free-form keys but names none`);
+    for (const [k, v] of Object.entries(schema.properties ?? {})) walk(v, `${where}.${k}`);
+    walk(schema.items, `${where}[]`);
+  };
+  for (const [name, tool] of Object.entries(allTools)) walk(tool.parameters, name);
 });
 
 // ── what the analyst is allowed to buy ────────────────────────────────

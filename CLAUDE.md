@@ -121,6 +121,12 @@ operator steers the sweep through the dashboard's Refine panel (`refineQuery`), 
 prompt — `cfg.prompt` shapes selection, not fetching, because the sweep runs before the model is
 called. The analyst used to have a `find_tokens` tool that widened the search mid-cycle; it and its
 `discovered` plumbing were dropped once Refine covered the same ground from the dashboard.
+`ANALYST_TOOL_NAMES` now carries no discovery feed at all — `gmgn_trending`, `gmgn_trenches`,
+`gmgn_token_signal` and `gmgn_hot_searches` are out, leaving exactly the per-token routes
+`skills/token-analysis` walks, and a test asserts they stay out. The analyst analyses the brief; it
+does not re-sweep. Consequence: `sniper_count` lives only on a feed row, so it is now a stated
+blank unless the brief carries it — `bundler_rate` and dev status survive as `stat.*` / `dev.*`
+in `gmgn_token_info`.
 
 ## Invariants worth knowing before you edit
 
@@ -187,6 +193,12 @@ called. The analyst used to have a `find_tokens` tool that widened the search mi
 - **New tool**: add it to `tools` in `src/agent/tools.ts` (`description`, `parameters`, `run`).
   The CLI picks it up immediately. To give it to the trading analyst as well, add its name to
   `ANALYST_TOOL_NAMES` in `src/trading/analyst.ts` — read-only only, and never `bash`.
+  **Spell every query param out in `parameters`, with `enum` where the API has a fixed set.**
+  There is no passthrough `extra` object any more: the schema is the model's only description of
+  the route, and GMGN drops unknown keys silently, so a param it cannot see is one it cannot use
+  and a param it guesses looks like a call that worked. The `min_*`/`max_*` filter surfaces come
+  from the `bounds()` helper and the two tables above it; the vendored `skills/gmgn-*` docs are
+  the reference for accepted values. A test asserts no tool reintroduces a free-form object.
 - **New skill**: `skills/<name>/SKILL.md`, with `name` + `description` frontmatter. Only those two
   lines reach the system prompt; the body is returned by `load_skill`, which hands the model an
   absolute path, so supporting files can live in the same directory. Both entry points load this

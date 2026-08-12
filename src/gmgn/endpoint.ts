@@ -850,6 +850,9 @@ function buildTrenchesBody(
 function buildUrl(base: string, query: Record<string, string | number | string[]>): string {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
+    // An omitted optional param arrives as undefined once callers spread their arguments
+    // straight through; `String(undefined)` would send the literal "undefined" as a filter.
+    if (v == null) continue;
     if (Array.isArray(v)) for (const item of v) params.append(k, item);
     else params.set(k, String(v));
   }

@@ -28,11 +28,11 @@ const skills = await loadSkills(new URL("../../skills", import.meta.url).pathnam
  * an analyst that cannot spend money cannot be talked into spending money by a token name.
  */
 const ANALYST_TOOL_NAMES = [
-  // feeds — context and the fields the cycle brief does not carry (sniper_count, bundler_rate)
-  "gmgn_trending",
-  "gmgn_trenches",
-  "gmgn_token_signal",
-  "gmgn_hot_searches",
+  // No discovery feeds. `gmgn_trending`, `gmgn_trenches`, `gmgn_token_signal` and
+  // `gmgn_hot_searches` all answer "which tokens exist" — that is `gatherCandidates`, and only
+  // the brief is buyable, so a feed pull here just costs a call. This list is now exactly the
+  // routes `skills/token-analysis` walks. Cost of that: `sniper_count` is unreachable (no
+  // `stat.*` equivalent); bundler rate and dev status still come from `gmgn_token_info`.
   // one token, in depth
   "gmgn_token_info",
   "gmgn_token_security",
@@ -131,7 +131,7 @@ Each cycle you read the pre-screened candidates and the open book, then return a
 
 The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. You have read-only GMGN tools to research those candidates as deeply as you like, and you may look at anything else for context, but an address that is not in the brief has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot. Every tool call takes a \`chain\` argument: it is always "${cfg.chain}".
 
-Load the \`token-analysis\` skill before you judge a token. It has the procedure, the thresholds, and the field-level traps — several numbers you will want (rug_ratio, sniper_count, bundler_rate) are not in the token detail response at all, and the ratio-versus-percentage mistake is the most expensive one available here.
+Load the \`token-analysis\` skill before you judge a token. It has the procedure, the hard refusals, and the field-level traps — it tells you which route actually carries each number (bundler rate and dev status are \`stat.*\`/\`dev.*\` in the token detail, not top-level), which ones nothing you can call will give you, and the ratio-versus-percentage mistake, which is the most expensive one available here. Your tools analyse one token at a time; there is no feed to browse, so a number you cannot reach is a stated blank, not a reason to go looking.
 
 THE PLAN YOU ARE OPERATING INSIDE
 
