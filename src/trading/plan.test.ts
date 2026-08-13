@@ -464,6 +464,57 @@ test("a rank row maps onto a candidate", () => {
   assert.ok(c.ageMinutes > 55 && c.ageMinutes < 65);
 });
 
+// Live field names, checked against both feeds. The rank feed carries per-minute change and
+// gas_fee but no net buy and no insider rate; trenches is the mirror image, under its own
+// names. Whichever half is missing must arrive as null: a rate of 0 is a claim ("no insiders
+// here"), and reading a blank as that claim is the expensive mistake available here.
+test("feed-specific fields map by name, and what a feed omits stays null", () => {
+  const rank = toCandidate(
+    {
+      address: "abc",
+      price: 1,
+      price_change_percent1m: 7.1,
+      buys: 51_309,
+      sells: 48_171,
+      dev_team_hold_rate: 0.198,
+      bundler_rate: 0.84,
+      gas_fee: 279.4,
+    },
+    "trending",
+  );
+  assert.equal(rank.change1mPct, 7.1);
+  assert.deepEqual([rank.buys, rank.sells], [51_309, 48_171]);
+  assert.equal(rank.devHoldRate, 0.198);
+  assert.equal(rank.bundlerRate, 0.84);
+  assert.equal(rank.feeUsd, 279.4);
+  assert.equal(rank.netBuyUsd, null, "the rank feed has no net buy — not a net buy of zero");
+  assert.equal(rank.insiderRate, null, "nor an insider rate");
+
+  const trench = toCandidate(
+    {
+      address: "def",
+      price: 1,
+      buys_24h: 1990,
+      sells_24h: 2040,
+      net_buy_24h: 4460.57,
+      suspected_insider_hold_rate: 0.02,
+      bundler_trader_amount_rate: 0.2179,
+      total_fee: 7.08,
+    },
+    "graduated",
+  );
+  assert.deepEqual([trench.buys, trench.sells], [1990, 2040]);
+  assert.equal(trench.netBuyUsd, 4460.57);
+  assert.equal(trench.insiderRate, 0.02);
+  assert.equal(trench.bundlerRate, 0.2179, "trenches names the bundler rate differently");
+  assert.equal(trench.feeUsd, 7.08);
+  assert.equal(trench.change1mPct, null, "trenches carries no price change at all");
+
+  // An empty string is how GMGN sends "not measured" on some rows; it is not a zero either.
+  assert.equal(toCandidate({ address: "x", price: 1, gas_fee: "" }, "t").feeUsd, null);
+  assert.equal(toCandidate({ address: "x", price: 1, dev_team_hold_rate: 0 }, "t").devHoldRate, 0, "a real zero survives");
+});
+
 // ── minimum position size ─────────────────────────────────────────────
 
 test("the position floor tracks the chain's round-trip cost", () => {

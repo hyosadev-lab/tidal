@@ -187,7 +187,7 @@
       <div class="table-wrap">
         <table class="tbl" id="tbl-positions">
           <thead><tr>
-            <th>Token</th><th class="r">Size</th><th class="r">Entry</th><th class="r">Now</th><th class="r">P&amp;L</th><th class="r">Peak</th><th class="r">Age</th><th>State</th><th></th>
+            <th>Token</th><th class="r">Size</th><th class="r" title="market cap when the position was opened">Entry MC</th><th class="r" title="market cap now, from the current price">Now MC</th><th class="r">P&amp;L</th><th class="r">Peak</th><th class="r">Age</th><th>State</th><th></th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -196,15 +196,16 @@
     </section>
 
     <section class="panel">
-      <h2 class="eyebrow">Soundings <span class="count" id="c-cand">0</span><span class="eyebrow-note">last scan · every field the analyst was given</span></h2>
+      <h2 class="eyebrow">Soundings <span class="count" id="c-cand">0</span><span class="eyebrow-note">last scan</span></h2>
       <div class="soundings" id="list-candidates"></div>
       <p class="empty" id="e-cand">No scan yet. Start the agent, or run one scan by hand.</p>
-      <p class="fine">Top 40 of the sweep, best score first. <b>Sent</b> marks the rows that actually reached the
-        analyst — the top 18 eligible ones. <b>Eligible</b> rows passed the gates but did not make that cut, and
-        say why (ranked out, already held, on cooldown); <b>blocked</b> rows failed a gate. Only wash trading,
-        honeypots and unreadable rows are gates: everything
-        else in this table is reported to the analyst and judged, never screened. Use Refine to change what the
-        sweep fetches, and the instruction box to change what gets picked out of it.</p>
+      <p class="fine">Top 40 of the sweep, best score first, showing the five figures worth scanning — the analyst
+        is given far more per row (buys and sells, net buy, dev hold rate, insider and bundler rates, fees, 1m change).
+        <b>Sent</b> marks the rows that actually reached it: the top 18 eligible ones. <b>Eligible</b> rows passed the
+        gates but did not make that cut, and say why (ranked out, already held, on cooldown); <b>blocked</b> rows failed
+        a gate. Only wash trading, honeypots and unreadable rows are gates: everything else is reported and judged,
+        never screened. Use Refine to change what the sweep fetches, and the instruction box to change what gets
+        picked out of it.</p>
     </section>
 
     <section class="panel">

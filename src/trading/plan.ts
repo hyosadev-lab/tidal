@@ -1,4 +1,4 @@
-import { num, sanitizeStrategy } from "./config.ts";
+import { num, numOrNull, sanitizeStrategy } from "./config.ts";
 import type { Candidate, Position, StrategyRule, TradeConfig } from "./types.ts";
 
 /**
@@ -41,13 +41,30 @@ export function toCandidate(r: Record<string, any>, source: string): Candidate {
     // GMGN sends these already in percent (16.6 = +16.6%), unlike rug_ratio / top_10_holder_rate.
     change5mPct: num(r.price_change_percent5m),
     change1hPct: num(r.price_change_percent1h ?? r.price_change_percent),
-    swaps1h: num(r.swaps ?? r.swaps_1h),
+    change1mPct: numOrNull(r.price_change_percent1m),
+    // `swaps_24h` included for the same reason `volume_24h` is: without it every graduated
+    // row reports zero trades, which reads as a dead token rather than a different window.
+    swaps1h: num(r.swaps ?? r.swaps_1h ?? r.swaps_24h),
+    // Counts over whatever window the row itself covers — `swaps`/`buys`/`sells` on the rank
+    // feed, `*_24h` on trenches. The two feeds do not agree on a window and never have; this
+    // pair is here to show the buy/sell split, not to be compared across sources.
+    buys: numOrNull(r.buys ?? r.buys_24h),
+    sells: numOrNull(r.sells ?? r.sells_24h),
+    // Only trenches reports it, and only over 24h.
+    netBuyUsd: numOrNull(r.net_buy_24h),
     holderCount: num(r.holder_count),
     smartDegenCount: num(r.smart_degen_count),
     renownedCount: num(r.renowned_count),
     rugRatio: num(r.rug_ratio),
     top10HolderRate: num(r.top_10_holder_rate ?? r.top_holder_rate),
     devHolding: String(r.creator_token_status ?? "") === "creator_hold",
+    // The share the dev actually holds, where `devHolding` is only whether they hold at all.
+    devHoldRate: numOrNull(r.dev_team_hold_rate ?? r.creator_balance_rate),
+    // Each feed measures these under its own name, and neither carries the other's.
+    insiderRate: numOrNull(r.insider_rate ?? r.suspected_insider_hold_rate),
+    bundlerRate: numOrNull(r.bundler_rate ?? r.bundler_trader_amount_rate),
+    // `gas_fee` on the rank feed, `total_fee` on trenches — different meters, same idea.
+    feeUsd: numOrNull(r.gas_fee ?? r.total_fee),
     isWashTrading: truthy(r.is_wash_trading),
     isHoneypot: truthy(r.is_honeypot),
     ageMinutes,

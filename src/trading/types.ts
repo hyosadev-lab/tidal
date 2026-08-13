@@ -89,6 +89,22 @@ export type Candidate = {
   rugRatio: number;
   top10HolderRate: number;
   devHolding: boolean;
+  /**
+   * Reported by one feed but not the other, so `null` means "this feed does not carry it",
+   * never zero — see `numOrNull`. Availability, measured against the live API:
+   *   rank feed (`trending`): change1mPct, buys, sells, devHoldRate, bundlerRate, feeUsd
+   *   launchpad feed (`trenches`): buys, sells, netBuyUsd, devHoldRate, insiderRate,
+   *     bundlerRate, feeUsd — but no price changes at all
+   * Buy/sell *volume* is on neither feed; only the counts and the trenches net figure are.
+   */
+  change1mPct: number | null;
+  buys: number | null;
+  sells: number | null;
+  netBuyUsd: number | null;
+  devHoldRate: number | null;
+  insiderRate: number | null;
+  bundlerRate: number | null;
+  feeUsd: number | null;
   isWashTrading: boolean;
   isHoneypot: boolean;
   ageMinutes: number;
@@ -137,6 +153,13 @@ export type Position = {
   stopLossPct: number;
   /** Pool depth at entry — a later drain is an exit signal. */
   entryLiquidityUsd: number;
+  /**
+   * Market cap at entry. Display only: the dashboard reads a position in market caps rather
+   * than in per-token prices, and the current one is this scaled by `lastPrice / entryPrice`
+   * — supply is fixed on a graduated token, so the two move together. Absent on positions
+   * opened before this was recorded.
+   */
+  entryMarketCapUsd?: number;
   orderId?: string;
   strategyOrderId?: string;
 };

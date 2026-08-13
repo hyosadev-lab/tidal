@@ -122,6 +122,12 @@ export async function buy(
     conviction,
     stopLossPct,
     entryLiquidityUsd: c.liquidityUsd,
+    // Priced off the fill, not off the scan: the candidate's own mcap/price pair gives the
+    // supply, and the fill is what this position actually entered at. Keeping it consistent
+    // with `entryPrice` is what lets the dashboard scale it to a current market cap.
+    ...(c.marketCapUsd > 0 && c.priceUsd > 0
+      ? { entryMarketCapUsd: (c.marketCapUsd / c.priceUsd) * fillPrice }
+      : {}),
     ...(orderId ? { orderId } : {}),
     ...(strategyOrderId ? { strategyOrderId } : {}),
   };

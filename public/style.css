@@ -538,6 +538,9 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 
 .pill-armed { border-color: var(--flood); color: var(--flood); }
 .pill-done  { opacity: .4; text-decoration: line-through; }
+/* The config's stop/ladder/trail, shown when a position carries no plan of its own — same
+   rules, but they belong to the config and change with it, so they read one step quieter. */
+.pill-default { border-style: dashed; opacity: .72; }
 
 /* The exit plan is per position now, so it needs room to wrap. */
 .plan { display: flex; flex-wrap: wrap; gap: 3px; max-width: 210px; }
@@ -574,6 +577,8 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 }
 .sounding-sym { font-family: var(--mono); font-size: 13px; color: var(--foam); border-bottom-color: var(--rule); }
 .sounding-sym:hover { color: var(--flood); }
+/* One step up from the meta line beside it, and nothing more — no box, no accent colour. */
+.sounding-age { font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--haze); }
 .sounding-meta { font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em; color: var(--rule-2); }
 /* Score sits hard right, the pill and its note after it — the eye scans scores down the list. */
 .sounding-score { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--foam); }
@@ -592,6 +597,7 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .kv-v.up { color: var(--flood); }
 .kv-v.down { color: var(--ebb); }
 .kv-v.flat { color: var(--haze); }
+.kv-na { color: var(--rule-2); }
 
 .linkish { color: var(--haze); text-decoration: none; border-bottom: 1px dotted var(--rule-2); }
 .linkish:hover { color: var(--flood); border-color: var(--flood); }

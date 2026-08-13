@@ -172,6 +172,15 @@ giving it a tool back.
   paths that treat scanned text as instructions.
 - **GMGN percent conventions differ per field.** `rug_ratio` and `top_10_holder_rate` are ratios
   (0–1); `price_change_percent1h`/`5m` already arrive as percent. Mixing them silently breaks gates.
+- **The two feeds do not carry the same columns, and `num()` turns that into a lie.** The rank
+  feed has `price_change_percent1m`, `buys`/`sells`, `gas_fee`; trenches has `buys_24h`/
+  `sells_24h`, `net_buy_24h`, `suspected_insider_hold_rate`, `total_fee`, and no price change at
+  all. The same measure often has two names (`bundler_rate` / `bundler_trader_amount_rate`).
+  Fields only one feed reports are typed `number | null` on `Candidate` and mapped with
+  `numOrNull`, because `num()` would report "not measured" as a clean zero — the dashboard prints
+  those as `—` and the brief passes the null through. Buy/sell *volume* is on neither feed;
+  only the counts and the trenches net figure are. Windows differ too: `volume1hUsd`/`swaps1h`
+  fall back to the 24h columns on trenches rows, so they are not comparable across sources.
 - **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
   wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes
   `input_amount_bps` (basis points: 50% → `"5000"`) and `input_amount` is a `"0"` placeholder.

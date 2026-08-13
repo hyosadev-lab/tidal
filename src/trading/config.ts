@@ -159,6 +159,17 @@ export const num = (v: unknown, d = 0): number => {
   return Number.isFinite(n) ? n : d;
 };
 
+/**
+ * `num` for fields only one of the two feeds reports. A missing rate is not a rate of zero —
+ * "no insider trading" and "this feed does not measure insider trading" are opposite readings
+ * of the same 0, and the analyst is told to treat a blank as a blank.
+ */
+export const numOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 function clamp(n: unknown, lo: number, hi: number, fallback: number): number {
   const v = typeof n === "number" ? n : Number(n);
   if (!Number.isFinite(v)) return fallback;

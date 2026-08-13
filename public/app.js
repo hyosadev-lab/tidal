@@ -55,6 +55,14 @@ const dur = (ms) => {
   return h < 24 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
 };
 
+/** Largest unit only — 45m, 3h, 2d. For places where the order of magnitude is the point. */
+const dur1 = (ms) => {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
+};
+
 // dur() rounds to the minute — fine for ages, useless for a countdown ticking every second.
 const countdown = (ms) => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -234,6 +242,16 @@ function fillForm(c, s) {
     : "Not armed. Live entries will be refused until GMGN_ALLOW_AUTOMATED_TRADES=1 is set and a wallet is saved.";
 }
 
+/**
+ * A position's market cap at some price of its own. Supply is fixed on a graduated token, so
+ * scaling the entry market cap by price/entryPrice is exact; positions opened before that was
+ * recorded fall back to the price itself, which is what this column used to show.
+ */
+const mcapAt = (p, atPrice) =>
+  p.entryMarketCapUsd && p.entryPrice > 0
+    ? usd((p.entryMarketCapUsd / p.entryPrice) * atPrice, 0)
+    : price(atPrice);
+
 function renderPositions(s) {
   const tb = $("tbl-positions").querySelector("tbody");
   $("c-pos").textContent = s.positions.length;
@@ -245,21 +263,31 @@ function renderPositions(s) {
       const peak = p.entryPrice > 0 ? ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
       // A position carries the exit plan it was opened with, so show that plan rather than a
       // rung count: with the analyst writing one per token, no two rows need be alike.
-      const plan = (p.strategy ?? [])
-        .map((r, i) => {
-          const done = p.filledRungs.includes(i);
-          return `<span class="pill${done ? " pill-done" : ""}" title="${esc(ruleTitle(r))}">${esc(ruleLabel(r))}</span>`;
-        })
-        .join("");
-      const rungs = p.filledRungs.length ? `<span class="pill">${p.filledRungs.length} rung${p.filledRungs.length > 1 ? "s" : ""}</span>` : "";
-      const trail = p.trailArmed ? `<span class="pill pill-armed">trailing</span>` : "";
-      const state = plan || `${trail}${rungs || (trail ? "" : `<span class="pill">holding</span>`)}`;
+      const pill = (r, done, cls = "") =>
+        `<span class="pill${done ? " pill-done" : ""}${cls}" title="${esc(ruleTitle(r))}">${esc(ruleLabel(r))}</span>`;
+      const plan = (p.strategy ?? []).map((r, i) => pill(r, p.filledRungs.includes(i))).join("");
+      // A position opened with no rule set still has exits — it runs the config's stop, ladder
+      // and trail (`evaluateExit`'s legacy branch). Show those too, dimmed, rather than the
+      // bare "holding" that made a live plan look like no plan at all. That happens whenever
+      // Fixed strategy is on with an empty rule list, or the analyst omitted `strategy`.
+      const fallback = [
+        pill({ kind: "sl", at: -(p.stopLossPct || s.config.stopLossPct), sell: 100 }, false, " pill-default"),
+        ...(s.config.takeProfit ?? []).map((r, i) => pill({ kind: "tp", ...r }, p.filledRungs.includes(i), " pill-default")),
+        s.config.trailArmPct
+          ? pill(
+              { kind: "ttp", at: s.config.trailArmPct, dd: s.config.trailGivebackPct, sell: 100 },
+              false,
+              p.trailArmed ? " pill-armed" : " pill-default",
+            )
+          : "",
+      ].join("");
+      const state = plan || fallback || `<span class="pill">holding</span>`;
       return `<tr>
         <td class="sym"><a class="linkish" href="${esc(tokenUrl(p.chain, p.address))}" target="_blank" rel="noopener">${esc(p.symbol)}</a>
           <small title="${esc(p.thesis)}">${esc(p.thesis).slice(0, 46)}${p.thesis.length > 46 ? "…" : ""}</small></td>
-        <td class="r">${usd(value)}</td>
-        <td class="r">${price(p.entryPrice)}</td>
-        <td class="r">${price(p.lastPrice)}</td>
+        <td class="r" title="${esc(`${price(p.entryPrice)} → ${price(p.lastPrice)}`)}">${usd(value)}</td>
+        <td class="r">${mcapAt(p, p.entryPrice)}</td>
+        <td class="r">${mcapAt(p, p.lastPrice)}</td>
         <td class="r ${tone(pl)}">${pct(pl)}</td>
         <td class="r muted">${pct(peak)}</td>
         <td class="r muted">${dur(Date.now() - p.openedAt)}</td>
@@ -290,6 +318,19 @@ const ruleTitle = (r) =>
 const kv = (k, v, title, cls = "") =>
   `<div class="kv" title="${esc(title)}"><span class="kv-k">${k}</span><span class="kv-v ${cls}">${v}</span></div>`;
 
+/**
+ * `dev_team_hold_rate` is a ratio, and null when the row's feed does not carry it. A blank is
+ * printed for that: 0% would claim the deployer has sold out, which is the opposite reading.
+ */
+const devHolds = (c) =>
+  c.devHoldRate === null || c.devHoldRate === undefined
+    ? '<span class="kv-na">—</span>'
+    : `${(c.devHoldRate * 100).toFixed(c.devHoldRate > 0 && c.devHoldRate < 0.1 ? 1 : 0)}%`;
+
+// The card shows the five figures the old table did. The scan collects more — buys/sells,
+// net buy, dev hold rate, insider and bundler rates, fees, 1m change — and the analyst gets
+// all of it in the brief; it is only kept off the dashboard to keep a row scannable.
+
 function renderCandidates(s) {
   const rows = s.cycle.lastCandidates || [];
   const box = $("list-candidates");
@@ -308,28 +349,25 @@ function renderCandidates(s) {
           ? "shown to the analyst"
           : (c.analystNote ?? "")
         : c.gateFailures.join(", ");
-      const meta = [c.source, c.launchpad, `${dur(c.ageMinutes * 60000)} old`].filter(Boolean).join(" · ");
+      const meta = [c.source, c.launchpad].filter(Boolean).join(" · ");
+      // Age reads on its own rather than buried mid-sentence in the meta line: on a memecoin
+      // it is half the trade. One shade brighter than the meta beside it, nothing louder.
       return `<article class="sounding${pass ? "" : " is-blocked"}">
         <header class="sounding-head">
           <a class="sounding-sym linkish" href="${esc(tokenUrl(s.config.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
+          <span class="sounding-age" title="time since the token was created">${dur1(c.ageMinutes * 60000)}</span>
           <span class="sounding-meta">${esc(meta)}</span>
           <span class="sounding-score" title="structure score, 0-100 — ranking only, it disqualifies nothing">${pass ? c.score : "—"}</span>
           ${verdict}<span class="sounding-note">${esc(note)}</span>
         </header>
         <div class="sounding-grid">
-          ${kv("price", price(c.priceUsd), "price at the moment of the scan")}
           ${kv("mcap", usd(c.marketCapUsd, 0), "market cap")}
           ${kv("liq", usd(c.liquidityUsd, 0), "pool liquidity — what you can actually exit into")}
-          ${kv("vol 1h", usd(c.volume1hUsd, 0), "trading volume over the last hour")}
-          ${kv("swaps 1h", c.swaps1h, "swap count over the last hour")}
-          ${kv("5m", pct(c.change5mPct, 0), "price change over the last 5 minutes", tone(c.change5mPct))}
+          ${kv("volume", usd(c.volume1hUsd, 0), "trading volume over the row's own window: 1h on the rank feeds, 24h on graduated")}
           ${kv("1h", pct(c.change1hPct, 0), "price change over the last hour", tone(c.change1hPct))}
-          ${kv("holders", c.holderCount, "holder count")}
-          ${kv("smart money", c.smartDegenCount, "smart-money wallets holding")}
-          ${kv("kols", c.renownedCount, "KOL / renowned wallets holding")}
-          ${kv("top 10", `${(c.top10HolderRate * 100).toFixed(0)}%`, "share of supply in the top 10 wallets")}
+          ${kv("top 10", `${(c.top10HolderRate * 100).toFixed(0)}%`, "share of supply held by the ten largest wallets")}
+          ${kv("dev holds", devHolds(c), "share of supply the deployer still holds. A blank means this row's feed does not report it — not that the dev is out")}
           ${kv("rug", c.rugRatio.toFixed(2), "GMGN rug-pull risk score, 0-1")}
-          ${kv("dev", c.devHolding ? "holds" : "out", "is the deployer still holding their allocation?", c.devHolding ? "down" : "")}
         </div>
       </article>`;
     })
