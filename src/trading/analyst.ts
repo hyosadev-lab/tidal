@@ -1,4 +1,5 @@
 import { runAgent } from "../agent/llm.ts";
+import { budgetedTools } from "../agent/tools.ts";
 import { entryStrategy, pnlPct } from "./plan.ts";
 import { store } from "./store.ts";
 import type { Candidate, Decision, StrategyRule, TradeConfig } from "./types.ts";
@@ -7,11 +8,15 @@ import type { Candidate, Decision, StrategyRule, TradeConfig } from "./types.ts"
  * The model half of a cycle: what the analyst is told, and what comes back.
  * `engine.ts` owns everything that spends money; nothing here does.
  *
- * One call, no tools. The brief already carries price, size, age, concentration and
- * smart-money counts for every row — that is what the analyst judges on. It cannot look
- * anything up, which also means it cannot spend GMGN's rate limit (shared with the sweep
- * that feeds it) or be talked into calling a route by a token name.
+ * The brief carries price, size, age, concentration and smart-money counts for every row —
+ * that is still what the analyst judges on. On top of it, it may spend up to `LOOKUP_BUDGET`
+ * read-only GMGN lookups per cycle (token info, kline) on a candidate it is close to buying.
+ * Both are read routes: nothing here can spend money, and the budget is what stops the
+ * analyst from eating the rate limit the sweep that feeds it runs on.
  */
+
+/** Deep-dive lookups the analyst may spend per cycle. Shares GMGN's bucket with the sweep. */
+const LOOKUP_BUDGET = 6;
 
 // ── the brief ─────────────────────────────────────────────────────────
 //
@@ -90,7 +95,13 @@ ${policy}
 
 WHAT IS ALREADY TRUE (facts about the machine around you, not advice)
 
-The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. You have no tools and cannot look anything up: the brief is the whole evidence base, and an address that is not in it has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot. A number the brief does not carry is a stated blank, not something to guess at.
+The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. An address that is not in it has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot.
+
+TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
+
+\`gmgn_token_info\` (metadata, price, market cap, supply) and \`gmgn_token_kline\` (OHLCV candles) let you deep-dive a candidate that is already in the brief. Use them the way you would use a scarce resource, because that is what they are: every call is paid out of the same rate limit the sweep runs on, and exhausting it degrades the next cycle's candidate list, not just yours.
+
+So: default to answering from the brief. Spend a lookup only on a token you are close to buying and where one specific number would change the answer — typically the kline, to see whether the move is a clean trend or a single wick. Do not survey the list, and do not re-check what the brief already states. Once the budget is spent every further call just says so; decide on what you have. A number neither the brief nor a lookup carries is a stated blank, not something to guess at.
 
 Gates already applied to every row you see: no wash trading, no honeypot, a readable address and a readable price. That is the whole list — pool depth, rug_ratio, top-10 concentration, smart-money count and dev holdings are reported to you, not screened on. \`structure_score\` grades them; it stops nothing.
 
@@ -218,7 +229,14 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
   const prompt = `Cycle brief:\n\n${JSON.stringify(brief, null, 1)}\n\nReturn the JSON decision.`;
 
   try {
-    const res = await runAgent(prompt, { system, maxSteps: 1 });
+    const res = await runAgent(prompt, {
+      system,
+      tools: budgetedTools(LOOKUP_BUDGET),
+      // Budget + 2: one step to answer after the last lookup, one spare. Past that runAgent
+      // throws and the cycle is a no-op, which is the right failure for a model that loops.
+      maxSteps: LOOKUP_BUDGET + 2,
+      onTool: (name, args) => store.log("model", `Analyst lookup: ${name} ${JSON.stringify(args)}`),
+    });
     const decision = extractJson(res.text);
     if (!decision) {
       store.log("warn", "Analyst reply wasn't valid JSON — no action this cycle.", res.text.slice(0, 400));

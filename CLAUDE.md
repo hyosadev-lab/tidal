@@ -41,12 +41,13 @@ so the key is present.
 ## Architecture
 
 One entry point: `src/index.ts` — static file server + JSON control API + SSE stream, driving
-`src/trading/`. Its analyst is one tool-less LLM call per cycle, through `src/agent/llm.ts`.
+`src/trading/`. Its analyst is one LLM call per cycle (plus a capped few read-only GMGN lookups),
+through `src/agent/llm.ts`.
 
 There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
 GMGN tool set plus a skill loader (`src/agent/skills.ts`, `skills/`). All of it went with the
-analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` survives as an empty
-template (`git log` it for the old set); `runAgent` still supports tools, nothing passes any.
+analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` now holds two of them
+again, `gmgn_token_info` and `gmgn_token_kline` (`git log` it for the old, much larger set).
 
 ### Storage
 
@@ -75,8 +76,8 @@ the two requests already queued behind it are what turn a 30s cooldown into `RAT
 
 `src/agent/llm.ts` is a ~80-line OpenRouter loop (`runAgent`) and the only file left under
 `src/agent/`. It still supports tools (`{description, parameters (JSON Schema), run}`) and loops
-until the model replies without tool calls; the analyst passes none, so in practice it is one
-request.
+until the model replies without tool calls; the analyst passes two read-only ones, so a cycle is
+one request plus one more per lookup it spends.
 
 ### The central split (`src/trading/plan.ts` header states it; respect it)
 
@@ -105,7 +106,7 @@ omits one, and falls back to the config's stop/trail/ladder if it is unusable. A
 | `market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing above this file speaks HTTP or touches `gmgnClient()` |
 | `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`. No I/O, and importing it must not open the database or the API client — this is where tests concentrate |
 | `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
-| `analyst.ts` | the model half of a cycle: the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. One LLM call, no tools, spends nothing |
+| `analyst.ts` | the model half of a cycle: the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. One LLM call, two read-only tools on a per-cycle budget, spends nothing |
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
 | `soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
@@ -115,15 +116,16 @@ top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) �
 `broker.buy/sell` → `store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs
 independently and never touches the LLM.
 
-**`gatherCandidates` is the whole search, and the brief is the whole evidence base.** The analyst
-has no tools at all: one LLM call, in, out. An address outside the brief never went through
-`toCandidate` or the gates, so there is nothing to size and `buyableSet` refuses it; a number the
-brief does not carry (`sniper_count`, `bundler_rate`, dev status) is a stated blank, not something
-the model can go and look up. The operator steers the sweep through the dashboard's Refine panel
+**`gatherCandidates` is the whole search, and the brief is the near-whole evidence base.** The
+analyst can deep-dive a row it already has (info + kline, 6 lookups per cycle), but it cannot
+search: an address outside the brief never went through `toCandidate` or the gates, so there is
+nothing to size and `buyableSet` refuses it. A number neither the brief nor those two routes
+carries (`sniper_count`, `bundler_rate`, dev status) is still a stated blank. The operator steers
+the sweep through the dashboard's Refine panel
 (`refineQuery`), not through the prompt — `cfg.prompt` shapes selection, not fetching, because the
 sweep runs before the model is called. Everything the model needs must therefore be on the
-candidate row: widening the analyst's view means adding a field in `askAnalyst`'s `brief`, not
-giving it a tool back.
+candidate row: widening the analyst's view usually means adding a field in `askAnalyst`'s
+`brief` — a field the sweep already fetched costs nothing, a new tool costs the sweep's tokens.
 
 ## Invariants worth knowing before you edit
 
@@ -133,12 +135,12 @@ giving it a tool back.
   the process is not entitled to grant it on their behalf. Same reasoning behind `liveReady()`.
   This process signs its own trade requests, so that check is now the *entire* barrier — there is
   no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
-- **The analyst has no tools, and that is the whole safety barrier.** `askAnalyst` calls
-  `runAgent` with no `tools` — the unattended loop cannot reach a shell, a spend route, or the
-  operator's wallet, because there is nothing to reach them with. `src/agent/tools.ts` is an
-  empty template kept for the day someone wants a tool back; filling it in does not hand the
-  analyst anything, and it must never be passed wholesale — a named read-only allowlist, one
-  tool at a time, or nothing.
+- **The analyst's tools are two read routes and nothing else.** `askAnalyst` passes
+  `budgetedTools(LOOKUP_BUDGET)` from `src/agent/tools.ts` — `gmgn_token_info` and
+  `gmgn_token_kline`, both `exist`-auth reads through `market.ts`. The unattended loop still
+  cannot reach a shell, a spend route or the operator's wallet, because no such tool exists in
+  that record. Keep it that way: add read-only routes one named tool at a time, never a shell,
+  never a route that spends, and never the record wholesale from somewhere else.
 - **`securityRisk` is a pre-trade refusal, not a gate, and that is deliberate.** It runs once per
   entry in `openPosition` (paper and live alike) against `token_security`, because only that route
   answers reliably — `trenches` rows report `renounced_*: false` on tokens the security route
@@ -159,9 +161,12 @@ giving it a tool back.
   sends only the operator's Refine rows, so a blank Refine fetches the feeds unfiltered. Don't
   reintroduce a structural gate — or a hardcoded feed floor — without asking: the dashboard is
   where that policy lives now.
-- **A cycle costs exactly one LLM call and zero GMGN calls.** The analyst used to research a
-  candidate with a per-cycle budget wrapper; both went. GMGN's bucket (20 tokens, process-wide) is
-  now the sweep's alone, which is what it was always being starved by.
+- **A cycle costs one LLM call plus at most `LOOKUP_BUDGET` (6) GMGN reads.** The budget is
+  enforced in `budgetedTools`, not in the prompt: calls past it return a refusal string, so the
+  model answers from the brief instead of erroring. `maxSteps` is `LOOKUP_BUDGET + 2`, and going
+  over it throws — a cycle that no-ops. Raising the budget takes tokens straight out of the
+  sweep's share of the same process-wide bucket (20 per 30s, IP-scoped), which is what starves
+  the candidate list; measure before you raise it.
 - **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
   blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto
