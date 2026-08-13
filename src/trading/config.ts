@@ -30,12 +30,13 @@ export const MIN_POSITION_USD: Record<Chain, number> = { sol: 3, bsc: 5, base: 5
 export const AUTO_SLIPPAGE_CAP = 20;
 
 /**
- * Priority fee in native units, sent only when a swap carries `condition_orders` — GMGN
- * rejects that combination with `priority_fee is required` otherwise. Real-world knob:
- * too low and the protected buy lands late on a busy block, too high and it eats the edge.
- * `GMGN_PRIORITY_FEE` overrides for all chains.
+ * Fees in native units, sent only when a swap carries `condition_orders` — GMGN rejects that
+ * combination unless both `priority_fee` and `tip_fee` (the MEV-protected relay's tip) are
+ * present. Real-world knob: too low and the protected buy lands late on a busy block, too high
+ * and it eats the edge. `GMGN_PRIORITY_FEE` / `GMGN_TIP_FEE` override for all chains.
  */
 export const PRIORITY_FEE: Record<Chain, number> = { sol: 0.002, bsc: 0.0005, base: 0.00002, eth: 0.0005 };
+export const TIP_FEE: Record<Chain, number> = { sol: 0.001, bsc: 0.0002, base: 0.00001, eth: 0.0002 };
 
 /** Native units kept aside for gas. Without this, a full deployment cannot pay to exit. */
 export const GAS_RESERVE: Record<Chain, number> = { sol: 0.02, bsc: 0.004, base: 0.0015, eth: 0.004 };

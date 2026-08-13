@@ -1,6 +1,6 @@
 import { gmgnClient } from "../gmgn/client.ts";
 import type { SwapParams } from "../gmgn/endpoint.ts";
-import { num, PRIORITY_FEE } from "./config.ts";
+import { num, PRIORITY_FEE, TIP_FEE } from "./config.ts";
 import type { Chain } from "./types.ts";
 
 /**
@@ -224,8 +224,9 @@ export async function swap(a: SwapArgs): Promise<SwapResult> {
   if (a.conditionOrders?.length) {
     params.condition_orders = a.conditionOrders as SwapParams["condition_orders"];
     params.sell_ratio_type = a.sellRatioType ?? "hold_amount";
-    // GMGN rejects condition_orders without a fee: "priority_fee is required".
+    // GMGN rejects condition_orders unless both fees are set.
     params.priority_fee = String(num(process.env.GMGN_PRIORITY_FEE || PRIORITY_FEE[a.chain], PRIORITY_FEE[a.chain]));
+    params.tip_fee = String(num(process.env.GMGN_TIP_FEE || TIP_FEE[a.chain], TIP_FEE[a.chain]));
   }
   return obj(await client().swap(params)) as SwapResult;
 }
