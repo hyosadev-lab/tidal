@@ -283,6 +283,13 @@ export class Store {
     const before = this.config;
     this.config = sanitizeConfig({ ...before, ...patch }, before);
     saveConfig(this.config);
+    // Coming back from live, `cash` still holds the wallet's spendable balance — the engine
+    // overwrites it every live cycle. Paper has to size off the bankroll again, and the only
+    // safe moment to put it back is a flat book.
+    if (this.config.mode === "paper" && before.mode === "live" && !this.s.positions.length) {
+      this.s.cash = this.config.paperStartEquityUsd;
+      this.save();
+    }
     // Resizing the paper bankroll only makes sense on a flat, untouched ledger.
     if (
       this.config.paperStartEquityUsd !== before.paperStartEquityUsd &&
@@ -310,6 +317,22 @@ export class Store {
     this.save();
     this.log("info", "Ledger cleared. Paper balance back to $" + this.config.paperStartEquityUsd.toFixed(0) + ".");
     this.push();
+  }
+
+  /**
+   * Re-anchors the day / peak / trough baseline to whatever equity is now.
+   *
+   * Those three are the yardsticks behind day PnL, max drawdown and the daily loss halt, and
+   * they only mean anything against a fixed pot of money. Switching modes or clearing the
+   * ledger changes the pot — a $1000 paper baseline against a $46 wallet reads as a 95%
+   * drawdown and halts trading on the first cycle.
+   */
+  rebase(): void {
+    const eq = this.equity;
+    this.s.dayStartEquity = eq;
+    this.s.peakEquity = eq;
+    this.s.troughEquity = eq;
+    this.save();
   }
 
   snapshot(): Snapshot {

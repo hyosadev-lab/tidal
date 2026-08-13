@@ -25,6 +25,7 @@ import {
 import { extractJson } from "./analyst.ts";
 import { trenchesFilters } from "./market.ts";
 import { bands, median, spearman } from "./calibrate.ts";
+import { conditionOrders, recordExternalSell } from "./broker.ts";
 import { candidate, position } from "./fixtures.ts";
 import type { Candidate, StrategyRule, TradeConfig } from "./types.ts";
 
@@ -558,4 +559,41 @@ test("bands bucket by score and describe what each bucket returned", () => {
   assert.equal(b[4]!.winRate, 1);
   assert.equal(b[4]!.bigWinRate, 1, "both cleared +20%");
   assert.equal(median([]), 0, "no rows is 0, not NaN");
+});
+
+test("an exit booked from the wallet prices the slice at the last seen price", () => {
+  const p = position({ qty: 100_000, originalQty: 100_000, costUsd: 100, lastPrice: 0.0008 });
+  const r = recordExternalSell(DEFAULT_CONFIG, p, 40_000, "gmgn stop");
+  assert.ok(!("error" in r));
+  if ("error" in r) return;
+  assert.equal(r.proceeds, 32, "40k at $0.0008");
+  assert.equal(r.trade.side, "sell");
+  assert.equal(r.trade.pnlUsd, -8, "cost basis of the slice is $40");
+  assert.equal(r.trade.pnlPct, -20);
+});
+
+test("the whole exit plan travels to GMGN, trailing rules included", () => {
+  const rules: StrategyRule[] = [
+    { kind: "tp", at: 35, sell: 40 },
+    { kind: "ttp", at: 20, dd: 15, sell: 60 },
+    { kind: "sl", at: -18, sell: 100 },
+  ];
+  const orders = conditionOrders(DEFAULT_CONFIG, rules, 25);
+  assert.deepEqual(orders, [
+    { order_type: "profit_stop", side: "sell", price_scale: "35", sell_ratio: "40" },
+    { order_type: "profit_stop_trace", side: "sell", price_scale: "20", drawdown_rate: "15", sell_ratio: "60" },
+    { order_type: "loss_stop", side: "sell", price_scale: "18", sell_ratio: "100" },
+  ]);
+});
+
+test("a plan without a stop gets one, and no rules falls back to the config ladder", () => {
+  const noStop = conditionOrders(DEFAULT_CONFIG, [{ kind: "tsl", dd: 12, sell: 100 }], 25);
+  assert.deepEqual(noStop.at(0), { order_type: "loss_stop_trace", side: "sell", drawdown_rate: "12", sell_ratio: "100" });
+  assert.equal(noStop.at(-1)?.order_type, "loss_stop", "the floor is appended when the plan omits it");
+  assert.equal(noStop.at(-1)?.price_scale, "25");
+
+  const legacy = conditionOrders(DEFAULT_CONFIG, [], 25);
+  assert.equal(legacy.filter((o) => o.order_type === "profit_stop").length, DEFAULT_CONFIG.takeProfit.length);
+  assert.equal(legacy.filter((o) => o.order_type === "profit_stop_trace").length, 1, "the config trail travels too");
+  assert.equal(legacy.filter((o) => o.order_type === "loss_stop").length, 1);
 });

@@ -141,9 +141,31 @@ export async function smartMoney(chain: Chain, limit = 60): Promise<any[]> {
   return list(await client().getSmartMoney(chain, limit), "list");
 }
 
-export async function nativeUsdPrice(chain: Chain): Promise<number> {
+export type GasQuote = {
+  nativeUsd: number;
+  /** Network-suggested priority fee, native units. 0 when the route did not carry one. */
+  priorityFee: number;
+  /** Suggested MEV-relay tip, native units. 0 when the route did not carry one. */
+  tipFee: number;
+};
+
+/**
+ * Native price *and* what the chain currently costs to get into a block, from one call.
+ *
+ * `/v1/chain/gas_price` already answers both — `auto` is the fee GMGN's own client would pick
+ * and `auto_mev` the tip the protected relay wants — so a buy pays for this read anyway. Only
+ * Solana's numbers are read here: on EVM the same fields are gas prices in the chain's own
+ * units, which is not what `priority_fee` / `tip_fee` take. Those chains keep the constants.
+ */
+export async function gasQuote(chain: Chain): Promise<GasQuote> {
   const r = obj(await client().getGasPrice(chain));
-  return num(r["native_token_usd_price"] ?? r["nativeTokenUsdPrice"]);
+  const nativeUsd = num(r["native_token_usd_price"] ?? r["nativeTokenUsdPrice"]);
+  if (chain !== "sol") return { nativeUsd, priorityFee: 0, tipFee: 0 };
+  return { nativeUsd, priorityFee: num(r["auto"]), tipFee: num(r["auto_mev"]) };
+}
+
+export async function nativeUsdPrice(chain: Chain): Promise<number> {
+  return (await gasQuote(chain)).nativeUsd;
 }
 
 export const NATIVE_SYMBOL: Record<string, string> = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
@@ -165,6 +187,33 @@ export async function nativeBalance(chain: Chain, wallet: string): Promise<numbe
   if (!row) return null;
   const bal = num(row.balance, -1);
   return bal >= 0 ? bal : null;
+}
+
+/**
+ * Every token the wallet has touched, address → whole-unit balance. One call, so the monitor
+ * can mirror GMGN instead of asking per position.
+ *
+ * Null means "the wallet could not be read" and must close nothing. An address *missing* from
+ * the map means the same: the route pages, and a row absent from this page is not a zero. Only
+ * an explicit `balance: "0"` is evidence that the position is gone — sold by the condition
+ * orders attached at entry, or by the operator in GMGN's own UI.
+ */
+export async function walletHoldings(chain: Chain, wallet: string, limit = 100): Promise<Map<string, number> | null> {
+  const r = obj(await client().getWalletHoldings(chain, wallet, { limit }));
+  const rows = Array.isArray(r["list"]) ? r["list"] : Array.isArray(r["data"]?.list) ? r["data"].list : null;
+  if (!rows) return null;
+  const out = new Map<string, number>();
+  for (const row of rows) {
+    const addr = String(obj(row?.token)["token_address"] ?? "").toLowerCase();
+    const qty = num(row?.balance, -1);
+    if (addr && qty >= 0) out.set(addr, qty);
+  }
+  return out;
+}
+
+/** Withdraws the exit plan GMGN is holding for a position this process has just closed itself. */
+export async function cancelStrategyOrder(chain: Chain, from: string, orderId: string): Promise<void> {
+  await client().cancelStrategyOrder({ chain, from_address: fromAddress(chain, from), order_id: orderId });
 }
 
 // ── execution routes ──────────────────────────────────────────────────
@@ -192,6 +241,9 @@ export type SwapArgs = {
   /** Let GMGN pick the tolerance per route instead of sending `slippage`. */
   autoSlippage?: boolean;
   antiMev?: boolean;
+  /** Native units. Only sent with condition orders, where GMGN requires both. 0 = use the default. */
+  priorityFee?: number;
+  tipFee?: number;
   conditionOrders?: unknown[];
   sellRatioType?: "buy_amount" | "hold_amount";
 };
@@ -224,9 +276,12 @@ export async function swap(a: SwapArgs): Promise<SwapResult> {
   if (a.conditionOrders?.length) {
     params.condition_orders = a.conditionOrders as SwapParams["condition_orders"];
     params.sell_ratio_type = a.sellRatioType ?? "hold_amount";
-    // GMGN rejects condition_orders unless both fees are set.
-    params.priority_fee = String(num(process.env.GMGN_PRIORITY_FEE || PRIORITY_FEE[a.chain], PRIORITY_FEE[a.chain]));
-    params.tip_fee = String(num(process.env.GMGN_TIP_FEE || TIP_FEE[a.chain], TIP_FEE[a.chain]));
+    // GMGN rejects condition_orders unless both fees are set. Preference order: the operator's
+    // env override, then what the chain says it costs right now (`gasQuote`), then the constant.
+    params.priority_fee = String(
+      num(process.env.GMGN_PRIORITY_FEE || a.priorityFee || PRIORITY_FEE[a.chain], PRIORITY_FEE[a.chain]),
+    );
+    params.tip_fee = String(num(process.env.GMGN_TIP_FEE || a.tipFee || TIP_FEE[a.chain], TIP_FEE[a.chain]));
   }
   return obj(await client().swap(params)) as SwapResult;
 }

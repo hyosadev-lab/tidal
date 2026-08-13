@@ -95,6 +95,15 @@ rules are snapshotted onto `Position.strategy` at entry by `entryStrategy` and r
 omits one, and falls back to the config's stop/trail/ladder if it is unusable. An empty
 `Position.strategy` is that legacy path.
 
+**Who runs the plan depends on the mode.** In paper, `evaluateExit` does, every monitor tick.
+In live, the same snapshot is translated by `broker.conditionOrders` and attached to the buy, so
+*GMGN* runs it — all four rule kinds, trailing included (`profit_stop_trace` / `loss_stop_trace`),
+sized off `sell_ratio_type: buy_amount` because `StrategyRule.sell` has always meant a share of
+the original buy. The monitor then mirrors the wallet instead of racing it: it acts only on the
+two things GMGN was never told, the time stop and `healthExit`, and books everything else from
+the balance. That is why an exit plan must survive translation — a rule `conditionOrders` drops
+is a rule that does not exist in live.
+
 ### `src/trading/` layering (import order, roughly)
 
 | File | Role |
@@ -167,6 +176,22 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   over it throws — a cycle that no-ops. Raising the budget takes tokens straight out of the
   sweep's share of the same process-wide bucket (20 per 30s, IP-scoped), which is what starves
   the candidate list; measure before you raise it.
+- **In live mode the wallet, not the ledger, says what is still held.** The whole exit plan runs
+  on GMGN's side, so positions shrink and disappear without this process selling anything — and
+  the operator can sell from GMGN's UI too. One `walletHoldings` read per monitor tick (not per
+  position) is the mirror; `reconcile` in `engine.ts` books whatever left through
+  `broker.recordExternalSell`, which submits nothing and prices the slice at the last seen price,
+  so that trade's PnL is an estimate. A wallet that cannot be read, and an address the holdings
+  page did not carry, both close nothing — only an explicit zero balance does. When this process
+  *does* sell a live position itself, `withdrawExitPlan` cancels the strategy order GMGN is still
+  holding, so it cannot wake up against a later balance of the same token.
+- **`priority_fee` and `tip_fee` are mandatory on any swap carrying `condition_orders`** (SOL
+  needs both, BSC needs the tip; EVM chains want the gas fields instead). On Solana the numbers
+  come from the chain itself — `market.gasQuote` reads `auto` / `auto_mev` off the same
+  `/v1/chain/gas_price` call the buy already makes for the native price, so live pricing costs
+  nothing extra. `PRIORITY_FEE` / `TIP_FEE` in `config.ts` are the fallback for the chains that
+  route does not answer for, and `GMGN_PRIORITY_FEE` / `GMGN_TIP_FEE` override everything. GMGN
+  rejects the swap outright when one is missing, so a protected buy silently becomes no buy.
 - **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
   blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto

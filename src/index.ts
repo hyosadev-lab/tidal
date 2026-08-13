@@ -102,6 +102,14 @@ const server = createServer(async (req, res) => {
           engine.reschedule();
         if (cfg.mode !== before.mode) store.log("info", `Mode switched to ${cfg.mode}.`);
         if (cfg.chain !== before.chain) store.log("info", `Chain switched to ${cfg.chain.toUpperCase()}.`);
+        // Live sizing is the wallet's, not the paper bankroll's. Without this the dashboard
+        // shows the paper number until the next scan — and that number is what the operator
+        // reads before deciding whether to start the agent at all.
+        if (cfg.mode === "live" && (cfg.mode !== before.mode || cfg.chain !== before.chain))
+          await engine.syncLiveBalance();
+        // Paper equity and wallet equity are different pots of money, so the yardsticks that
+        // compare them — day PnL, drawdown, the loss halt — start again on a mode switch.
+        if (cfg.mode !== before.mode) store.rebase();
         store.push();
         return json(res, 200, { ok: true, config: cfg });
       }
@@ -130,6 +138,12 @@ const server = createServer(async (req, res) => {
       if (path === "/api/reset") {
         engine.stop();
         store.reset();
+        // A cleared ledger re-seeds from the paper bankroll. In live that is the wrong pot:
+        // without this the fresh baseline sits at $1000 against a wallet worth a fraction of
+        // it, and the first cycle halts on the daily loss cap.
+        if (store.config.mode === "live") await engine.syncLiveBalance();
+        store.rebase();
+        store.push();
         return json(res, 200, { ok: true });
       }
 

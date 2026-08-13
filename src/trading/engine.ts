@@ -17,7 +17,7 @@ import {
 } from "./plan.ts";
 import { recordSoundings } from "./soundings.ts";
 import { store } from "./store.ts";
-import type { Candidate, Position, StrategyRule } from "./types.ts";
+import type { Candidate, Position, StrategyRule, TradeConfig } from "./types.ts";
 
 /** How many of the eligible rows, best score first, are put in front of the analyst. */
 const ANALYST_SHORTLIST = 18;
@@ -88,7 +88,7 @@ async function gatherCandidates(): Promise<Candidate[]> {
  * Returns false when the balance could not be read; callers must then skip entries
  * rather than fall back to a number they made up.
  */
-async function syncLiveBalance(): Promise<boolean> {
+export async function syncLiveBalance(): Promise<boolean> {
   const cfg = store.config;
   if (cfg.mode !== "live") return true;
   try {
@@ -338,6 +338,7 @@ async function closePosition(p: Position, percentOfOriginal: number, reason: str
 
     const dust = p.qty * p.lastPrice < 1 || p.qty <= p.originalQty * 0.02;
     if (dust) {
+      await withdrawExitPlan(p, cfg);
       store.removePosition(p.id);
       store.cooldown(p.address, cfg.cooldownMinutes);
     } else {
@@ -350,6 +351,69 @@ async function closePosition(p: Position, percentOfOriginal: number, reason: str
   } catch (e) {
     store.log("error", `Sell ${p.symbol} errored: ${short(e)}`);
   }
+}
+
+/**
+ * When this process sells a live position itself — time stop, health exit, the analyst, a
+ * manual close — the exit plan GMGN is still holding has nothing left to sell. Left in place,
+ * it would wake up against a later balance of the same token.
+ */
+async function withdrawExitPlan(p: Position, cfg: TradeConfig): Promise<void> {
+  if (cfg.mode !== "live" || !p.strategyOrderId) return;
+  try {
+    await gmgn.cancelStrategyOrder(p.chain, cfg.walletAddress, p.strategyOrderId);
+  } catch (e) {
+    store.log("warn", `Could not cancel ${p.symbol}'s exit plan on GMGN: ${short(e)}`);
+  }
+}
+
+async function readHoldings(cfg: TradeConfig): Promise<Map<string, number> | null> {
+  try {
+    return await gmgn.walletHoldings(cfg.chain, cfg.walletAddress);
+  } catch (e) {
+    store.log("warn", `Wallet holdings read failed: ${short(e)} — positions are not mirrored this tick.`);
+    return null;
+  }
+}
+
+/**
+ * Mirrors one live position onto what the wallet actually holds. The exits run on GMGN's side,
+ * so a position shrinks or disappears without this process selling anything — and the operator
+ * can sell from GMGN's UI too. Whatever left the wallet is booked here.
+ *
+ * An unreadable wallet, or an address the holdings page did not carry, closes nothing: showing
+ * a position a moment too long is recoverable, dropping a live one is not. The fill price is
+ * GMGN's, not ours, so the booked PnL is an estimate at the last seen price.
+ *
+ * Returns true when the position is gone and the tick should move on.
+ */
+function reconcile(p: Position, cfg: TradeConfig, holdings: Map<string, number> | null): boolean {
+  const held = holdings?.get(p.address.toLowerCase());
+  const gone = held === undefined ? 0 : p.qty - held;
+  if (gone <= p.originalQty * 0.02) return false;
+
+  const res = broker.recordExternalSell(cfg, p, gone, "sold on GMGN's side (attached stop/TP or a manual sale)");
+  if ("error" in res) return false;
+  p.qty = Math.max(0, held ?? 0);
+  p.realisedUsd += res.proceeds;
+  // The native it fetched is back in the wallet, so it is spendable again — same bookkeeping
+  // as a sell this process made, and corrected by the next `syncLiveBalance` either way.
+  store.cash += res.proceeds;
+  store.addTrade(res.trade);
+  store.log(
+    "trade",
+    `SELL ${p.symbol} ${((gone / p.originalQty) * 100).toFixed(0)}% — $${res.proceeds.toFixed(2)} (estimated at the last seen price)`,
+    "closed outside the agent; booked from the wallet balance",
+  );
+
+  if (p.qty * p.lastPrice < 1 || p.qty <= p.originalQty * 0.02) {
+    store.removePosition(p.id);
+    store.cooldown(p.address, cfg.cooldownMinutes);
+    store.push();
+    return true;
+  }
+  store.save();
+  return false;
 }
 
 function checkDailyLoss(): void {
@@ -370,6 +434,10 @@ async function runMonitor(): Promise<void> {
   monitoring = true;
   try {
     const cfg = store.config;
+    // One read for the whole wallet, before anything else: in live mode GMGN's copy of the
+    // book is the real one, and every position below is checked against it.
+    const holdings = cfg.mode === "live" ? await readHoldings(cfg) : null;
+
     for (const p of [...store.positions]) {
       let info: Record<string, any> | null = null;
       try {
@@ -384,6 +452,8 @@ async function runMonitor(): Promise<void> {
         p.peakPrice = Math.max(p.peakPrice, price);
       }
 
+      if (cfg.mode === "live" && reconcile(p, cfg, holdings)) continue;
+
       const health = healthExit(p, info ?? {}, p.entryLiquidityUsd);
       if (health) {
         await closePosition(p, health.percent, health.reason);
@@ -391,6 +461,10 @@ async function runMonitor(): Promise<void> {
       }
 
       const exit = evaluateExit(p, cfg);
+      // Live positions carry their whole plan on GMGN's side, so acting on a price rule here
+      // would be a second sell for an exit that is already placed. What is left is the two
+      // things GMGN was never told: the time stop, and the health exit above it.
+      if (exit && cfg.mode === "live" && exit.kind !== "time") continue;
       if (exit) {
         const rung = /^(?:tp|rule)(\d+)$/.exec(exit.kind);
         if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
