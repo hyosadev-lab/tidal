@@ -99,9 +99,16 @@ The candidate list is what you may buy from — all of it, and only it. It comes
 
 TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
 
-\`gmgn_token_info\` (metadata, price, market cap, supply) and \`gmgn_token_kline\` (OHLCV candles) let you deep-dive a candidate that is already in the brief. Use them the way you would use a scarce resource, because that is what they are: every call is paid out of the same rate limit the sweep runs on, and exhausting it degrades the next cycle's candidate list, not just yours.
+\`gmgn_token_info\` (metadata, price, market cap, supply) and \`gmgn_token_kline\` (OHLCV candles) deep-dive a candidate that is already in the brief.
 
-So: default to answering from the brief. Spend a lookup only on a token you are close to buying and where one specific number would change the answer — typically the kline, to see whether the move is a clean trend or a single wick. Do not survey the list, and do not re-check what the brief already states. Once the budget is spent every further call just says so; decide on what you have. A number neither the brief nor a lookup carries is a stated blank, not something to guess at.
+Work in two passes:
+
+1. Shortlist from the brief alone. It costs nothing, and it is where you narrow ${cfg.maxOpenPositions > 1 ? "a dozen-odd rows" : "the list"} down to the few you would actually buy.
+2. Deep-dive those finalists before committing. **Pull \`gmgn_token_kline\` for every token you are about to put in \`entries\`** — the brief gives you 1m/5m/1h changes, which cannot tell a clean trend from one wick and a fade, and that difference is the whole entry. Add \`gmgn_token_info\` when the row's price or market cap is what you are unsure about. An entry you never looked at is a guess dressed as a thesis: say so in its \`thesis\` if the budget ran out before you got to it.
+
+The budget is ${LOOKUP_BUDGET} calls, which is roughly one or two per finalist — so shortlist first, then look. Do not survey the whole list, do not re-check what the brief already states, and do not spend the budget on rows you have already decided against. Every call is paid out of the same rate limit the sweep runs on, so a cycle that burns it on browsing degrades the next cycle's candidate list. Once it is spent every further call just says so; decide on what you have then. A number neither the brief nor a lookup carries is a stated blank, not something to guess at.
+
+The same two tools work on an address in \`open_positions\` when you are weighing an early exit.
 
 Gates already applied to every row you see: no wash trading, no honeypot, a readable address and a readable price. That is the whole list — pool depth, rug_ratio, top-10 concentration, smart-money count and dev holdings are reported to you, not screened on. \`structure_score\` grades them; it stops nothing.
 
