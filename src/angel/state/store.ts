@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, sanitizeConfig, liveReady } from "./config.ts";
+import { DEFAULT_CONFIG, sanitizeConfig, liveReady } from "../core/config.ts";
 import { db, insertEquity, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
 import type {
   Candidate,
@@ -11,7 +11,7 @@ import type {
   Stats,
   Trade,
   TradeConfig,
-} from "./types.ts";
+} from "../core/types.ts";
 
 const MAX_LOGS = 400;
 /** Only what the tide strip draws — the table keeps the rest. */

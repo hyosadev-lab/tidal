@@ -18,7 +18,7 @@ and do not add npm dependencies without being asked.
 ```bash
 npm start                                     # dashboard + engine → http://127.0.0.1:3111
 npm test                                      # node --test, all *.test.ts
-node --test src/trading/plan.test.ts          # one file
+node --test src/trading/core/plan.test.ts     # one file
 node --test --test-name-pattern="stop-loss"   # one test by name
 npx tsc --noEmit                              # type check
 npm run calibrate -- --limit=0                # is score() ranking anything? (--limit=0 spends nothing)
@@ -51,7 +51,7 @@ again, `gmgn_token_info` and `gmgn_token_kline` (`git log` it for the old, much 
 
 ### Storage
 
-Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/trading/db.ts`
+Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/trading/state/db.ts`
 with `node:sqlite` — stdlib, so the zero-dependency rule holds. The split is by shape:
 bounded state that the engine mutates in place (config, cash, open positions, cooldowns,
 blacklist) is a JSON blob in `kv`; unbounded append-only series (`trades`, `equity`,
@@ -79,7 +79,7 @@ the two requests already queued behind it are what turn a 30s cooldown into `RAT
 until the model replies without tool calls; the analyst passes two read-only ones, so a cycle is
 one request plus one more per lookup it spends.
 
-### The central split (`src/trading/plan.ts` header states it; respect it)
+### The central split (`src/trading/core/plan.ts` header states it; respect it)
 
 **Gates, sizing, and exit *execution* are deterministic code. The model only ranks, writes theses,
 and — in dynamic mode — proposes the shape of an exit plan.**
@@ -104,20 +104,27 @@ two things GMGN was never told, the time stop and `healthExit`, and books everyt
 the balance. That is why an exit plan must survive translation — a rule `conditionOrders` drops
 is a rule that does not exist in live.
 
-### `src/trading/` layering (import order, roughly)
+### `src/trading/` layering
+
+Three folders and a root, and **imports only ever point inward**: `core/` imports nothing but
+itself, `state/` and `exec/` import `core/`, and the root files assemble all three. Nothing in
+`core/` may import from `state/`, `exec/`, or the root — that rule is what keeps `core/plan.ts`
+testable without opening the database or the API client. A new file goes in the deepest folder
+whose rule it can still obey.
 
 | File | Role |
 |---|---|
-| `types.ts` | shared types, no logic |
-| `config.ts` | defaults, per-chain constants, `num`, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady`. Imports nothing but `types.ts` — keep it that way, it is what lets `plan.ts` stay I/O-free |
-| `db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path |
-| `store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE |
-| `market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing above this file speaks HTTP or touches `gmgnClient()` |
-| `plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`. No I/O, and importing it must not open the database or the API client — this is where tests concentrate |
-| `broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
+| `core/types.ts` | shared types, no logic |
+| `core/config.ts` | defaults, per-chain constants, `num`, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady`. Imports nothing but `types.ts` — keep it that way |
+| `core/plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`, `isDust`. No I/O, and importing it must not open the database or the API client — this is where tests concentrate |
+| `core/fixtures.ts` | `candidate()` / `position()` builders; only `*.test.ts` imports it |
+| `state/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
+| `state/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE |
+| `state/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
+| `exec/market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
+| `exec/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
 | `analyst.ts` | the model half of a cycle: the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. One LLM call, two read-only tools on a per-cycle budget, spends nothing |
-| `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle |
-| `soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
+| `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
 
 Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →

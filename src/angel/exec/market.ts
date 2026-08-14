@@ -1,7 +1,7 @@
-import { gmgnClient } from "../gmgn/client.ts";
-import type { SwapParams } from "../gmgn/endpoint.ts";
-import { num, PRIORITY_FEE, TIP_FEE } from "./config.ts";
-import type { Chain } from "./types.ts";
+import { gmgnClient } from "../../gmgn/client.ts";
+import type { SwapParams } from "../../gmgn/endpoint.ts";
+import { num, PRIORITY_FEE, TIP_FEE } from "../core/config.ts";
+import type { Chain } from "../core/types.ts";
 
 /**
  * The market layer: what the trading engine asks the GMGN API, in the engine's own

@@ -1,8 +1,8 @@
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
-import { entryStrategy, pnlPct } from "./plan.ts";
-import { store } from "./store.ts";
-import type { Candidate, Decision, StrategyRule, TradeConfig } from "./types.ts";
+import { entryStrategy, pnlPct } from "./core/plan.ts";
+import { store } from "./state/store.ts";
+import type { Candidate, Decision, StrategyRule, TradeConfig } from "./core/types.ts";
 
 /**
  * The model half of a cycle: what the analyst is told, and what comes back.

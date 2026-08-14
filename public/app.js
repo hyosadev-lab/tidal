@@ -17,10 +17,10 @@ const PRESETS = {
 };
 
 const FLOORS = { sol: 3, bsc: 5, base: 5, eth: 25 };
-// Fee is denominated in whatever the chain pays gas in — mirrors NATIVE in src/trading/config.ts.
+// Fee is denominated in whatever the chain pays gas in — mirrors NATIVE in src/trading/core/config.ts.
 const NATIVE_SYMBOL = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
 
-// Refine rows — must match REFINE_FIELDS in src/trading/config.ts. Blank = no filter.
+// Refine rows — must match REFINE_FIELDS in src/trading/core/config.ts. Blank = no filter.
 const REFINE = ["age", "liquidity", "marketCap", "fee", "kol", "smartMoney", "top10", "devHolding", "insider"];
 // Typed and shown in thousands; the config stores plain USD, so convert at the edge.
 const REFINE_K = new Set(["liquidity", "marketCap"]);

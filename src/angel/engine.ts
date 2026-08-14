@@ -1,23 +1,25 @@
 import { askAnalyst } from "./analyst.ts";
-import { gasReserve, liveReady, minPosition, num, refineQuery } from "./config.ts";
-import * as broker from "./broker.ts";
-import * as gmgn from "./market.ts";
-import { NATIVE_SYMBOL } from "./market.ts";
+import { gasReserve, liveReady, minPosition, num, refineQuery } from "./core/config.ts";
+import * as broker from "./exec/broker.ts";
+import * as gmgn from "./exec/market.ts";
+import { NATIVE_SYMBOL } from "./exec/market.ts";
 import {
   buyableSet,
   entryStrategy,
   evaluateExit,
   gateTally,
   healthExit,
+  isDust,
+  DUST_FRACTION,
   positionSize,
   runGates,
   score,
   securityRisk,
   toCandidate,
-} from "./plan.ts";
-import { recordSoundings } from "./soundings.ts";
-import { store } from "./store.ts";
-import type { Candidate, Position, StrategyRule, TradeConfig } from "./types.ts";
+} from "./core/plan.ts";
+import { recordSoundings } from "./state/soundings.ts";
+import { store } from "./state/store.ts";
+import type { Candidate, Position, StrategyRule, Trade, TradeConfig } from "./core/types.ts";
 
 /** How many of the eligible rows, best score first, are put in front of the analyst. */
 const ANALYST_SHORTLIST = 18;
@@ -351,32 +353,41 @@ async function closePosition(p: Position, percentOfOriginal: number, reason: str
       store.log("error", `Sell ${p.symbol} failed: ${res.error}`);
       return;
     }
-    p.qty = Math.max(0, p.qty - res.qtySold);
-    p.realisedUsd += res.proceeds;
-    store.addTrade(res.trade);
-
     const pnl = res.trade.pnlUsd ?? 0;
     store.log(
       "trade",
       `SELL ${p.symbol} ${percentOfOriginal}% — $${res.proceeds.toFixed(2)} · ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)} (${(res.trade.pnlPct ?? 0).toFixed(1)}%)`,
       reason,
     );
-
-    const dust = p.qty * p.lastPrice < 1 || p.qty <= p.originalQty * 0.02;
-    if (dust) {
-      await withdrawExitPlan(p, cfg);
-      store.removePosition(p.id);
-      store.cooldown(p.address, cfg.cooldownMinutes);
-    } else {
-      store.save();
-    }
-    checkDailyLoss();
-    // The dashboard only repaints on a snapshot. Without this, a sell is invisible until the
-    // next monitor tick — and if the agent is stopped, a manual close never appears at all.
-    store.push();
+    await bookSell(p, cfg, res.qtySold, res.proceeds, res.trade);
   } catch (e) {
     store.log("error", `Sell ${p.symbol} errored: ${short(e)}`);
   }
+}
+
+/**
+ * Everything that happens *after* a sell exists, whoever made it: this process through
+ * `broker.sell`, or GMGN's own side booked by `reconcile`. Both paths shrink the position,
+ * record the trade, and close it out when nothing tradeable is left — and both owe the daily
+ * loss budget a look, which matters most on the reconcile path, because in live mode GMGN's
+ * fills are where the losses actually land.
+ */
+async function bookSell(p: Position, cfg: TradeConfig, qtySold: number, proceeds: number, trade: Trade): Promise<void> {
+  p.qty = Math.max(0, p.qty - qtySold);
+  p.realisedUsd += proceeds;
+  store.addTrade(trade);
+
+  if (isDust(p)) {
+    await withdrawExitPlan(p, cfg);
+    store.removePosition(p.id);
+    store.cooldown(p.address, cfg.cooldownMinutes);
+  } else {
+    store.save();
+  }
+  checkDailyLoss();
+  // The dashboard only repaints on a snapshot. Without this, a sell is invisible until the
+  // next monitor tick — and if the agent is stopped, a manual close never appears at all.
+  store.push();
 }
 
 /**
@@ -413,33 +424,23 @@ async function readHoldings(cfg: TradeConfig): Promise<Map<string, number> | nul
  *
  * Returns true when the position is gone and the tick should move on.
  */
-function reconcile(p: Position, cfg: TradeConfig, holdings: Map<string, number> | null): boolean {
+async function reconcile(p: Position, cfg: TradeConfig, holdings: Map<string, number> | null): Promise<boolean> {
   const held = holdings?.get(p.address.toLowerCase());
   const gone = held === undefined ? 0 : p.qty - held;
-  if (gone <= p.originalQty * 0.02) return false;
+  if (gone <= p.originalQty * DUST_FRACTION) return false;
 
   const res = broker.recordExternalSell(cfg, p, gone, "sold on GMGN's side (attached stop/TP or a manual sale)");
   if ("error" in res) return false;
-  p.qty = Math.max(0, held ?? 0);
-  p.realisedUsd += res.proceeds;
   // The native it fetched is back in the wallet, so it is spendable again — same bookkeeping
   // as a sell this process made, and corrected by the next `syncLiveBalance` either way.
   store.cash += res.proceeds;
-  store.addTrade(res.trade);
   store.log(
     "trade",
     `SELL ${p.symbol} ${((gone / p.originalQty) * 100).toFixed(0)}% — $${res.proceeds.toFixed(2)} (estimated at the last seen price)`,
     "closed outside the agent; booked from the wallet balance",
   );
-
-  if (p.qty * p.lastPrice < 1 || p.qty <= p.originalQty * 0.02) {
-    store.removePosition(p.id);
-    store.cooldown(p.address, cfg.cooldownMinutes);
-    store.push();
-    return true;
-  }
-  store.save();
-  return false;
+  await bookSell(p, cfg, gone, res.proceeds, res.trade);
+  return isDust(p);
 }
 
 function checkDailyLoss(): void {
@@ -482,7 +483,7 @@ async function runMonitor(): Promise<void> {
         p.peakPrice = Math.max(p.peakPrice, price);
       }
 
-      if (cfg.mode === "live" && reconcile(p, cfg, holdings)) continue;
+      if (cfg.mode === "live" && (await reconcile(p, cfg, holdings))) continue;
 
       const health = healthExit(p, info ?? {}, p.entryLiquidityUsd);
       if (health) {

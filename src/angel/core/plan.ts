@@ -382,6 +382,18 @@ export function healthExit(
   return null;
 }
 
+/**
+ * A slice smaller than this is noise, not a position: a rounding remainder GMGN's own fills
+ * leave behind. Used two ways — a *remainder* this size means the position is closed, and a
+ * *delta* this size against the wallet is not a sale worth booking.
+ */
+export const DUST_FRACTION = 0.02;
+
+/** Nothing tradeable left: under $1 of value, or under `DUST_FRACTION` of what was bought. */
+export function isDust(p: Position): boolean {
+  return p.qty * p.lastPrice < 1 || p.qty <= p.originalQty * DUST_FRACTION;
+}
+
 export function pnlPct(p: Position): number {
   return p.entryPrice > 0 ? ((p.lastPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
 }

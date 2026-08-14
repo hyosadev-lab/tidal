@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { NATIVE, num, slippage } from "./config.ts";
+import { NATIVE, num, slippage } from "../core/config.ts";
 import * as gmgn from "./market.ts";
-import type { store as Store } from "./store.ts";
-import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "./types.ts";
+import type { store as Store } from "../state/store.ts";
+import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
 
 /** GMGN's routing fee, applied to both legs of a paper trade. */
 const FEE_PCT = 1.0;

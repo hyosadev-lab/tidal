@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_CONFIG } from "./config.ts";
-import { store } from "./store.ts";
-import * as broker from "./broker.ts";
+import { DEFAULT_CONFIG } from "./core/config.ts";
+import { store } from "./state/store.ts";
+import * as broker from "./exec/broker.ts";
 import { start, stop } from "./engine.ts";
-import { candidate } from "./fixtures.ts";
-import type { TradeConfig } from "./types.ts";
+import { candidate } from "./core/fixtures.ts";
+import type { TradeConfig } from "./core/types.ts";
 
 // Not hermetic. These drive the shared store singleton and rewrite `data/`, and `start()`
 // schedules a real scan against the live GMGN API 1.5s later — expect network and a few

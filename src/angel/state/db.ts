@@ -17,8 +17,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Repo root — `data/` stays beside the sources, not inside `src/`. */
-export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+/**
+ * Repo root — `data/` stays beside the sources, not inside `src/`. Counted from this file's
+ * own location (`src/trading/state/`), so moving this file moves the database with it.
+ */
+export const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 export const DATA_DIR = join(ROOT, "data");
 const DB_PATH = process.env.TTA_DB || join(DATA_DIR, "tta.db");
 

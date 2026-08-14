@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Trade } from "./types.ts";
+import type { Trade } from "../core/types.ts";
 
 process.env.TTA_DB = join(mkdtempSync(join(tmpdir(), "tta-")), "test.db");
 const { Store } = await import("./store.ts");

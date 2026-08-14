@@ -45,7 +45,7 @@ Gate-nya cuma empat, dan gak ada satu pun yang menilai struktur token:
 | tanpa harga | integritas data |
 
 Dua yang pertama kebijakan risiko, dua terakhir penjaga integritas data supaya kandidat rusak
-gak lolos ke sizing. Itu isi `runGates` (`src/trading/plan.ts`) selengkapnya.
+gak lolos ke sizing. Itu isi `runGates` (`src/trading/core/plan.ts`) selengkapnya.
 
 **Smart money, `rug_ratio`, top-10 holder, kedalaman kolam, dan status dev gak menggugurkan
 apa-apa.** Semuanya tetap dibaca, dikasih bobot sama `score()`, ditampilin ke analis, dan bisa
@@ -196,18 +196,28 @@ src/
     tools.ts           template kosong buat nambah tool nanti
   gmgn/                transport: OpenApiClient, signing, antrian + leaky bucket
   trading/
-    types.ts           tipe bersama
-    config.ts          default + sanitasi (semua input dari UI diclamp di sini)
-    db.ts              satu file SQLite (data/tta.db) lewat node:sqlite
-    store.ts           state, persistensi, event bus
-    market.ts          feed & harga GMGN dalam bahasa engine (batas cast)
-    plan.ts            gate, skor, sizing, aturan exit, prompt analis
-    broker.ts          eksekusi paper & live
-    analyst.ts         prompt + brief + askAnalyst (satu panggilan LLM, tanpa tool)
+    core/              lapisan murni — tanpa I/O, tanpa network, tanpa database
+      types.ts         tipe bersama
+      config.ts        default + sanitasi (semua input dari UI diclamp di sini)
+      plan.ts          gate, skor, sizing, aturan exit
+      fixtures.ts      fixture buat tes
+    state/             yang persisten
+      db.ts            satu file SQLite (data/tta.db) lewat node:sqlite
+      store.ts         state, persistensi, event bus
+      soundings.ts     tiap kandidat yang pernah discan, buat kalibrasi
+    exec/              yang ngomong ke GMGN
+      market.ts        feed & harga GMGN dalam bahasa engine (batas cast)
+      broker.ts        eksekusi paper & live
+    analyst.ts         prompt + brief + askAnalyst (satu panggilan LLM, dua tool baca)
     engine.ts          loop scan + monitor
+    calibrate.ts       offline: skor-nya beneran meranking apa nggak
 ```
 
-`src/trading/plan.test.ts` nutupin gate, skor, sizing, tiap aturan exit, clamping config,
+Impor cuma boleh nunjuk ke dalam: `core/` gak impor apa-apa selain dirinya sendiri, `state/` dan
+`exec/` cuma nunjuk ke `core/`, dan yang di root ngerakit ketiganya. Itu yang bikin `core/plan.ts`
+bisa dites tanpa nyalain database atau nyentuh network.
+
+`src/trading/core/plan.test.ts` nutupin gate, skor, sizing, tiap aturan exit, clamping config,
 penolakan live mode, dan parsing output model — murni, tanpa network. `src/trading/engine.test.ts`
 yang sisanya: round trip paper dan `start()`, yang beneran manggil API GMGN. `npm test` buat
 jalanin semuanya.

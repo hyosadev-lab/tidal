@@ -22,10 +22,11 @@ import {
   securityRisk,
   toCandidate,
 } from "./plan.ts";
-import { extractJson } from "./analyst.ts";
-import { trenchesFilters } from "./market.ts";
-import { bands, median, spearman } from "./calibrate.ts";
-import { conditionOrders, recordExternalSell } from "./broker.ts";
+import { isDust } from "./plan.ts";
+import { extractJson } from "../analyst.ts";
+import { trenchesFilters } from "../exec/market.ts";
+import { bands, median, spearman } from "../calibrate.ts";
+import { conditionOrders, recordExternalSell } from "../exec/broker.ts";
 import { candidate, position } from "./fixtures.ts";
 import type { Candidate, StrategyRule, TradeConfig } from "./types.ts";
 
@@ -596,4 +597,13 @@ test("a plan without a stop gets one, and no rules falls back to the config ladd
   assert.equal(legacy.filter((o) => o.order_type === "profit_stop").length, DEFAULT_CONFIG.takeProfit.length);
   assert.equal(legacy.filter((o) => o.order_type === "profit_stop_trace").length, 1, "the config trail travels too");
   assert.equal(legacy.filter((o) => o.order_type === "loss_stop").length, 1);
+});
+
+test("dust: a remainder under $1 or under 2% of the buy closes the position", () => {
+  assert.equal(isDust(position()), false);
+  // 1.5% of the original quantity left — a rounding remainder from a 100% fill.
+  assert.equal(isDust(position({ qty: 1_500 })), true);
+  // 10% of the quantity left, but the price collapsed: under $1 is not worth another sell.
+  assert.equal(isDust(position({ qty: 10_000, lastPrice: 0.00005 })), true);
+  assert.equal(isDust(position({ qty: 10_000 })), false, "a real partial exit stays open");
 });
