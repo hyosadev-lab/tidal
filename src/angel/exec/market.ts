@@ -1,6 +1,6 @@
 import { gmgnClient } from "../../gmgn/client.ts";
 import type { SwapParams } from "../../gmgn/endpoint.ts";
-import { num, PRIORITY_FEE, TIP_FEE } from "../core/config.ts";
+import { NATIVE, num, PRIORITY_FEE, TIP_FEE } from "../core/config.ts";
 import type { Chain } from "../core/types.ts";
 
 /**
@@ -158,10 +158,55 @@ export type GasQuote = {
  * units, which is not what `priority_fee` / `tip_fee` take. Those chains keep the constants.
  */
 export async function gasQuote(chain: Chain): Promise<GasQuote> {
+  if (gasCache && gasCache.chain === chain && Date.now() - gasCache.at < 30_000) return gasCache.q;
   const r = obj(await client().getGasPrice(chain));
   const nativeUsd = num(r["native_token_usd_price"] ?? r["nativeTokenUsdPrice"]);
-  if (chain !== "sol") return { nativeUsd, priorityFee: 0, tipFee: 0 };
-  return { nativeUsd, priorityFee: num(r["auto"]), tipFee: num(r["auto_mev"]) };
+  const q: GasQuote =
+    chain === "sol"
+      ? { nativeUsd, priorityFee: num(r["auto"]), tipFee: num(r["auto_mev"]) }
+      : { nativeUsd, priorityFee: 0, tipFee: 0 };
+  gasCache = { at: Date.now(), chain, q };
+  return q;
+}
+
+// Paper legs now price their chain fees off this route too, so a monitor tick that sells three
+// rungs would ask three times for numbers that move over minutes. One chain at a time is all the
+// engine trades, so a single slot is the whole cache.
+let gasCache: { at: number; chain: Chain; q: GasQuote } | null = null;
+
+export type RouteQuote = {
+  /** USD going in, and the USD the tokens coming back are worth. */
+  inUsd: number;
+  outUsd: number;
+  /** Native units that actually leave the wallet — input plus every fee. 0 when not quoted. */
+  costNative: number;
+};
+
+/**
+ * What a swap would really cost, asked before anything is spent. Read-only (`exist` auth), so a
+ * pre-trade refusal costs one weight-2 read and no money.
+ *
+ * The gap between `inUsd` and `outUsd` is the percentage half — GMGN's 1% routing fee, the pool's
+ * own, and price impact — and `sol_cost` is the half no percentage models: priority fee, MEV tip
+ * and account rent, flat whatever the trade is worth. Measured live on one pump_amm pool: a
+ * 0.05 SOL buy quoted -2.2% on price and 0.0065 SOL of chain fees on top, which on a $3.78 buy
+ * is another 13%. `sol_cost` is a slight overstatement — the ATA rent inside it comes back when
+ * the account closes — and erring that way beats a paper record that flatters itself.
+ */
+export async function routeQuote(
+  chain: Chain,
+  from: string,
+  inputToken: string,
+  outputToken: string,
+  amount: string,
+  slippage: number,
+): Promise<RouteQuote | null> {
+  const r = obj(await client().quoteOrder(chain, fromAddress(chain, from), inputToken, outputToken, amount, slippage));
+  const tx = obj(r["tx"]);
+  const inUsd = num(tx["amount_in_usd"]);
+  const outUsd = num(tx["amount_out_usd"]);
+  if (!(inUsd > 0) || !(outUsd > 0)) return null;
+  return { inUsd, outUsd, costNative: num(tx["sol_cost"]) / 10 ** NATIVE[chain].decimals };
 }
 
 export async function nativeUsdPrice(chain: Chain): Promise<number> {

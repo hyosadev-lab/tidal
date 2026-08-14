@@ -26,7 +26,7 @@ import { isDust } from "./plan.ts";
 import { extractJson } from "../analyst.ts";
 import { trenchesFilters } from "../exec/market.ts";
 import { bands, median, spearman } from "../calibrate.ts";
-import { conditionOrders, recordExternalSell } from "../exec/broker.ts";
+import { conditionOrders, netOfFees, recordExternalSell } from "../exec/broker.ts";
 import { candidate, position } from "./fixtures.ts";
 import type { Candidate, StrategyRule, TradeConfig } from "./types.ts";
 
@@ -597,6 +597,17 @@ test("a plan without a stop gets one, and no rules falls back to the config ladd
   assert.equal(legacy.filter((o) => o.order_type === "profit_stop").length, DEFAULT_CONFIG.takeProfit.length);
   assert.equal(legacy.filter((o) => o.order_type === "profit_stop_trace").length, 1, "the config trail travels too");
   assert.equal(legacy.filter((o) => o.order_type === "loss_stop").length, 1);
+});
+
+test("a paper leg pays a percentage and a flat chain fee, so small legs cost more", () => {
+  const SOL = 75; // $/SOL, roughly what the quote route reported when these numbers were measured.
+  // $200 crossing one leg: 2.2% routing + pool, plus 0.006 SOL of chain fees.
+  assert.equal(netOfFees("sol", 200, SOL).toFixed(2), (200 * 0.978 - 0.45).toFixed(2));
+
+  const cost = (gross: number) => (1 - netOfFees("sol", gross, SOL) / gross) * 100;
+  assert.ok(cost(200) < 2.5, "the flat fee disappears into a big leg");
+  assert.ok(cost(5) > 10, "and eats a small one — this is the whole reason a $5 rung loses money");
+  assert.equal(netOfFees("sol", 0.3, SOL), 0, "a leg worth less than its own fee nets nothing");
 });
 
 test("dust: a remainder under $1 or under 2% of the buy closes the position", () => {

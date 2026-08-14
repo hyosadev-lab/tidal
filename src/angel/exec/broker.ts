@@ -2,15 +2,36 @@ import { randomUUID } from "node:crypto";
 import { NATIVE, num, slippage } from "../core/config.ts";
 import * as gmgn from "./market.ts";
 import type { store as Store } from "../state/store.ts";
-import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
+import type { Candidate, Chain, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
 
-/** GMGN's routing fee, applied to both legs of a paper trade. */
-const FEE_PCT = 1.0;
+/** Percentage cost of one leg: GMGN's 1% routing fee plus the pool's own (~1.2% on pump_amm). */
+const FEE_PCT: Record<Chain, number> = { sol: 2.2, bsc: 1.3, base: 1.3, eth: 1.3 };
+
+/**
+ * Chain fees per transaction, native units: priority fee, MEV tip, account rent. This is the half
+ * a percentage model misses, and the reason small positions bleed — 0.006 SOL is ~$0.45 whether
+ * the trade is $200 or $5, so it costs 0.2% of the first and 9% of the second. The Solana figure
+ * is measured off `sol_cost` in a live quote; the others are the priority + tip a swap sends.
+ */
+const TX_COST_NATIVE: Record<Chain, number> = { sol: 0.006, bsc: 0.0007, base: 0.00003, eth: 0.0007 };
+
+/**
+ * How far under water a buy is allowed to start. The round trip costs roughly twice this, so 8%
+ * means asking for a token that has to move ~16% before the position is worth anything. On SOL a
+ * $20 buy quotes ~4.6% and passes, a $5 buy ~12% and does not — which is the real floor on
+ * position size, expressed where the number actually comes from instead of as a constant.
+ */
+const MAX_ENTRY_COST_PCT = 8;
 
 /** Price impact a paper fill should expect, given trade size against pool depth. */
 function paperSlip(usd: number, liquidityUsd: number, cap: number): number {
   const impact = liquidityUsd > 0 ? (usd / liquidityUsd) * 100 : 2;
   return Math.min(cap, 0.4 + impact);
+}
+
+/** A paper leg's two costs, applied to the USD crossing it: a percentage, then the flat tx fee. */
+export function netOfFees(chain: Chain, gross: number, nativeUsd: number): number {
+  return Math.max(0, gross * (1 - FEE_PCT[chain] / 100) - TX_COST_NATIVE[chain] * nativeUsd);
 }
 
 function toSmallestUnit(amount: number, decimals: number): string {
@@ -99,19 +120,48 @@ export async function buy(
   let orderId: string | undefined;
   let strategyOrderId: string | undefined;
 
+  const native = NATIVE[cfg.chain];
+  // One call for the native price and the current fees — the swap needs both, and paper prices
+  // its own fees off the same numbers. Cached for 30s, so a cycle asks once.
+  const gas = await gmgn.gasQuote(cfg.chain).catch(() => ({ nativeUsd: 0, priorityFee: 0, tipFee: 0 }));
+  const nativeUsd = gas.nativeUsd;
+  const amount = nativeUsd > 0 ? toSmallestUnit(usdAmount / nativeUsd, native.decimals) : "";
+
+  // What the route really costs, before anything is spent. Both modes ask: live to refuse a buy
+  // that starts too far under, paper to fill on a real number instead of a model of one. Needs a
+  // wallet address — GMGN quotes a route for someone — and falls back to the model without it.
+  const quote =
+    amount && cfg.walletAddress
+      ? await gmgn
+          .routeQuote(cfg.chain, cfg.walletAddress, native.address, c.address, amount, slippage(cfg))
+          .catch(() => null)
+      : null;
+  const quotedCost = quote ? (quote.costNative > 0 ? quote.costNative * nativeUsd : quote.inUsd) : 0;
+  if (quote && quotedCost > 0) {
+    const entryCostPct = ((quotedCost - quote.outUsd) / quotedCost) * 100;
+    if (entryCostPct > MAX_ENTRY_COST_PCT)
+      return {
+        error: `entry costs ${entryCostPct.toFixed(1)}% on a $${usdAmount.toFixed(0)} buy (fees + impact, ceiling ${MAX_ENTRY_COST_PCT}%) — too small for the round trip`,
+      };
+  }
+
   if (cfg.mode === "paper") {
-    const slip = paperSlip(usdAmount, c.liquidityUsd, slippage(cfg));
-    fillPrice = c.priceUsd * (1 + slip / 100);
-    const net = usdAmount * (1 - FEE_PCT / 100);
-    qty = net / fillPrice;
-    if (store.cash < usdAmount) return { error: "not enough paper cash" };
+    if (quote && quotedCost > 0) {
+      // The quoted route, not a model of one. `outUsd` is what the tokens are worth on arrival,
+      // `quotedCost` everything that leaves the wallet to get them. Entry price stays a market
+      // price — live's convention — so the chain fees land in `costUsd` where they belong and
+      // the exit rules read the same percentages in either mode.
+      qty = quote.outUsd / c.priceUsd;
+      fillPrice = quote.inUsd / qty;
+      spent = quotedCost;
+    } else {
+      const slip = paperSlip(usdAmount, c.liquidityUsd, slippage(cfg));
+      fillPrice = c.priceUsd * (1 + slip / 100);
+      qty = netOfFees(cfg.chain, usdAmount, nativeUsd) / fillPrice;
+    }
+    if (store.cash < spent) return { error: "not enough paper cash" };
   } else {
-    const native = NATIVE[cfg.chain];
-    // One call for the price and the current fees — the swap below needs both.
-    const gas = await gmgn.gasQuote(cfg.chain);
-    const nativeUsd = gas.nativeUsd;
     if (!(nativeUsd > 0)) return { error: "could not read native token price" };
-    const amount = toSmallestUnit(usdAmount / nativeUsd, native.decimals);
 
     const res = await gmgn.swap({
       chain: cfg.chain,
@@ -141,7 +191,12 @@ export async function buy(
     if (!(qty > 0)) return { error: "swap returned no output amount" };
     const inDec = num(rep.input_token_decimals, NATIVE[cfg.chain].decimals);
     const inAmt = num(rep.input_amount) / 10 ** inDec;
-    spent = inAmt > 0 ? inAmt * nativeUsd : usdAmount;
+    // The report accounts for the amount swapped, never the routing fee or the chain fees paid
+    // around it — real money that left the wallet, and the difference between a cost basis and a
+    // flattering one. The quote's `sol_cost` is the only number that carries them, so when it is
+    // there the gap rides along as an estimate; without it the basis stays understated.
+    const overhead = quote && quotedCost > quote.inUsd ? quotedCost - quote.inUsd : 0;
+    spent = (inAmt > 0 ? inAmt * nativeUsd : usdAmount) + overhead;
     txHash = settled.hash;
   }
 
@@ -223,7 +278,12 @@ export async function sell(
     const gross = qtySold * p.lastPrice;
     const slip = paperSlip(gross, liquidityUsd || gross * 20, slippage(cfg));
     fillPrice = p.lastPrice * (1 - slip / 100);
-    proceeds = qtySold * fillPrice * (1 - FEE_PCT / 100);
+    // The exit pays the same two costs the entry did, and the flat one does not care that this
+    // is a rung: selling 20% of a $20 position nets ~$3.5 and still pays its ~$0.45 of chain
+    // fees. A ladder is four of those. Quoting the route back would need the token's decimals,
+    // which nothing here carries — the model is close enough, and it is no longer zero.
+    const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
+    proceeds = netOfFees(cfg.chain, qtySold * fillPrice, nativeUsd);
   } else {
     // `--percent` is a share of the wallet's current balance, not of the original buy.
     const pctOfBalance = Math.max(1, Math.min(100, Math.round((qtySold / p.qty) * 100)));
