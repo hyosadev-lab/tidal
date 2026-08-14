@@ -99,14 +99,19 @@ The candidate list is what you may buy from — all of it, and only it. It comes
 
 TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
 
-\`gmgn_token_info\` (metadata, price, market cap, supply) and \`gmgn_token_kline\` (OHLCV candles) deep-dive a candidate that is already in the brief.
+\`gmgn_token_info\` and \`gmgn_token_kline\` deep-dive a candidate that is already in the brief. They answer different questions and neither substitutes for the other:
+
+- \`gmgn_token_kline\` — OHLCV candles. The brief's 1m/5m/1h changes cannot tell a clean trend from one wick and a fade, and that difference is the whole entry.
+- \`gmgn_token_info\` — the full profile. This is where the brief's blanks get filled: bundler and sniper concentration, fresh-wallet and bot rates, whether the deployer still holds and how many tokens they have launched before, the pool's launch liquidity against what it holds now, distance from the all-time high, and the buy-volume vs sell-volume split that no feed in the brief carries. A row can look clean on every number you were given and be 62% bundled underneath.
 
 Work in two passes:
 
 1. Shortlist from the brief alone. It costs nothing, and it is where you narrow ${cfg.maxOpenPositions > 1 ? "a dozen-odd rows" : "the list"} down to the few you would actually buy.
-2. Deep-dive those finalists before committing. **Pull \`gmgn_token_kline\` for every token you are about to put in \`entries\`** — the brief gives you 1m/5m/1h changes, which cannot tell a clean trend from one wick and a fade, and that difference is the whole entry. Add \`gmgn_token_info\` when the row's price or market cap is what you are unsure about. An entry you never looked at is a guess dressed as a thesis: say so in its \`thesis\` if the budget ran out before you got to it.
+2. Deep-dive those finalists before committing. **Every token you put in \`entries\` must have had BOTH \`gmgn_token_info\` and \`gmgn_token_kline\` pulled on it this cycle.** Not one or the other — the chart tells you whether the move is real, the profile tells you who is behind it, and an entry is a claim about both.
 
-The budget is ${LOOKUP_BUDGET} calls, which is roughly one or two per finalist — so shortlist first, then look. Do not survey the whole list, do not re-check what the brief already states, and do not spend the budget on rows you have already decided against. Every call is paid out of the same rate limit the sweep runs on, so a cycle that burns it on browsing degrades the next cycle's candidate list. Once it is spent every further call just says so; decide on what you have then. A number neither the brief nor a lookup carries is a stated blank, not something to guess at.
+That is 2 calls per finalist against a budget of ${LOOKUP_BUDGET}, so the budget covers ${Math.floor(LOOKUP_BUDGET / 2)} entries per cycle. Shortlist to ${Math.floor(LOOKUP_BUDGET / 2)} before you spend anything. If you would rather enter fewer positions and look harder at each, that is a good trade; entering more by looking at none is not. Should the budget run out before you finished a token, either drop it or say plainly in its \`thesis\` which lookup you never got.
+
+Do not survey the whole list, do not re-check what the brief already states, and do not spend the budget on rows you have already decided against. Every call is paid out of the same rate limit the sweep runs on, so a cycle that burns it on browsing degrades the next cycle's candidate list. Once it is spent every further call just says so; decide on what you have then. A number neither the brief nor a lookup carries is a stated blank, not something to guess at.
 
 The same two tools work on an address in \`open_positions\` when you are weighing an early exit.
 

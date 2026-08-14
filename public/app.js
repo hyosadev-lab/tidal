@@ -85,6 +85,10 @@ function drawTide(points, stats) {
   if (!points.length) {
     svg.innerHTML = `<line x1="0" y1="${H - 30}" x2="${W}" y2="${H - 30}" stroke="var(--rule)" stroke-dasharray="3 5"/>`;
     $("mk-span").textContent = "no soundings yet";
+    // Back to the marks' initial state, not left as they were: this branch is what a cleared
+    // ledger renders, and a high-water mark from the ledger before it reads as a live figure.
+    $("mk-high").textContent = "—";
+    $("mk-low").textContent = "—";
     return;
   }
 

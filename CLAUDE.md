@@ -135,8 +135,17 @@ independently and never touches the LLM.
 **`gatherCandidates` is the whole search, and the brief is the near-whole evidence base.** The
 analyst can deep-dive a row it already has (info + kline, 6 lookups per cycle), but it cannot
 search: an address outside the brief never went through `toCandidate` or the gates, so there is
-nothing to size and `buyableSet` refuses it. A number neither the brief nor those two routes
-carries (`sniper_count`, `bundler_rate`, dev status) is still a stated blank. The operator steers
+nothing to size and `buyableSet` refuses it. **Both lookups are now mandatory per entry** — the
+prompt requires `gmgn_token_info` *and* `gmgn_token_kline` on every address the analyst puts in
+`entries`, so the budget of 6 is 3 fully-researched entries per cycle. That pairing is deliberate:
+`/v1/token/info` is much richer than the brief and carries most of what the feeds leave blank —
+bundler and sniper concentration (`stat.top_bundler_trader_percentage`, `top70_sniper_hold_rate`),
+`fresh_wallet_rate`, `bot_degen_rate`, dev status and deployer history (`dev.creator_token_status`,
+`stat.creator_created_count`), `pool.initial_liquidity` against current, `ath_price`, and the
+buy/sell *volume* split that neither feed reports. The tool's description in `src/agent/tools.ts`
+is the field inventory, written from live responses — keep it that way, since it is the model's
+only view of the route. What stays a stated blank is only what neither the brief nor those two
+routes carries. The operator steers
 the sweep through the dashboard's Refine panel
 (`refineQuery`), not through the prompt — `cfg.prompt` shapes selection, not fetching, because the
 sweep runs before the model is called. Everything the model needs must therefore be on the
