@@ -236,7 +236,7 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     monitorSeconds: clamp(input.monitorSeconds, 10, 600, base.monitorSeconds),
     prompt: typeof input.prompt === "string" ? input.prompt.slice(0, 8000) : base.prompt,
 
-    riskPerTradePct: clamp(input.riskPerTradePct, 0.5, 25, base.riskPerTradePct),
+    riskPerTradePct: clamp(input.riskPerTradePct, 0.5, 50, base.riskPerTradePct),
     maxOpenPositions: Math.round(clamp(input.maxOpenPositions, 1, 20, base.maxOpenPositions)),
     maxDailyLossPct: clamp(input.maxDailyLossPct, 1, 90, base.maxDailyLossPct),
     fixedStrategy: typeof input.fixedStrategy === "boolean" ? input.fixedStrategy : base.fixedStrategy,

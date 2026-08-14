@@ -371,7 +371,7 @@ test("0 is the auto flag on the three fields that have one, not a real value", (
 
 test("out-of-range config is clamped rather than trusted", () => {
   const c = sanitizeConfig({ riskPerTradePct: 900, intervalMinutes: 0, stopLossPct: -5, maxOpenPositions: 999 });
-  assert.equal(c.riskPerTradePct, 25);
+  assert.equal(c.riskPerTradePct, 50);
   assert.equal(c.intervalMinutes, 1);
   assert.equal(c.stopLossPct, 5);
   assert.equal(c.maxOpenPositions, 20);

@@ -24,8 +24,18 @@ const ANALYST_SHORTLIST = 18;
 
 let monitorTimer: NodeJS.Timeout | null = null;
 let scanTimer: NodeJS.Timeout | null = null;
+let kickoffTimer: NodeJS.Timeout | null = null;
 let scanning = false;
 let monitoring = false;
+
+/**
+ * Bumped by `stop()`. Clearing the timers only prevents the *next* cycle — a scan already in
+ * flight can be parked on an LLM call for half a minute and would then go on to buy, long
+ * after the operator pressed Stop. A cycle captures this at its start and abandons itself at
+ * every await that precedes a spend once the number moves. A manual "Scan now" while stopped
+ * never sees it move, so that path still works.
+ */
+let stopGen = 0;
 
 // ── scan ──────────────────────────────────────────────────────────────
 
@@ -117,9 +127,14 @@ export async function syncLiveBalance(): Promise<boolean> {
   }
 }
 
+/** True once `stop()` ran after the current cycle began. Only one scan runs at a time. */
+let scanGen = 0;
+const aborted = () => stopGen !== scanGen;
+
 async function runScan(): Promise<void> {
   if (scanning) return;
   scanning = true;
+  scanGen = stopGen;
   store.busy = true;
   const cfg = store.config;
 
@@ -184,6 +199,10 @@ async function runScan(): Promise<void> {
 
     const decision = await askAnalyst(shortlist, cfg.maxOpenPositions - store.positions.length);
     if (!decision) return;
+    if (aborted()) {
+      store.log("info", "Cycle abandoned — stopped while the analyst was thinking.");
+      return;
+    }
     if (decision.notes) store.log("model", decision.notes);
 
     // Model-requested exits first — freeing a slot may enable an entry below.
@@ -295,6 +314,13 @@ async function openPosition(
   const risk = securityRisk(sec, cfg.chain);
   if (risk) {
     store.log("warn", `${c.symbol} skipped — ${risk}.`);
+    return;
+  }
+
+  // Last checkpoint before the swap: the security call above is another network round trip,
+  // and this is the only place in the process that opens a position.
+  if (aborted()) {
+    store.log("info", `${c.symbol} not bought — stopped mid-cycle.`);
     return;
   }
 
@@ -432,6 +458,7 @@ function checkDailyLoss(): void {
 async function runMonitor(): Promise<void> {
   if (monitoring || !store.positions.length) return;
   monitoring = true;
+  const gen = stopGen;
   try {
     const cfg = store.config;
     // One read for the whole wallet, before anything else: in live mode GMGN's copy of the
@@ -439,6 +466,9 @@ async function runMonitor(): Promise<void> {
     const holdings = cfg.mode === "live" ? await readHoldings(cfg) : null;
 
     for (const p of [...store.positions]) {
+      // One price read per position, so a tick over a full book outlives a Stop by a while.
+      // Whatever is left of it belongs to a run the operator ended.
+      if (stopGen !== gen) break;
       let info: Record<string, any> | null = null;
       try {
         info = await gmgn.tokenInfo(p.chain, p.address);
@@ -488,6 +518,27 @@ function short(e: unknown): string {
 
 // ── lifecycle ─────────────────────────────────────────────────────────
 
+/**
+ * The only place timers are installed, and it clears whatever is already there first.
+ * `start()` reaches this after an await in live mode, so two clicks on Start can both get
+ * here: without the clear, the second set of handles overwrites the first and that first
+ * pair keeps firing forever — an agent the dashboard calls stopped, still scanning and
+ * buying, with no handle left to cancel it.
+ */
+function arm(monitorSeconds: number, intervalMinutes: number, firstScanMs: number | null): void {
+  disarm();
+  monitorTimer = setInterval(() => void runMonitor(), monitorSeconds * 1000);
+  scanTimer = setInterval(() => void runScan(), intervalMinutes * 60_000);
+  if (firstScanMs !== null) kickoffTimer = setTimeout(() => void runScan(), firstScanMs);
+}
+
+function disarm(): void {
+  if (monitorTimer) clearInterval(monitorTimer);
+  if (scanTimer) clearInterval(scanTimer);
+  if (kickoffTimer) clearTimeout(kickoffTimer);
+  monitorTimer = scanTimer = kickoffTimer = null;
+}
+
 export async function start(): Promise<{ ok: boolean; error?: string }> {
   if (store.runState === "running") return { ok: true };
   const cfg = store.config;
@@ -525,18 +576,15 @@ export async function start(): Promise<{ ok: boolean; error?: string }> {
     `Started on ${cfg.chain.toUpperCase()} in ${cfg.mode} mode — scanning every ${cfg.intervalMinutes}m, checking exits every ${cfg.monitorSeconds}s.`,
   );
 
-  monitorTimer = setInterval(() => void runMonitor(), cfg.monitorSeconds * 1000);
-  scanTimer = setInterval(() => void runScan(), cfg.intervalMinutes * 60_000);
+  arm(cfg.monitorSeconds, cfg.intervalMinutes, 1500);
   store.nextRunAt = Date.now() + 1500;
-  setTimeout(() => void runScan(), 1500);
   store.push();
   return { ok: true };
 }
 
 export function stop(keepState = false): void {
-  if (monitorTimer) clearInterval(monitorTimer);
-  if (scanTimer) clearInterval(scanTimer);
-  monitorTimer = scanTimer = null;
+  stopGen++;
+  disarm();
   if (!keepState && store.runState === "running") {
     store.runState = "stopped";
     store.log("info", "Stopped. Open positions are left untouched — close them from the dashboard if you want out.");
@@ -548,10 +596,7 @@ export function stop(keepState = false): void {
 /** Restart the timers so a changed interval takes effect immediately. */
 export function reschedule(): void {
   if (store.runState !== "running") return;
-  if (monitorTimer) clearInterval(monitorTimer);
-  if (scanTimer) clearInterval(scanTimer);
-  monitorTimer = setInterval(() => void runMonitor(), store.config.monitorSeconds * 1000);
-  scanTimer = setInterval(() => void runScan(), store.config.intervalMinutes * 60_000);
+  arm(store.config.monitorSeconds, store.config.intervalMinutes, null);
   store.nextRunAt = Date.now() + store.config.intervalMinutes * 60_000;
   store.push();
 }

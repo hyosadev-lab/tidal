@@ -81,3 +81,20 @@ test("a risk envelope that can never clear the floor is refused at start", async
   if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
   else process.env.OPENROUTER_API_KEY = saved;
 });
+
+test("stopping before the first scan fires cancels it", async () => {
+  const saved = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "test";
+  store.updateConfig({ ...DEFAULT_CONFIG, mode: "paper" });
+  store.reset();
+
+  const r = await start();
+  assert.equal(r.ok, true);
+  stop();
+  await new Promise((done) => setTimeout(done, 2500));
+  assert.equal(store.cycleCount, 0, "the 1.5s kick-off scan must not survive a stop");
+
+  store.reset();
+  if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = saved;
+});
