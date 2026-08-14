@@ -263,6 +263,10 @@ function renderPositions(s) {
   tb.innerHTML = s.positions
     .map((p) => {
       const pl = p.entryPrice > 0 ? ((p.lastPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
+      // Green means "worth selling", not "above the entry price": the round trip's fees are
+      // already spent and the number that clears them is the position's own, since the flat
+      // chain fee is a bigger share of a small one. The printed % is still the price move.
+      const be = p.breakevenPct ?? 0;
       const value = p.qty * p.lastPrice;
       const peak = p.entryPrice > 0 ? ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
       // A position carries the exit plan it was opened with, so show that plan rather than a
@@ -292,7 +296,7 @@ function renderPositions(s) {
         <td class="r" title="${esc(`${price(p.entryPrice)} → ${price(p.lastPrice)}`)}">${usd(value)}</td>
         <td class="r">${mcapAt(p, p.entryPrice)}</td>
         <td class="r">${mcapAt(p, p.lastPrice)}</td>
-        <td class="r ${tone(pl)}">${pct(pl)}</td>
+        <td class="r ${tone(pl - be)}" title="${esc(be ? `break-even at +${be.toFixed(1)}% — fees on both legs` : "")}">${pct(pl)}</td>
         <td class="r muted">${pct(peak)}</td>
         <td class="r muted">${dur(Date.now() - p.openedAt)}</td>
         <td class="plan">${state}</td>

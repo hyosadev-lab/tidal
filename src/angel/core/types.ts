@@ -151,6 +151,14 @@ export type Position = {
   /** Model conviction 0–100 at entry. */
   conviction: number;
   stopLossPct: number;
+  /**
+   * % this position must gain from `entryPrice` before selling it returns what it cost — the
+   * entry's fees are already paid and inside `costUsd`, the exit's are not. Measured at entry
+   * off the real fill, so it carries the flat chain fee this position's size had to swallow:
+   * the same trade is a 2% hurdle at $200 and a 12% one at $5. Absent on older positions,
+   * which read as 0 and behave as they always did.
+   */
+  breakevenPct?: number;
   /** Pool depth at entry — a later drain is an exit signal. */
   entryLiquidityUsd: number;
   /**

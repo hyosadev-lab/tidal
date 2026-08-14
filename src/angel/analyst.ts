@@ -1,6 +1,8 @@
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
-import { entryStrategy, pnlPct } from "./core/plan.ts";
+import { breakevenPct } from "./core/config.ts";
+import { entryStrategy, pnlPct, positionSize } from "./core/plan.ts";
+import * as gmgn from "./exec/market.ts";
 import { store } from "./state/store.ts";
 import type { Candidate, Decision, StrategyRule, TradeConfig } from "./core/types.ts";
 
@@ -33,8 +35,19 @@ function describeRule(r: StrategyRule): string {
 }
 
 /** The exit half of the brief — it changes shape with `fixedStrategy`. */
-function exitPlan(cfg: TradeConfig): string {
-  const time = `  time stop: flat out after ${cfg.timeStopMinutes}m if the position is under +${cfg.timeStopMinPnlPct}%`;
+function exitPlan(cfg: TradeConfig, hurdle: number): string {
+  const time = `  time stop: flat out after ${cfg.timeStopMinutes}m if the position is under +${Math.max(cfg.timeStopMinPnlPct, hurdle).toFixed(1)}%`;
+
+  const cost = `
+COST OF A ROUND TRIP: +${hurdle.toFixed(1)}%
+
+That is what a position of the size you are sizing has to gain, from the price it entered at,
+before selling it returns what it cost — routing fee, pool fee, price impact and the flat chain
+fee on both the buy and the sell. It is not a target, it is zero. A rule that exits below it
+books a loss whatever it is called, so the engine lifts any profit target underneath it up to it,
+and folds together rungs too small to be worth their own transaction (each rung is a separate
+swap paying that flat fee again). Write the plan already knowing this: an entry only makes sense
+on a token you expect to clear +${hurdle.toFixed(1)}% by enough to be worth the risk of the stop.`;
 
   if (!cfg.fixedStrategy)
     return `Exits (you design them per entry, then they are mechanical — the engine runs them every
@@ -62,7 +75,8 @@ set \`sl\` from how much of the position you are willing to lose if it simply ne
 
 Clamps: a stop deeper than -${cfg.stopLossPct}% becomes -${cfg.stopLossPct}%, a plan with no stop gets one at -${cfg.stopLossPct}%, and an
 omitted or unusable \`strategy\` falls back to the operator's default plan.
-${time}`;
+${time}
+${cost}`;
 
   // Describe what a position will actually be opened with, appended stop included.
   const plan = entryStrategy(cfg, null);
@@ -76,10 +90,11 @@ ${time}`;
 
   return `Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement):
 ${rows}
-${time}`;
+${time}
+${cost}`;
 }
 
-function systemPrompt(cfg: TradeConfig): string {
+function systemPrompt(cfg: TradeConfig, hurdle: number): string {
   // Deliberately mechanical: what is true, what is enforced, what to return. The *policy* —
   // what makes a token worth buying — is the operator's, and arrives in `userPromptBlock`
   // from the dashboard. Adding house strategy back here quietly overrules that box.
@@ -123,7 +138,7 @@ Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your convictio
 
 An empty \`entries\` array is a valid answer.
 
-${exitPlan(cfg)}
+${exitPlan(cfg, hurdle)}
 
 EARLY EXITS
 
@@ -194,11 +209,22 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
     thesis: p.thesis,
   }));
 
+  // The round trip on a position the size this cycle would open. Priced off the same constants
+  // the engine bills against, so the number in the prompt is the one the exit rules enforce; the
+  // native price is the cached one a buy asks for anyway, and a chain that will not answer just
+  // leaves the percentage half standing.
+  const typicalSize = positionSize(cfg, store.equity, store.cash, 70);
+  const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
+  const hurdle = breakevenPct(cfg.chain, typicalSize, nativeUsd);
+
   const brief = {
     chain: cfg.chain,
     mode: cfg.mode,
     equity_usd: Number(store.equity.toFixed(2)),
     cash_usd: Number(store.cash.toFixed(2)),
+    typical_position_usd: Number(typicalSize.toFixed(2)),
+    /** What that position must gain before it is worth anything. See COST OF A ROUND TRIP. */
+    breakeven_pct: Number(hurdle.toFixed(1)),
     free_slots: slots,
     day_pnl_pct: Number(store.stats().dayPnlPct.toFixed(2)),
     open_positions: book,
@@ -234,7 +260,7 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
     })),
   };
 
-  const system = systemPrompt(cfg) + userPromptBlock(cfg);
+  const system = systemPrompt(cfg, hurdle) + userPromptBlock(cfg);
   // The model is env-dependent and fails silently — a missing .env falls back to the
   // default. Print it so two hosts behaving differently can be compared from the log alone.
   store.log("model", `Analyst: ${process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5 (default)"}`);

@@ -2,8 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   AUTO_SLIPPAGE_CAP,
+  breakevenPct,
   DEFAULT_CONFIG,
   gasReserve,
+  minLegUsd,
+  netOfFees,
   liveReady,
   minPosition,
   refineQuery,
@@ -21,12 +24,13 @@ import {
   score,
   securityRisk,
   toCandidate,
+  viableStrategy,
 } from "./plan.ts";
 import { isDust } from "./plan.ts";
 import { extractJson } from "../analyst.ts";
 import { trenchesFilters } from "../exec/market.ts";
 import { bands, median, spearman } from "../calibrate.ts";
-import { conditionOrders, netOfFees, recordExternalSell } from "../exec/broker.ts";
+import { conditionOrders, recordExternalSell } from "../exec/broker.ts";
 import { candidate, position } from "./fixtures.ts";
 import type { Candidate, StrategyRule, TradeConfig } from "./types.ts";
 
@@ -608,6 +612,55 @@ test("a paper leg pays a percentage and a flat chain fee, so small legs cost mor
   assert.ok(cost(200) < 2.5, "the flat fee disappears into a big leg");
   assert.ok(cost(5) > 10, "and eats a small one — this is the whole reason a $5 rung loses money");
   assert.equal(netOfFees("sol", 0.3, SOL), 0, "a leg worth less than its own fee nets nothing");
+});
+
+test("break-even is the round trip, and the flat fee makes it worse the smaller the position", () => {
+  const SOL = 75;
+  const big = breakevenPct("sol", 500, SOL);
+  const small = breakevenPct("sol", 20, SOL);
+  assert.ok(big > 4 && big < 6, `a $500 position clears on the percentage half alone, got ${big}`);
+  assert.ok(small > 8, `a $20 one has to carry $0.90 of chain fees too, got ${small}`);
+  // Measured against the live quote in the same units: $20 in, $20.65 out of the wallet.
+  assert.ok(Math.abs(breakevenPct("sol", 20, SOL, 20.65) - 7.9) < 0.5);
+});
+
+test("the exit plan is repriced to what the fees allow", () => {
+  const minLeg = minLegUsd("sol", 75); // $9
+  // A target under the hurdle is lifted to it; a ttp's arm is lifted by its own giveback, since
+  // peak × (1 - dd) is where it actually sells.
+  const lifted = viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 9, minLeg, 500);
+  assert.deepEqual(lifted, [{ kind: "tp", at: 9, sell: 100 }]);
+  const [ttp] = viableStrategy([{ kind: "ttp", at: 20, dd: 12, sell: 100 }], 9, minLeg, 500);
+  assert.equal(ttp?.at, 23.9, "arming at +20 and giving back 12 would have sold at +5.6");
+
+  // A $20 position cannot afford a rung that nets $6.40 — it folds into the one above it.
+  const merged = viableStrategy(
+    [{ kind: "tp", at: 60, sell: 20 }, { kind: "tp", at: 150, sell: 30 }, { kind: "sl", at: -25, sell: 100 }],
+    9,
+    minLeg,
+    20,
+  );
+  assert.deepEqual(merged, [{ kind: "tp", at: 150, sell: 50 }, { kind: "sl", at: -25, sell: 100 }]);
+
+  // When no rung is big enough the ladder collapses to the single leg it could afford.
+  const collapsed = viableStrategy([{ kind: "tp", at: 20, sell: 10 }, { kind: "tp", at: 30, sell: 10 }], 9, minLeg, 20);
+  assert.deepEqual(collapsed, [{ kind: "tp", at: 30, sell: 20 }]);
+
+  // The same plan on a position ten times the size keeps every rung it was written with.
+  const kept = viableStrategy([{ kind: "tp", at: 60, sell: 20 }, { kind: "tp", at: 150, sell: 30 }], 9, minLeg, 200);
+  assert.equal(kept.length, 2);
+});
+
+test("a trailing rule cannot fire below break-even, where it would book a loss", () => {
+  const rules: StrategyRule[] = [{ kind: "tsl", dd: 10, sell: 100 }];
+  // +5% on the price, 12.5% off the peak — the giveback is reached, the round trip is not.
+  const p = position({ strategy: rules, peakPrice: 0.0012, lastPrice: 0.00105, breakevenPct: 9 });
+  assert.equal(evaluateExit(p, DEFAULT_CONFIG), null);
+  assert.match(
+    evaluateExit(position({ ...p, breakevenPct: 0 }), DEFAULT_CONFIG)?.reason ?? "",
+    /trailing stop loss/,
+    "the same tick on a position with no fees to clear is a real trail",
+  );
 });
 
 test("dust: a remainder under $1 or under 2% of the buy closes the position", () => {

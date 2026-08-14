@@ -41,6 +41,61 @@ export const TIP_FEE: Record<Chain, number> = { sol: 0.001, bsc: 0.0002, base: 0
 /** Native units kept aside for gas. Without this, a full deployment cannot pay to exit. */
 export const GAS_RESERVE: Record<Chain, number> = { sol: 0.02, bsc: 0.004, base: 0.0015, eth: 0.004 };
 
+/**
+ * ── What a swap costs, and what that implies ──────────────────────────
+ *
+ * Two halves, and only the first one scales: `SWAP_FEE_PCT` is a percentage of the trade (GMGN's
+ * 1% routing fee plus the pool's own — ~1.2% on pump_amm), `TX_COST_NATIVE` is flat per
+ * transaction (priority fee, MEV tip, account rent) whatever the trade is worth. 0.006 SOL is
+ * ~$0.45: 0.2% of a $200 leg and 9% of a $5 one. That second half is why small positions and long
+ * take-profit ladders lose money on their own, and it is invisible to any model expressed in
+ * percentages — which is what this file's numbers used to be.
+ *
+ * The Solana figures are measured off `sol_cost` in a live `/v1/trade/quote`; the other chains
+ * carry the priority + tip their own swaps send.
+ */
+export const SWAP_FEE_PCT: Record<Chain, number> = { sol: 2.2, bsc: 1.3, base: 1.3, eth: 1.3 };
+export const TX_COST_NATIVE: Record<Chain, number> = { sol: 0.006, bsc: 0.0007, base: 0.00003, eth: 0.0007 };
+
+/** A paper leg's two costs, applied to the USD crossing it: a percentage, then the flat tx fee. */
+export const netOfFees = (chain: Chain, gross: number, nativeUsd: number): number =>
+  Math.max(0, gross * (1 - SWAP_FEE_PCT[chain] / 100) - TX_COST_NATIVE[chain] * nativeUsd);
+
+/**
+ * How far a position has to rise from its entry price before selling it returns what it cost —
+ * the hurdle every exit rule is measured against. Pass `costUsd` once the buy has settled for the
+ * real figure; without it the entry leg is estimated from the same constants.
+ *
+ * Nothing below this line is profit-taking, whatever the rule is called: a take-profit at +5% on
+ * a 9% hurdle is a loss with a friendly name.
+ */
+export function breakevenPct(chain: Chain, valueUsd: number, nativeUsd: number, costUsd?: number): number {
+  if (!(valueUsd > 0)) return 0;
+  const fee = SWAP_FEE_PCT[chain] / 100;
+  const tx = TX_COST_NATIVE[chain] * nativeUsd;
+  const paid = costUsd && costUsd > 0 ? costUsd : valueUsd * (1 + fee) + tx;
+  return ((paid + tx) / (1 - fee) / valueUsd - 1) * 100;
+}
+
+/** Share of a leg the flat fee may eat before the leg is not worth submitting. */
+const MAX_LEG_FEE_PCT = 5;
+
+/**
+ * Smallest sale worth making as its own transaction. A take-profit ladder is not free: every rung
+ * is a separate swap paying the flat fee again, so a 4-rung plan on a $20 position spends ~$1.8
+ * to exit what a single sale exits for $0.45.
+ */
+export const minLegUsd = (chain: Chain, nativeUsd: number): number =>
+  (TX_COST_NATIVE[chain] * nativeUsd) / (MAX_LEG_FEE_PCT / 100);
+
+/**
+ * How far under water a buy may start before it is not worth opening. The round trip costs roughly
+ * twice this, so 8% means asking for a token that has to move ~16% to be worth anything. Checked
+ * against a real quote, so it is also the honest floor on position size: on SOL a $20 buy quotes
+ * ~4.6% and passes, a $5 buy ~12% and does not.
+ */
+export const MAX_ENTRY_COST_PCT = 8;
+
 export const EXPLORER: Record<Chain, string> = {
   sol: "https://solscan.io/tx/",
   bsc: "https://bscscan.com/tx/",

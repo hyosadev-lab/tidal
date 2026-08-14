@@ -263,7 +263,7 @@ export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
   // A position carrying its own rule set runs on those instead of the config's
   // stop / trail / ladder. The time stop below still applies either way.
   if (p.strategy?.length) {
-    const hit = ruleExit(p, pnlPct);
+    const hit = ruleExit(p, pnlPct, p.breakevenPct ?? 0);
     if (hit) return hit;
     return timeStop(p, cfg, pnlPct);
   }
@@ -296,10 +296,13 @@ export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
 
 function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | null {
   const ageMin = (Date.now() - p.openedAt) / 60_000;
-  if (ageMin >= cfg.timeStopMinutes && pnlPct < cfg.timeStopMinPnlPct)
+  // "Under +8% after three hours is not working" means nothing if +8% is under the round trip:
+  // on a small position the hurdle is the higher number and the one that decides.
+  const floor = Math.max(cfg.timeStopMinPnlPct, p.breakevenPct ?? 0);
+  if (ageMin >= cfg.timeStopMinutes && pnlPct < floor)
     return {
       percent: 100,
-      reason: `time stop — ${Math.round(ageMin)}m in and only ${pnlPct.toFixed(1)}%`,
+      reason: `time stop — ${Math.round(ageMin)}m in and only ${pnlPct.toFixed(1)}%, under the +${floor.toFixed(1)}% it has to clear`,
       kind: "time",
     };
   return null;
@@ -311,7 +314,7 @@ function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | n
  * from `peakPrice` rather than latched, so several trailing rules can coexist.
  * Trailing rules never fire underwater — that half of the range is the stop loss's.
  */
-function ruleExit(p: Position, pnlPct: number): ExitSignal | null {
+function ruleExit(p: Position, pnlPct: number, breakeven: number): ExitSignal | null {
   const rules = p.strategy ?? [];
   const peakPnl = p.entryPrice > 0 ? ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
   const giveback = p.peakPrice > 0 ? ((p.peakPrice - p.lastPrice) / p.peakPrice) * 100 : 0;
@@ -333,7 +336,10 @@ function ruleExit(p: Position, pnlPct: number): ExitSignal | null {
     // A trail only exits in profit: below break-even the position belongs to the stop loss.
     // Both trailing kinds, so the split stays the one the analyst is briefed on — a `ttp`
     // exempt from this fires underwater and shadows the stop exactly like a `tsl` would.
-    if (!live(i) || pnlPct <= 0) continue;
+    // Break-even is the round trip, not zero: a trail that fires at +5% against a 9% hurdle
+    // books a loss while calling itself profit protection, which is what this line always
+    // meant to prevent and could not, back when the fees were assumed away.
+    if (!live(i) || pnlPct <= breakeven) continue;
     if (r.kind === "tsl" && giveback >= (r.dd ?? Infinity))
       return sig(i, `trailing stop loss — gave back ${giveback.toFixed(1)}% from peak (still +${pnlPct.toFixed(1)}%)`);
     if (r.kind === "ttp" && peakPnl >= (r.at ?? Infinity) && giveback >= (r.dd ?? Infinity))
@@ -366,6 +372,53 @@ export function entryStrategy(cfg: TradeConfig, proposed: unknown): StrategyRule
   return capped.some((r) => r.kind === "sl")
     ? capped
     : [...capped, { kind: "sl" as const, at: -cfg.stopLossPct, sell: 100 }];
+}
+
+/**
+ * The same plan, priced. `entryStrategy` writes the shape; this is what the fees allow of it,
+ * applied once at entry when the position's size and the round-trip cost are both known.
+ *
+ * Two corrections, both of them the same fact seen from different ends:
+ *
+ * - A profit target below break-even is not a profit target. It is lifted to the hurdle — for a
+ *   `ttp` that means the arm level from which a `dd`% giveback still lands above it, since the
+ *   giveback is what the position actually exits at, not the arm.
+ * - A rung too small to be worth its own transaction is folded into the next one up. Each rung is
+ *   a separate swap paying the flat chain fee again, so a four-rung ladder on a small position
+ *   spends four times to leave what one sale would have left. Sizes are estimated at the price
+ *   that triggers the rung, which is the price it would actually sell at.
+ *
+ * `sl` and `tsl` pass through: a stop is not optional, and a rule with no target cannot be priced.
+ */
+export function viableStrategy(rules: StrategyRule[], breakeven: number, minLeg: number, usd: number): StrategyRule[] {
+  if (!rules.length || !(usd > 0)) return rules;
+  const out: StrategyRule[] = [];
+  let carry = 0;
+  let carriedTarget = 0;
+
+  for (const r of rules) {
+    if (r.kind !== "tp" && r.kind !== "ttp") {
+      out.push(r);
+      continue;
+    }
+    // A `ttp` exits at peak × (1 - dd), so the arm has to clear the hurdle by the giveback.
+    const floor = r.kind === "ttp" ? ((1 + breakeven / 100) / (1 - (r.dd ?? 0) / 100) - 1) * 100 : breakeven;
+    const at = Math.round(Math.max(r.at ?? 0, floor) * 10) / 10;
+    const sell = Math.min(100, r.sell + carry);
+    if (usd * (sell / 100) * (1 + at / 100) < minLeg) {
+      carry = sell;
+      carriedTarget = Math.max(carriedTarget, at);
+      continue;
+    }
+    carry = 0;
+    out.push({ ...r, at, sell });
+  }
+
+  // Whatever never grew big enough to sell on its own still needs somewhere to go: one rung at
+  // the highest target it reached, which is the ladder collapsing into the single leg it could
+  // afford all along.
+  if (carry > 0) out.push({ kind: "tp", at: carriedTarget, sell: carry });
+  return out;
 }
 
 /** Live risk checks against fresh token data for a position we already hold. */

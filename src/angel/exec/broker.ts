@@ -1,37 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { NATIVE, num, slippage } from "../core/config.ts";
+import { breakevenPct, MAX_ENTRY_COST_PCT, minLegUsd, NATIVE, netOfFees, num, slippage } from "../core/config.ts";
+import { viableStrategy } from "../core/plan.ts";
 import * as gmgn from "./market.ts";
 import type { store as Store } from "../state/store.ts";
-import type { Candidate, Chain, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
-
-/** Percentage cost of one leg: GMGN's 1% routing fee plus the pool's own (~1.2% on pump_amm). */
-const FEE_PCT: Record<Chain, number> = { sol: 2.2, bsc: 1.3, base: 1.3, eth: 1.3 };
-
-/**
- * Chain fees per transaction, native units: priority fee, MEV tip, account rent. This is the half
- * a percentage model misses, and the reason small positions bleed — 0.006 SOL is ~$0.45 whether
- * the trade is $200 or $5, so it costs 0.2% of the first and 9% of the second. The Solana figure
- * is measured off `sol_cost` in a live quote; the others are the priority + tip a swap sends.
- */
-const TX_COST_NATIVE: Record<Chain, number> = { sol: 0.006, bsc: 0.0007, base: 0.00003, eth: 0.0007 };
-
-/**
- * How far under water a buy is allowed to start. The round trip costs roughly twice this, so 8%
- * means asking for a token that has to move ~16% before the position is worth anything. On SOL a
- * $20 buy quotes ~4.6% and passes, a $5 buy ~12% and does not — which is the real floor on
- * position size, expressed where the number actually comes from instead of as a constant.
- */
-const MAX_ENTRY_COST_PCT = 8;
+import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
 
 /** Price impact a paper fill should expect, given trade size against pool depth. */
 function paperSlip(usd: number, liquidityUsd: number, cap: number): number {
   const impact = liquidityUsd > 0 ? (usd / liquidityUsd) * 100 : 2;
   return Math.min(cap, 0.4 + impact);
-}
-
-/** A paper leg's two costs, applied to the USD crossing it: a percentage, then the flat tx fee. */
-export function netOfFees(chain: Chain, gross: number, nativeUsd: number): number {
-  return Math.max(0, gross * (1 - FEE_PCT[chain] / 100) - TX_COST_NATIVE[chain] * nativeUsd);
 }
 
 function toSmallestUnit(amount: number, decimals: number): string {
@@ -145,6 +122,18 @@ export async function buy(
       };
   }
 
+  // What this position has to gain before it is worth anything, and the plan the fees allow of
+  // the one it was given: targets under the hurdle lifted to it, rungs too small to pay for
+  // their own transaction folded together. Priced before the branch, so live hands GMGN exactly
+  // the plan paper would have run.
+  const hurdle = breakevenPct(cfg.chain, quotedCost > 0 ? quote!.inUsd : usdAmount, nativeUsd, quotedCost);
+  const plan = viableStrategy(strategy, hurdle, minLegUsd(cfg.chain, nativeUsd), usdAmount);
+  if (plan.length !== strategy.length)
+    store.log(
+      "info",
+      `${c.symbol}: exit plan repriced — ${strategy.length} rules into ${plan.length}, break-even +${hurdle.toFixed(1)}% on $${usdAmount.toFixed(0)}.`,
+    );
+
   if (cfg.mode === "paper") {
     if (quote && quotedCost > 0) {
       // The quoted route, not a model of one. `outUsd` is what the tokens are worth on arrival,
@@ -174,7 +163,7 @@ export async function buy(
       antiMev: true,
       priorityFee: gas.priorityFee,
       tipFee: gas.tipFee,
-      conditionOrders: conditionOrders(cfg, strategy, stopLossPct),
+      conditionOrders: conditionOrders(cfg, plan, stopLossPct),
       sellRatioType: "buy_amount",
     });
     orderId = res.order_id;
@@ -219,12 +208,15 @@ export async function buy(
     lastPrice: fillPrice,
     peakPrice: fillPrice,
     realisedUsd: 0,
-    ...(strategy.length ? { strategy } : {}),
+    ...(plan.length ? { strategy: plan } : {}),
     filledRungs: [],
     trailArmed: false,
     thesis,
     conviction,
     stopLossPct,
+    // Re-measured off the fill that actually happened, so every exit rule from here on is
+    // checked against this position's own round trip rather than an average one.
+    breakevenPct: Number(breakevenPct(cfg.chain, qty * fillPrice, nativeUsd, spent).toFixed(2)),
     entryLiquidityUsd: c.liquidityUsd,
     // Priced off the fill, not off the scan: the candidate's own mcap/price pair gives the
     // supply, and the fill is what this position actually entered at. Keeping it consistent
