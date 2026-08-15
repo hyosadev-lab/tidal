@@ -54,6 +54,17 @@ async function gatherCandidates(): Promise<Candidate[]> {
       // A token surfacing in more than one feed is a mild confirmation, so keep both labels.
       if (prior) prior.source = `${prior.source}+${source}`;
       else seen.set(key, c);
+      // The 5m feed reports the same columns over a five-minute window, and nearly every row of
+      // it is also in the 1h feed — so keeping only the first row seen dropped exactly the
+      // numbers an acceleration test needs. Carry them alongside the hourly ones instead. On a
+      // row this feed alone surfaced there is no hourly baseline — both windows are then the
+      // same five minutes, and `seen_in` is what tells the analyst so.
+      if (source === "trending-5m") {
+        const t = prior ?? c;
+        t.buys5m = c.buys;
+        t.sells5m = c.sells;
+        t.volume5mUsd = c.volume1hUsd;
+      }
     }
   };
 
@@ -61,27 +72,33 @@ async function gatherCandidates(): Promise<Candidate[]> {
   // and an empty Refine means an unfiltered feed. That is the point — structural quality is
   // `score()`'s job and the operator's, so a hardcoded default here would be a gate wearing a
   // different name. Expect more noise per cycle when Refine is blank.
-  const feeds: Promise<void>[] = [
+  type Feed = [rows: Record<string, any>[], source: string];
+  const feeds: Promise<Feed>[] = [
     gmgn
       .trending(cfg.chain, { interval: "1h", limit: 50, refine: refineQuery(cfg.refine) })
-      .then((r) => add(r, "trending-1h"))
-      .catch((e) => {
+      .then((r): Feed => [r, "trending-1h"])
+      .catch((e): Feed => {
         store.log("warn", `Trending feed failed: ${short(e)}`);
+        return [[], "trending-1h"];
       }),
     gmgn
       .trending(cfg.chain, { interval: "5m", limit: 30, refine: refineQuery(cfg.refine) })
-      .then((r) => add(r, "trending-5m"))
-      .catch(() => undefined),
+      .then((r): Feed => [r, "trending-5m"])
+      .catch((): Feed => [[], "trending-5m"]),
   ];
   if (cfg.chain === "sol" || cfg.chain === "bsc")
     feeds.push(
       gmgn
         .trenches(cfg.chain, "completed", 40, refineQuery(cfg.refine, "trenches"))
-        .then((r) => add(r, "graduated"))
-        .catch(() => undefined),
+        .then((r): Feed => [r, "graduated"])
+        .catch((): Feed => [[], "graduated"]),
     );
 
-  await Promise.all(feeds);
+  // Fetched together, merged in a fixed order. `add` keeps the first row it sees for an address,
+  // so merging as they landed left a race deciding whether `volume1hUsd` held an hour or five
+  // minutes; the 1h feed goes first for that reason, and the 5m rows arrive knowing they are a
+  // second window on a row that already exists.
+  for (const [rows, source] of await Promise.all(feeds)) add(rows, source);
 
   const all = [...seen.values()];
   for (const c of all) {

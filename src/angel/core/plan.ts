@@ -50,6 +50,11 @@ export function toCandidate(r: Record<string, any>, source: string): Candidate {
     // pair is here to show the buy/sell split, not to be compared across sources.
     buys: numOrNull(r.buys ?? r.buys_24h),
     sells: numOrNull(r.sells ?? r.sells_24h),
+    // Filled by the sweep from the 5m feed's copy of this row, not from the row in hand:
+    // a single row only ever carries one window.
+    buys5m: null,
+    sells5m: null,
+    volume5mUsd: null,
     // Only trenches reports it, and only over 24h.
     netBuyUsd: numOrNull(r.net_buy_24h),
     holderCount: num(r.holder_count),

@@ -100,6 +100,15 @@ export type Candidate = {
   change1mPct: number | null;
   buys: number | null;
   sells: number | null;
+  /**
+   * The same three measures over the last five minutes, off the `trending` 5m feed the sweep
+   * already fetches. `null` where that feed did not carry the row. Against the unsuffixed
+   * fields above they are the only acceleration test in the brief: a token trading at a flat
+   * rate shows ~1/12 of its hourly counts in a five-minute window.
+   */
+  buys5m: number | null;
+  sells5m: number | null;
+  volume5mUsd: number | null;
   netBuyUsd: number | null;
   devHoldRate: number | null;
   insiderRate: number | null;

@@ -521,6 +521,21 @@ test("feed-specific fields map by name, and what a feed omits stays null", () =>
   assert.equal(toCandidate({ address: "x", price: 1, dev_team_hold_rate: 0 }, "t").devHoldRate, 0, "a real zero survives");
 });
 
+// The 5m feed sends the same column names as the 1h one, measured over five minutes — one row
+// only ever carries one window, so `toCandidate` reads it into the unsuffixed fields and the
+// sweep is what copies it across onto the hourly row. Anything that changes that mapping
+// silently turns the brief's acceleration reading into an hour compared against itself.
+test("a 5m feed row lands in the unsuffixed fields, and the 5m ones stay blank", () => {
+  const row = { address: "abc", price: 1, buys: 206, sells: 117, volume: 11_802 };
+  const c = toCandidate(row, "trending-5m");
+  assert.deepEqual([c.buys, c.sells, c.volume1hUsd], [206, 117, 11_802]);
+  assert.deepEqual(
+    [c.buys5m, c.sells5m, c.volume5mUsd],
+    [null, null, null],
+    "a row cannot fill its own second window — gatherCandidates copies these onto the 1h row",
+  );
+});
+
 // ── minimum position size ─────────────────────────────────────────────
 
 test("the position floor tracks the chain's round-trip cost", () => {

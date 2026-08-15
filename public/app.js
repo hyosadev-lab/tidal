@@ -335,6 +335,12 @@ const devHolds = (c) =>
     ? '<span class="kv-na">—</span>'
     : `${(c.devHoldRate * 100).toFixed(c.devHoldRate > 0 && c.devHoldRate < 0.1 ? 1 : 0)}%`;
 
+/** Buys/sells over the last five minutes. Blank when the 5m feed did not carry the row. */
+const flow5m = (c) =>
+  c.buys5m === null || c.buys5m === undefined
+    ? '<span class="kv-na">—</span>'
+    : `${c.buys5m}/${c.sells5m ?? "—"}`;
+
 // The card shows the five figures the old table did. The scan collects more — buys/sells,
 // net buy, dev hold rate, insider and bundler rates, fees, 1m change — and the analyst gets
 // all of it in the brief; it is only kept off the dashboard to keep a row scannable.
@@ -372,6 +378,7 @@ function renderCandidates(s) {
           ${kv("mcap", usd(c.marketCapUsd, 0), "market cap")}
           ${kv("liq", usd(c.liquidityUsd, 0), "pool liquidity — what you can actually exit into")}
           ${kv("volume", usd(c.volume1hUsd, 0), "trading volume over the row's own window: 1h on the rank feeds, 24h on graduated")}
+          ${kv("5m flow", flow5m(c), "buys/sells in the last five minutes, from the 5m feed. A token trading at a steady rate prints about a twelfth of its hourly count here — more is accelerating, less is a move already past. Blank means the 5m feed did not carry this row")}
           ${kv("1h", pct(c.change1hPct, 0), "price change over the last hour", tone(c.change1hPct))}
           ${kv("top 10", `${(c.top10HolderRate * 100).toFixed(0)}%`, "share of supply held by the ten largest wallets")}
           ${kv("dev holds", devHolds(c), "share of supply the deployer still holds. A blank means this row's feed does not report it — not that the dev is out")}

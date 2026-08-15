@@ -112,6 +112,12 @@ WHAT IS ALREADY TRUE (facts about the machine around you, not advice)
 
 The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. An address that is not in it has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot.
 
+WINDOWS
+
+A row carries two of them, and the whole difference between a move starting and a move ending is in the comparison. \`buys_5m\`, \`sells_5m\` and \`volume_5m_usd\` cover the last five minutes. \`buys\`, \`sells\`, \`swaps_1h\` and \`volume_1h_usd\` cover the row's own longer window — an hour on the rank feed, 24h on a \`graduated\` row. A token trading at a steady rate therefore prints about a twelfth of its hourly counts in the five-minute window; materially more than that is flow accelerating, materially less is a move that has already passed. Read the buy/sell split the same way — 5m buys against 5m sells says what is happening now, the hourly pair says what happened over the move as a whole.
+
+The blank rules still apply: null is "this row's feeds did not report it", not zero. A row whose \`seen_in\` is \`trending-5m\` alone has no hourly baseline — its two windows are the same five minutes, so it carries no acceleration reading at all.
+
 TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
 
 \`gmgn_token_info\` and \`gmgn_token_kline\` deep-dive a candidate that is already in the brief. They answer different questions and neither substitutes for the other:
@@ -244,6 +250,11 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
       // It is a blank, not a zero — do not read a missing insider rate as a clean one.
       buys: c.buys,
       sells: c.sells,
+      // Same three measures over the last five minutes, from the 5m feed the sweep fetches
+      // anyway. Null where that feed did not carry the row — see WINDOWS in the system prompt.
+      buys_5m: c.buys5m,
+      sells_5m: c.sells5m,
+      volume_5m_usd: c.volume5mUsd === null ? null : Math.round(c.volume5mUsd),
       net_buy_usd: c.netBuyUsd,
       holders: c.holderCount,
       smart_money: c.smartDegenCount,
