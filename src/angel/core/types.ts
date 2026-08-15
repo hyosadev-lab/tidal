@@ -195,6 +195,14 @@ export type Trade = {
   /** Realised PnL in USD — sells only. */
   pnlUsd?: number;
   pnlPct?: number;
+  /**
+   * Sells only: the highest the position ever showed, as of this leg — so the last leg of a
+   * position carries its whole life. **Gross of fees**, unlike `pnlPct` right above it, because
+   * it exists to be read against the exit rules, which are gross too. That is the comparison it
+   * is here for: a rung that never filled is only evidence about the plan if you can see whether
+   * the price ever reached it.
+   */
+  peakPct?: number;
   reason: string;
   txHash?: string;
   orderId?: string;

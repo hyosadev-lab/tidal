@@ -592,6 +592,24 @@ test("an exit booked from the wallet prices the slice at the last seen price", (
   assert.equal(r.trade.pnlPct, -20);
 });
 
+// Every sell path builds its trade through the same `sellTrade`, so pinning one pins all three.
+// The two percentages on a sell are deliberately on different bases and the pairing below is the
+// whole reason the field exists: booked -20% net, but the price had been +50% gross at some point,
+// which is what says the plan missed an exit rather than the token never offering one.
+test("a sell records how far the position ever got, gross, beside what it booked net", () => {
+  const p = position({ qty: 100_000, originalQty: 100_000, costUsd: 100, entryPrice: 0.001, lastPrice: 0.0008, peakPrice: 0.0015 });
+  const r = recordExternalSell(DEFAULT_CONFIG, p, 40_000, "gmgn stop");
+  assert.ok(!("error" in r));
+  if ("error" in r) return;
+  assert.equal(r.trade.peakPct, 50, "peak 0.0015 against an entry of 0.001");
+  assert.equal(r.trade.pnlPct, -20, "and the booked figure is still net, still negative");
+
+  // A position that never traded above its entry reports 0, not a missing field.
+  const flat = position({ qty: 100_000, originalQty: 100_000, costUsd: 100, entryPrice: 0.001, lastPrice: 0.0008, peakPrice: 0.001 });
+  const f = recordExternalSell(DEFAULT_CONFIG, flat, 40_000, "gmgn stop");
+  assert.equal("error" in f ? null : f.trade.peakPct, 0);
+});
+
 test("the whole exit plan travels to GMGN, trailing rules included", () => {
   const rules: StrategyRule[] = [
     { kind: "tp", at: 35, sell: 40 },
@@ -639,13 +657,15 @@ test("break-even is the round trip, and the flat fee makes it worse the smaller 
   assert.ok(Math.abs(breakevenPct("sol", 20, SOL, 20.65) - 7.9) < 0.5);
 });
 
+// Noise floor held at 0 throughout: this test is about the fee half, and mixing the two would
+// stop it failing for the reason it is named after. The noise half is the test below it.
 test("the exit plan is repriced to what the fees allow", () => {
   const minLeg = minLegUsd("sol", 75); // $9
   // A target under the hurdle is lifted to it; a ttp's arm is lifted by its own giveback, since
   // peak × (1 - dd) is where it actually sells.
-  const lifted = viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 9, minLeg, 500);
+  const lifted = viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 9, minLeg, 500, 0);
   assert.deepEqual(lifted, [{ kind: "tp", at: 9, sell: 100 }]);
-  const [ttp] = viableStrategy([{ kind: "ttp", at: 20, dd: 12, sell: 100 }], 9, minLeg, 500);
+  const [ttp] = viableStrategy([{ kind: "ttp", at: 20, dd: 12, sell: 100 }], 9, minLeg, 500, 0);
   assert.equal(ttp?.at, 23.9, "arming at +20 and giving back 12 would have sold at +5.6");
 
   // A $20 position cannot afford a rung that nets $6.40 — it folds into the one above it.
@@ -654,16 +674,52 @@ test("the exit plan is repriced to what the fees allow", () => {
     9,
     minLeg,
     20,
+    0,
   );
   assert.deepEqual(merged, [{ kind: "tp", at: 150, sell: 50 }, { kind: "sl", at: -25, sell: 100 }]);
 
   // When no rung is big enough the ladder collapses to the single leg it could afford.
-  const collapsed = viableStrategy([{ kind: "tp", at: 20, sell: 10 }, { kind: "tp", at: 30, sell: 10 }], 9, minLeg, 20);
+  const collapsed = viableStrategy([{ kind: "tp", at: 20, sell: 10 }, { kind: "tp", at: 30, sell: 10 }], 9, minLeg, 20, 0);
   assert.deepEqual(collapsed, [{ kind: "tp", at: 30, sell: 20 }]);
 
   // The same plan on a position ten times the size keeps every rung it was written with.
-  const kept = viableStrategy([{ kind: "tp", at: 60, sell: 20 }, { kind: "tp", at: 150, sell: 30 }], 9, minLeg, 200);
+  const kept = viableStrategy([{ kind: "tp", at: 60, sell: 20 }, { kind: "tp", at: 150, sell: 30 }], 9, minLeg, 200, 0);
   assert.equal(kept.length, 2);
+});
+
+// The shape every position in the first live session ran on: a hurdle around +9%, a 25% stop, and
+// an analyst rung at +17-21% that filled on the first or second candle. The floor is what stops
+// that plan from being written, so this pins the exact rungs that session lost money on.
+test("a profit target inside the stop distance is lifted out of the noise", () => {
+  const minLeg = minLegUsd("sol", 75); // $9
+  const plan = (rules: StrategyRule[], usd = 500) => viableStrategy(rules, 9, minLeg, usd, 25);
+
+  assert.deepEqual(
+    plan([{ kind: "tp", at: 20.5, sell: 45 }, { kind: "sl", at: -25, sell: 100 }]),
+    [{ kind: "tp", at: 25, sell: 45 }, { kind: "sl", at: -25, sell: 100 }],
+    "risking 25% to make 20.5% is inverted before fees",
+  );
+
+  // A ttp sells a giveback below its arm, so clearing a 25% floor takes an arm well above 25.
+  const [ttp] = plan([{ kind: "ttp", at: 27, dd: 25, sell: 100 }]);
+  assert.equal(ttp?.at, 66.7, "arm 27 with dd 25 would have sold at -4.8%");
+  assert.ok((1 + (ttp?.at ?? 0) / 100) * 0.75 - 1 >= 0.25 - 1e-9, "and the lifted arm does clear the floor");
+
+  // The floor lifts, it never lowers: a target already above it is left exactly as written.
+  assert.deepEqual(plan([{ kind: "tp", at: 150, sell: 30 }]), [{ kind: "tp", at: 150, sell: 30 }]);
+
+  // Neither stop kind is touched — raising those would deepen a loss, not protect a gain.
+  assert.deepEqual(
+    plan([{ kind: "sl", at: -12, sell: 100 }, { kind: "tsl", dd: 30, sell: 100 }]),
+    [{ kind: "sl", at: -12, sell: 100 }, { kind: "tsl", dd: 30, sell: 100 }],
+  );
+
+  // The higher floor binds, whichever it is: on a position small enough that the round trip costs
+  // more than the stop distance, fees are what the target is lifted to.
+  assert.deepEqual(
+    viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 30, minLeg, 500, 25),
+    [{ kind: "tp", at: 30, sell: 100 }],
+  );
 });
 
 test("a trailing rule cannot fire below break-even, where it would book a loss", () => {

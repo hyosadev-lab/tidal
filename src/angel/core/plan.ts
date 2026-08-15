@@ -321,7 +321,7 @@ function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | n
  */
 function ruleExit(p: Position, pnlPct: number, breakeven: number): ExitSignal | null {
   const rules = p.strategy ?? [];
-  const peakPnl = p.entryPrice > 0 ? ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
+  const peakPnl = peakPct(p);
   const giveback = p.peakPrice > 0 ? ((p.peakPrice - p.lastPrice) / p.peakPrice) * 100 : 0;
   const live = (i: number) => !p.filledRungs.includes(i);
   const sig = (i: number, reason: string): ExitSignal => ({ percent: rules[i]!.sell, reason, kind: `rule${i}` });
@@ -383,31 +383,54 @@ export function entryStrategy(cfg: TradeConfig, proposed: unknown): StrategyRule
  * The same plan, priced. `entryStrategy` writes the shape; this is what the fees allow of it,
  * applied once at entry when the position's size and the round-trip cost are both known.
  *
- * Two corrections, both of them the same fact seen from different ends:
+ * Three corrections, and the first two are the same fact seen from different ends:
  *
  * - A profit target below break-even is not a profit target. It is lifted to the hurdle — for a
  *   `ttp` that means the arm level from which a `dd`% giveback still lands above it, since the
  *   giveback is what the position actually exits at, not the arm.
+ * - A target inside the token's own noise is not a target either, and this is the more expensive
+ *   half. A rung is filled the moment the price *touches* it, so on an asset whose median
+ *   one-minute high-low range is ~25%, a rung at +20% is reached by the first or second candle
+ *   whatever the thesis said. Measured over one session of this agent's own trades: six of six
+ *   positions carrying a rung filled it within 18-206 seconds, three of them minutes before the
+ *   rest of the position ran to +43%, +182% and +30%, the other three minutes before it stopped
+ *   out. `noiseFloor` is the operator's stop distance, which is the one statement of "how far
+ *   this token moves against me before I call it wrong" already in the config — a plan that
+ *   risks that much to make less than that much is inverted before fees are counted.
  * - A rung too small to be worth its own transaction is folded into the next one up. Each rung is
  *   a separate swap paying the flat chain fee again, so a four-rung ladder on a small position
  *   spends four times to leave what one sale would have left. Sizes are estimated at the price
  *   that triggers the rung, which is the price it would actually sell at.
  *
  * `sl` and `tsl` pass through: a stop is not optional, and a rule with no target cannot be priced.
+ * Neither wants the noise floor either, for different reasons. Lifting an `sl` would deepen a loss
+ * rather than protect a gain. A `tsl` is structurally immune to the problem the floor exists for —
+ * it triggers on a giveback from the peak, and a noise spike moves the peak rather than the
+ * trigger — while flooring it would be actively harmful: a trail held back from firing at +20%
+ * does not get a better exit later, it falls through to the stop, since a giveback only ever
+ * widens. That is also why `ruleExit`'s guard on the trailing rules stays at break-even.
  */
-export function viableStrategy(rules: StrategyRule[], breakeven: number, minLeg: number, usd: number): StrategyRule[] {
+export function viableStrategy(
+  rules: StrategyRule[],
+  breakeven: number,
+  minLeg: number,
+  usd: number,
+  noiseFloor: number,
+): StrategyRule[] {
   if (!rules.length || !(usd > 0)) return rules;
   const out: StrategyRule[] = [];
   let carry = 0;
   let carriedTarget = 0;
+  // Both floors are "below this a rule does not do what it is named"; the higher one binds.
+  const base = Math.max(breakeven, Math.max(0, noiseFloor));
 
   for (const r of rules) {
     if (r.kind !== "tp" && r.kind !== "ttp") {
       out.push(r);
       continue;
     }
-    // A `ttp` exits at peak × (1 - dd), so the arm has to clear the hurdle by the giveback.
-    const floor = r.kind === "ttp" ? ((1 + breakeven / 100) / (1 - (r.dd ?? 0) / 100) - 1) * 100 : breakeven;
+    // A `ttp` exits at peak × (1 - dd), so the arm has to clear the floor by the giveback.
+    const floor = r.kind === "ttp" ? ((1 + base / 100) / (1 - (r.dd ?? 0) / 100) - 1) * 100 : base;
     const at = Math.round(Math.max(r.at ?? 0, floor) * 10) / 10;
     const sell = Math.min(100, r.sell + carry);
     if (usd * (sell / 100) * (1 + at / 100) < minLeg) {
@@ -454,4 +477,13 @@ export function isDust(p: Position): boolean {
 
 export function pnlPct(p: Position): number {
   return p.entryPrice > 0 ? ((p.lastPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
+}
+
+/**
+ * The best the position ever showed, on the same gross-of-fees basis every exit rule is measured
+ * on. One definition for both readers on purpose: the rules fire off this number, and the trade
+ * record stores it so a fill can be checked against the target that was actually reachable.
+ */
+export function peakPct(p: Position): number {
+  return p.entryPrice > 0 ? ((p.peakPrice - p.entryPrice) / p.entryPrice) * 100 : 0;
 }

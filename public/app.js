@@ -401,12 +401,22 @@ function renderTrades(s) {
         <td class="sym">${esc(t.symbol)}${t.mode === "live" ? "" : ' <span class="pill">paper</span>'}</td>
         <td class="r">${price(t.price)}</td>
         <td class="r">${usd(t.usd)}</td>
-        <td class="r ${t.side === "sell" ? tone(t.pnlUsd) : "flat"}">${t.side === "sell" ? `${usd(t.pnlUsd)} · ${pct(t.pnlPct)}` : "—"}</td>
+        <td class="r ${t.side === "sell" ? tone(t.pnlUsd) : "flat"}" title="${esc(peakNote(t))}">${t.side === "sell" ? `${usd(t.pnlUsd)} · ${pct(t.pnlPct)}` : "—"}</td>
         <td class="why">${esc(t.reason)}</td>
       </tr>`,
     )
     .join("");
 }
+
+/**
+ * Hover text on a sell's PnL: how far the position ever got, against what it booked. The peak is
+ * gross of fees and the PnL is net, so they are not the same scale — the point is only whether a
+ * higher exit was ever on the table. Blank on trades booked before the field existed.
+ */
+const peakNote = (t) =>
+  t.side !== "sell" || t.peakPct === undefined
+    ? ""
+    : `peaked at ${pct(t.peakPct)} from entry before this exit (gross of fees; the PnL beside it is net)`;
 
 const logRow = (l) =>
   `<div class="log-row log-${l.level}"><span class="log-t">${clock(l.at)}</span><span class="log-m">${esc(l.msg)}${l.detail ? `<em>${esc(l.detail)}</em>` : ""}</span></div>`;

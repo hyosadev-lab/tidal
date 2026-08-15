@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { breakevenPct, MAX_ENTRY_COST_PCT, minLegUsd, NATIVE, netOfFees, num, slippage } from "../core/config.ts";
-import { viableStrategy } from "../core/plan.ts";
+import { peakPct, viableStrategy } from "../core/plan.ts";
 import * as gmgn from "./market.ts";
 import type { store as Store } from "../state/store.ts";
 import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
@@ -122,16 +122,20 @@ export async function buy(
       };
   }
 
-  // What this position has to gain before it is worth anything, and the plan the fees allow of
-  // the one it was given: targets under the hurdle lifted to it, rungs too small to pay for
-  // their own transaction folded together. Priced before the branch, so live hands GMGN exactly
-  // the plan paper would have run.
+  // What this position has to gain before it is worth anything, and the plan the fees and the
+  // token's own volatility allow of the one it was given: targets under the hurdle or inside the
+  // stop distance lifted to it, rungs too small to pay for their own transaction folded together.
+  // Priced before the branch, so live hands GMGN exactly the plan paper would have run.
   const hurdle = breakevenPct(cfg.chain, quotedCost > 0 ? quote!.inUsd : usdAmount, nativeUsd, quotedCost);
-  const plan = viableStrategy(strategy, hurdle, minLegUsd(cfg.chain, nativeUsd), usdAmount);
-  if (plan.length !== strategy.length)
+  const plan = viableStrategy(strategy, hurdle, minLegUsd(cfg.chain, nativeUsd), usdAmount, cfg.stopLossPct);
+  // Logged whenever the plan changed shape *or* a target moved: the floor rewrites rungs silently
+  // otherwise, and the whole point of it is being able to see that it did.
+  if (plan.length !== strategy.length || plan.some((r, i) => r.at !== strategy[i]?.at))
     store.log(
       "info",
-      `${c.symbol}: exit plan repriced — ${strategy.length} rules into ${plan.length}, break-even +${hurdle.toFixed(1)}% on $${usdAmount.toFixed(0)}.`,
+      `${c.symbol}: exit plan repriced to a +${Math.max(hurdle, cfg.stopLossPct).toFixed(1)}% floor ` +
+        `(break-even +${hurdle.toFixed(1)}%, stop distance ${cfg.stopLossPct}%) on $${usdAmount.toFixed(0)} — ` +
+        `${strategy.map((r) => r.kind + (r.at ?? "")).join(" ")} → ${plan.map((r) => r.kind + (r.at ?? "")).join(" ")}.`,
     );
 
   if (cfg.mode === "paper") {
@@ -333,6 +337,7 @@ function sellTrade(
     usd: proceeds,
     pnlUsd,
     pnlPct: costBasis > 0 ? (pnlUsd / costBasis) * 100 : 0,
+    peakPct: peakPct(p),
     reason,
     ...(txHash ? { txHash } : {}),
     ...(orderId ? { orderId } : {}),
