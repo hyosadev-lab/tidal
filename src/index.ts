@@ -4,8 +4,6 @@ import { join, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { store } from "./angel/state/store.ts";
 import * as engine from "./angel/engine.ts";
-import { apiReady } from "./angel/exec/market.ts";
-import { liveReady } from "./angel/core/config.ts";
 
 const PUBLIC = join(fileURLToPath(new URL("..", import.meta.url)), "public");
 const PORT = Number(process.env.PORT ?? 3111);
@@ -67,20 +65,6 @@ function stream(req: IncomingMessage, res: ServerResponse): void {
   });
 }
 
-const READS: Record<string, () => unknown> = {
-  "/api/state": () => store.snapshot(),
-  "/api/health": async () => {
-    const live = liveReady(store.config);
-    return {
-      gmgnApi: await apiReady(),
-      openrouter: Boolean(process.env.OPENROUTER_API_KEY),
-      liveReady: live.ok,
-      liveReason: live.reason,
-      automatedTradesEnv: process.env.GMGN_ALLOW_AUTOMATED_TRADES === "1",
-    };
-  },
-};
-
 /** Every action answers `{ ok }`; false becomes a 400. */
 const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]: unknown }>> = {
   "/api/config": async (body) => {
@@ -136,9 +120,6 @@ const server = createServer(async (req, res) => {
   const path = new URL(req.url ?? "/", "http://localhost").pathname;
   try {
     if (path === "/api/stream") return stream(req, res);
-
-    const read = READS[path];
-    if (read) return json(res, 200, await read());
 
     const action = req.method === "POST" ? ACTIONS[path] : undefined;
     if (action) {

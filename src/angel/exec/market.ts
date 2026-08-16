@@ -27,16 +27,6 @@ const obj = (r: unknown): Record<string, any> => (r && typeof r === "object" ? (
 
 // ── read-only routes ──────────────────────────────────────────────────
 
-/** Cheapest authenticated route — proves the API key works. */
-export async function apiReady(): Promise<boolean> {
-  try {
-    await client().getUserInfo();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export type RankItem = Record<string, any>;
 
 /**
