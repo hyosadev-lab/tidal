@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { join, extname, normalize } from "node:path";
+import { join, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { store } from "./angel/state/store.ts";
 import * as engine from "./angel/engine.ts";
@@ -20,27 +20,24 @@ const MIME: Record<string, string> = {
 };
 
 function json(res: ServerResponse, code: number, body: unknown): void {
-  const s = JSON.stringify(body);
   res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-  res.end(s);
+  res.end(JSON.stringify(body));
 }
 
 async function readBody(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    size += chunk.length;
     if (size > 256 * 1024) throw new Error("body too large");
-    chunks.push(chunk as Buffer);
+    chunks.push(chunk);
   }
-  if (!chunks.length) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
 }
 
 async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> {
-  const rel = normalize(urlPath === "/" ? "/index.html" : urlPath).replace(/^(\.\.[/\\])+/, "");
-  const file = join(PUBLIC, rel);
-  if (!file.startsWith(PUBLIC)) {
+  const file = join(PUBLIC, urlPath === "/" ? "index.html" : urlPath);
+  if (!file.startsWith(PUBLIC + sep)) {
     res.writeHead(403).end("forbidden");
     return;
   }
@@ -53,101 +50,100 @@ async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> 
   }
 }
 
+function stream(req: IncomingMessage, res: ServerResponse): void {
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  const send = (ev: string, data: unknown) => void res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  send("snapshot", store.snapshot());
+  const unsub = store.subscribe(send);
+  const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
+  req.on("close", () => {
+    clearInterval(ping);
+    unsub();
+  });
+}
+
+const READS: Record<string, () => unknown> = {
+  "/api/state": () => store.snapshot(),
+  "/api/health": async () => {
+    const live = liveReady(store.config);
+    return {
+      gmgnApi: await apiReady(),
+      openrouter: Boolean(process.env.OPENROUTER_API_KEY),
+      liveReady: live.ok,
+      liveReason: live.reason,
+      automatedTradesEnv: process.env.GMGN_ALLOW_AUTOMATED_TRADES === "1",
+    };
+  },
+};
+
+/** Every action answers `{ ok }`; false becomes a 400. */
+const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]: unknown }>> = {
+  "/api/config": async (body) => {
+    const before = store.config;
+    const cfg = store.updateConfig(body ?? {});
+    if (cfg.intervalMinutes !== before.intervalMinutes || cfg.monitorSeconds !== before.monitorSeconds)
+      engine.reschedule();
+    if (cfg.mode !== before.mode) store.log("info", `Mode switched to ${cfg.mode}.`);
+    if (cfg.chain !== before.chain) store.log("info", `Chain switched to ${cfg.chain.toUpperCase()}.`);
+    // Live sizing is the wallet's, not the paper bankroll's. Without this the dashboard
+    // shows the paper number until the next scan — and that number is what the operator
+    // reads before deciding whether to start the agent at all.
+    if (cfg.mode === "live" && (cfg.mode !== before.mode || cfg.chain !== before.chain))
+      await engine.syncLiveBalance();
+    // Paper equity and wallet equity are different pots of money, so the yardsticks that
+    // compare them — day PnL, drawdown, the loss halt — start again on a mode switch.
+    if (cfg.mode !== before.mode) store.rebase();
+    store.push();
+    return { ok: true, config: cfg };
+  },
+
+  "/api/start": async (body) => {
+    if (body?.config) store.updateConfig(body.config);
+    return engine.start();
+  },
+
+  "/api/stop": async () => {
+    engine.stop();
+    return { ok: true };
+  },
+
+  "/api/scan": async () => {
+    void engine.scanNow();
+    return { ok: true };
+  },
+
+  "/api/close": async (body) => engine.manualClose(String(body?.id ?? ""), Number(body?.percent ?? 100)),
+
+  "/api/reset": async () => {
+    engine.stop();
+    store.reset();
+    // A cleared ledger re-seeds from the paper bankroll. In live that is the wrong pot:
+    // without this the fresh baseline sits at $1000 against a wallet worth a fraction of
+    // it, and the first cycle halts on the daily loss cap.
+    if (store.config.mode === "live") await engine.syncLiveBalance();
+    store.rebase();
+    store.push();
+    return { ok: true };
+  },
+};
+
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const path = url.pathname;
-
+  const path = new URL(req.url ?? "/", "http://localhost").pathname;
   try {
-    // ── live updates ────────────────────────────────────────────────
-    if (path === "/api/stream") {
-      res.writeHead(200, {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
-      });
-      const send = (ev: string, data: unknown) => {
-        res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
-      };
-      send("snapshot", store.snapshot());
-      const unsub = store.subscribe(send);
-      const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
-      req.on("close", () => {
-        clearInterval(ping);
-        unsub();
-      });
-      return;
-    }
+    if (path === "/api/stream") return stream(req, res);
 
-    if (path === "/api/state") return json(res, 200, store.snapshot());
+    const read = READS[path];
+    if (read) return json(res, 200, await read());
 
-    if (path === "/api/health") {
-      const live = liveReady(store.config);
-      return json(res, 200, {
-        gmgnApi: await apiReady(),
-        openrouter: Boolean(process.env.OPENROUTER_API_KEY),
-        liveReady: live.ok,
-        liveReason: live.reason,
-        automatedTradesEnv: process.env.GMGN_ALLOW_AUTOMATED_TRADES === "1",
-      });
-    }
-
-    if (req.method === "POST") {
-      const body = await readBody(req);
-
-      if (path === "/api/config") {
-        const before = store.config;
-        const cfg = store.updateConfig(body ?? {});
-        if (cfg.intervalMinutes !== before.intervalMinutes || cfg.monitorSeconds !== before.monitorSeconds)
-          engine.reschedule();
-        if (cfg.mode !== before.mode) store.log("info", `Mode switched to ${cfg.mode}.`);
-        if (cfg.chain !== before.chain) store.log("info", `Chain switched to ${cfg.chain.toUpperCase()}.`);
-        // Live sizing is the wallet's, not the paper bankroll's. Without this the dashboard
-        // shows the paper number until the next scan — and that number is what the operator
-        // reads before deciding whether to start the agent at all.
-        if (cfg.mode === "live" && (cfg.mode !== before.mode || cfg.chain !== before.chain))
-          await engine.syncLiveBalance();
-        // Paper equity and wallet equity are different pots of money, so the yardsticks that
-        // compare them — day PnL, drawdown, the loss halt — start again on a mode switch.
-        if (cfg.mode !== before.mode) store.rebase();
-        store.push();
-        return json(res, 200, { ok: true, config: cfg });
-      }
-
-      if (path === "/api/start") {
-        if (body?.config) store.updateConfig(body.config);
-        const r = await engine.start();
-        return json(res, r.ok ? 200 : 400, r);
-      }
-
-      if (path === "/api/stop") {
-        engine.stop();
-        return json(res, 200, { ok: true });
-      }
-
-      if (path === "/api/scan") {
-        void engine.scanNow();
-        return json(res, 200, { ok: true });
-      }
-
-      if (path === "/api/close") {
-        const r = await engine.manualClose(String(body?.id ?? ""), Number(body?.percent ?? 100));
-        return json(res, r.ok ? 200 : 400, r);
-      }
-
-      if (path === "/api/reset") {
-        engine.stop();
-        store.reset();
-        // A cleared ledger re-seeds from the paper bankroll. In live that is the wrong pot:
-        // without this the fresh baseline sits at $1000 against a wallet worth a fraction of
-        // it, and the first cycle halts on the daily loss cap.
-        if (store.config.mode === "live") await engine.syncLiveBalance();
-        store.rebase();
-        store.push();
-        return json(res, 200, { ok: true });
-      }
-
-      return json(res, 404, { error: "unknown endpoint" });
+    const action = req.method === "POST" ? ACTIONS[path] : undefined;
+    if (action) {
+      const r = await action(await readBody(req));
+      return json(res, r.ok ? 200 : 400, r);
     }
 
     if (path.startsWith("/api/")) return json(res, 404, { error: "unknown endpoint" });
