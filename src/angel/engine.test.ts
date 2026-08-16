@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DEFAULT_CONFIG } from "./core/config.ts";
 import { store } from "./state/store.ts";
 import * as broker from "./exec/broker.ts";
-import { start, stop } from "./engine.ts";
+import { start, stop, _internals } from "./engine.ts";
 import { candidate } from "./core/fixtures.ts";
 import type { TradeConfig } from "./core/types.ts";
 
@@ -80,6 +80,29 @@ test("a risk envelope that can never clear the floor is refused at start", async
   store.reset();
   if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
   else process.env.OPENROUTER_API_KEY = saved;
+});
+
+// One source of truth for held / cooldown / blacklist: the eligible filter, the dashboard's
+// note and the pre-entry re-check all read it, so a drift here silently changes all three.
+test("unavailable() names why a gate-passing row still cannot be bought", async () => {
+  store.reset();
+  const { unavailable } = _internals;
+  const c = candidate({ address: "0xAbC" });
+
+  assert.equal(unavailable(c), "", "a clean row is buyable");
+
+  store.blacklist("0xabc");
+  assert.equal(unavailable(c), "blacklisted", "matched case-insensitively");
+
+  store.cooldown("0xabc", 60);
+  assert.match(unavailable(c), /cooldown/, "cooldown outranks the blacklist");
+
+  const bought = await broker.buy(store, cfg, c, 100, "t", 80, 25);
+  if ("error" in bought) return assert.fail("buy failed");
+  store.addPosition(bought.position);
+  assert.equal(unavailable(c), "already held", "holding it outranks both");
+
+  store.reset();
 });
 
 test("stopping before the first scan fires cancels it", async () => {

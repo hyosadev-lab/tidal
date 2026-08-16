@@ -20,6 +20,9 @@ import type { Candidate, Decision, StrategyRule, TradeConfig } from "./core/type
 /** Deep-dive lookups the analyst may spend per cycle. Shares GMGN's bucket with the sweep. */
 const LOOKUP_BUDGET = 6;
 
+/** Both lookups are mandatory per entry, so the budget is also the cap on entries per cycle. */
+const FINALISTS = Math.floor(LOOKUP_BUDGET / 2);
+
 // ── the brief ─────────────────────────────────────────────────────────
 //
 // What the analyst is told, in full. It lives here rather than in `plan.ts` because it is
@@ -107,7 +110,7 @@ ${cost}`;
     ? plan.map((r) => `  ${describeRule(r)}`).join("\n")
     : [
         `  hard stop-loss at -${cfg.stopLossPct}%`,
-        cfg.takeProfit.map((r, i) => `  rung ${i + 1}: sell ${r.sell}% of the original size at +${r.at}%`).join("\n"),
+        ...cfg.takeProfit.map((r, i) => `  rung ${i + 1}: sell ${r.sell}% of the original size at +${r.at}%`),
         `  trailing stop arms at +${cfg.trailArmPct}%, then exits on a ${cfg.trailGivebackPct}% giveback from peak`,
       ].join("\n");
 
@@ -153,7 +156,7 @@ Work in two passes:
 1. Shortlist from the brief alone. It costs nothing, and it is where you narrow ${cfg.maxOpenPositions > 1 ? "a dozen-odd rows" : "the list"} down to the few you would actually buy.
 2. Deep-dive those finalists before committing. **Every token you put in \`entries\` must have had BOTH \`gmgn_token_info\` and \`gmgn_token_kline\` pulled on it this cycle.** Not one or the other — the chart tells you whether the move is real, the profile tells you who is behind it, and an entry is a claim about both.
 
-That is 2 calls per finalist against a budget of ${LOOKUP_BUDGET}, so the budget covers ${Math.floor(LOOKUP_BUDGET / 2)} entries per cycle. Shortlist to ${Math.floor(LOOKUP_BUDGET / 2)} before you spend anything. If you would rather enter fewer positions and look harder at each, that is a good trade; entering more by looking at none is not. Should the budget run out before you finished a token, either drop it or say plainly in its \`thesis\` which lookup you never got.
+That is 2 calls per finalist against a budget of ${LOOKUP_BUDGET}, so the budget covers ${FINALISTS} entries per cycle. Shortlist to ${FINALISTS} before you spend anything. If you would rather enter fewer positions and look harder at each, that is a good trade; entering more by looking at none is not. Should the budget run out before you finished a token, either drop it or say plainly in its \`thesis\` which lookup you never got.
 
 Do not survey the whole list, do not re-check what the brief already states, and do not spend the budget on rows you have already decided against. Every call is paid out of the same rate limit the sweep runs on, so a cycle that burns it on browsing degrades the next cycle's candidate list. Once it is spent every further call just says so; decide on what you have then. A number neither the brief nor a lookup carries is a stated blank, not something to guess at.
 
@@ -234,7 +237,7 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
     rungs_filled: p.filledRungs.length,
     // The plan this one is actually running on — it was written for this token, and may
     // look nothing like the next row's.
-    exit_plan: (p.strategy ?? []).map((r, i) => (p.filledRungs.includes(i) ? `[filled] ${describeRule(r)}` : describeRule(r))),
+    exit_plan: (p.strategy ?? []).map((r, i) => `${p.filledRungs.includes(i) ? "[filled] " : ""}${describeRule(r)}`),
     thesis: p.thesis,
   }));
 

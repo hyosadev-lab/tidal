@@ -30,7 +30,7 @@ import { isDust } from "./plan.ts";
 import { extractJson } from "../analyst.ts";
 import { trenchesFilters } from "../exec/market.ts";
 import { bands, median, spearman } from "../calibrate.ts";
-import { conditionOrders, recordExternalSell } from "../exec/broker.ts";
+import { conditionOrders, recordExternalSell, settle } from "../exec/broker.ts";
 import { candidate, position } from "./fixtures.ts";
 import type { Candidate, StrategyRule, TradeConfig } from "./types.ts";
 
@@ -634,6 +634,25 @@ test("a plan without a stop gets one, and no rules falls back to the config ladd
   assert.equal(legacy.filter((o) => o.order_type === "profit_stop").length, DEFAULT_CONFIG.takeProfit.length);
   assert.equal(legacy.filter((o) => o.order_type === "profit_stop_trace").length, 1, "the config trail travels too");
   assert.equal(legacy.filter((o) => o.order_type === "loss_stop").length, 1);
+});
+
+// Both live legs book their fill through this. Reading a failed swap as a fill is the worst
+// bug in the file: the position would exist in the ledger and nowhere else.
+test("a settled swap yields its report, a failed one an error", async () => {
+  // No order_id, so nothing is polled — waitForOrder is only reached for an order that landed.
+  const ok = await settle("sol", { status: "confirmed", hash: "0xabc", report: { price_usd: 1 } }, "swap");
+  assert.deepEqual(ok, { report: { price_usd: 1 }, hash: "0xabc" });
+
+  for (const status of ["failed", "expired", "FAILED"]) {
+    const bad = await settle("sol", { status, error_status: "slippage" }, "sell");
+    assert.equal("error" in bad ? bad.error : null, `sell ${status.toLowerCase()}: slippage`);
+  }
+
+  const noReason = await settle("sol", { status: "failed" }, "swap");
+  assert.match("error" in noReason ? noReason.error : "", /unknown$/);
+
+  const bare = await settle("sol", {}, "swap");
+  assert.deepEqual(bare, { report: {}, hash: undefined }, "no status is not a failure");
 });
 
 test("a paper leg pays a percentage and a flat chain fee, so small legs cost more", () => {

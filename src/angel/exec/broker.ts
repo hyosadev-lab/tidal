@@ -3,7 +3,7 @@ import { breakevenPct, MAX_ENTRY_COST_PCT, minLegUsd, NATIVE, netOfFees, num, sl
 import { peakPct, viableStrategy } from "../core/plan.ts";
 import * as gmgn from "./market.ts";
 import type { store as Store } from "../state/store.ts";
-import type { Candidate, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
+import type { Candidate, Chain, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
 
 /** Price impact a paper fill should expect, given trade size against pool depth. */
 function paperSlip(usd: number, liquidityUsd: number, cap: number): number {
@@ -16,6 +16,23 @@ function toSmallestUnit(amount: number, decimals: number): string {
   const [whole = "0", frac = ""] = amount.toFixed(Math.min(decimals, 18)).split(".");
   const padded = (frac + "0".repeat(decimals)).slice(0, decimals);
   return (BigInt(whole) * 10n ** BigInt(decimals) + BigInt(padded || "0")).toString();
+}
+
+/**
+ * Wait for a submitted swap to land, then hand back the fill report. `waitForOrder` polls until
+ * GMGN calls the order settled one way or the other, so a failed status here is a failed trade
+ * and not a read that gave up; an order with no id never made it that far and answers for itself.
+ */
+export async function settle(
+  chain: Chain,
+  res: gmgn.SwapResult,
+  verb: string,
+): Promise<{ report: Record<string, any>; hash?: string } | { error: string }> {
+  const settled = res.order_id ? await gmgn.waitForOrder(chain, res.order_id) : res;
+  const status = (settled.status ?? "").toLowerCase();
+  if (["failed", "expired"].includes(status))
+    return { error: `${verb} ${status}: ${settled.error_status ?? settled.error_code ?? "unknown"}` };
+  return { report: settled.report ?? {}, hash: settled.hash };
 }
 
 export type ConditionOrder = {
@@ -90,13 +107,6 @@ export async function buy(
   const now = Date.now();
   const id = randomUUID();
 
-  let fillPrice = c.priceUsd;
-  let qty = 0;
-  let spent = usdAmount;
-  let txHash: string | undefined;
-  let orderId: string | undefined;
-  let strategyOrderId: string | undefined;
-
   const native = NATIVE[cfg.chain];
   // One call for the native price and the current fees — the swap needs both, and paper prices
   // its own fees off the same numbers. Cached for 30s, so a cycle asks once.
@@ -138,6 +148,14 @@ export async function buy(
         `${strategy.map((r) => r.kind + (r.at ?? "")).join(" ")} → ${plan.map((r) => r.kind + (r.at ?? "")).join(" ")}.`,
     );
 
+  // Filled in by whichever branch runs — the initialisers are what paper's unquoted path keeps.
+  let fillPrice = c.priceUsd;
+  let qty = 0;
+  let spent = usdAmount;
+  let txHash: string | undefined;
+  let orderId: string | undefined;
+  let strategyOrderId: string | undefined;
+
   if (cfg.mode === "paper") {
     if (quote && quotedCost > 0) {
       // The quoted route, not a model of one. `outUsd` is what the tokens are worth on arrival,
@@ -172,12 +190,10 @@ export async function buy(
     });
     orderId = res.order_id;
     strategyOrderId = res.strategy_order_id;
-    const settled = res.order_id ? await gmgn.waitForOrder(cfg.chain, res.order_id) : res;
-    const status = (settled.status ?? "").toLowerCase();
-    if (["failed", "expired"].includes(status))
-      return { error: `swap ${status}: ${settled.error_status ?? settled.error_code ?? "unknown"}` };
+    const fill = await settle(cfg.chain, res, "swap");
+    if ("error" in fill) return fill;
 
-    const rep = settled.report ?? {};
+    const rep = fill.report;
     const outDec = num(rep.output_token_decimals, 9);
     qty = num(rep.output_amount) / 10 ** outDec;
     fillPrice = num(rep.price_usd) || c.priceUsd;
@@ -190,7 +206,7 @@ export async function buy(
     // there the gap rides along as an estimate; without it the basis stays understated.
     const overhead = quote && quotedCost > quote.inUsd ? quotedCost - quote.inUsd : 0;
     spent = (inAmt > 0 ? inAmt * nativeUsd : usdAmount) + overhead;
-    txHash = settled.hash;
+    txHash = fill.hash;
   }
 
   // Both modes: cash is what is left to deploy, and equity is cash + exposure. Leaving it
@@ -294,17 +310,15 @@ export async function sell(
       antiMev: true,
     });
     orderId = res.order_id;
-    const settled = res.order_id ? await gmgn.waitForOrder(cfg.chain, res.order_id) : res;
-    const status = (settled.status ?? "").toLowerCase();
-    if (["failed", "expired"].includes(status))
-      return { error: `sell ${status}: ${settled.error_status ?? settled.error_code ?? "unknown"}` };
-    const rep = settled.report ?? {};
+    const fill = await settle(cfg.chain, res, "sell");
+    if ("error" in fill) return fill;
+    const rep = fill.report;
     fillPrice = num(rep.price_usd) || p.lastPrice;
     const outDec = num(rep.output_token_decimals, NATIVE[cfg.chain].decimals);
     const outAmt = num(rep.output_amount) / 10 ** outDec;
     const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
     proceeds = outAmt > 0 && nativeUsd > 0 ? outAmt * nativeUsd : qtySold * fillPrice;
-    txHash = settled.hash;
+    txHash = fill.hash;
   }
 
   store.cash += proceeds;

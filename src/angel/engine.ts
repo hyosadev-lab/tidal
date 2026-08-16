@@ -2,7 +2,6 @@ import { askAnalyst } from "./analyst.ts";
 import { gasReserve, liveReady, minPosition, num, refineQuery } from "./core/config.ts";
 import * as broker from "./exec/broker.ts";
 import * as gmgn from "./exec/market.ts";
-import { NATIVE_SYMBOL } from "./exec/market.ts";
 import {
   buyableSet,
   entryStrategy,
@@ -19,7 +18,7 @@ import {
 } from "./core/plan.ts";
 import { recordSoundings } from "./state/soundings.ts";
 import { store } from "./state/store.ts";
-import type { Candidate, Position, StrategyRule, Trade, TradeConfig } from "./core/types.ts";
+import type { Candidate, Decision, Position, StrategyRule, Trade, TradeConfig } from "./core/types.ts";
 
 /** How many of the eligible rows, best score first, are put in front of the analyst. */
 const ANALYST_SHORTLIST = 18;
@@ -38,6 +37,19 @@ let monitoring = false;
  * never sees it move, so that path still works.
  */
 let stopGen = 0;
+
+/** True once `stop()` ran after the current cycle began. Only one scan runs at a time. */
+let scanGen = 0;
+const aborted = () => stopGen !== scanGen;
+
+function short(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  return m.replace(/\s+/g, " ").slice(0, 220);
+}
+
+/** Coerce, then bound — the fallback is clamped too, so a config value can never widen a limit. */
+const clamp = (v: unknown, lo: number, hi: number, fallback: number): number =>
+  Math.min(hi, Math.max(lo, num(v, fallback)));
 
 // ── scan ──────────────────────────────────────────────────────────────
 
@@ -137,7 +149,7 @@ export async function syncLiveBalance(): Promise<boolean> {
     store.cash = spendable * px;
     store.log(
       "info",
-      `Wallet: ${bal.toFixed(4)} ${NATIVE_SYMBOL[cfg.chain]} · $${store.cash.toFixed(2)} spendable (${gasReserve(cfg)} held back for gas).`,
+      `Wallet: ${bal.toFixed(4)} ${gmgn.NATIVE_SYMBOL[cfg.chain]} · $${store.cash.toFixed(2)} spendable (${gasReserve(cfg)} held back for gas).`,
     );
     return true;
   } catch (e) {
@@ -146,9 +158,17 @@ export async function syncLiveBalance(): Promise<boolean> {
   }
 }
 
-/** True once `stop()` ran after the current cycle began. Only one scan runs at a time. */
-let scanGen = 0;
-const aborted = () => stopGen !== scanGen;
+/**
+ * Why a row that cleared the gates still cannot be bought, or "" when it can. Held / cooldown
+ * / blacklist live in the store and never travel on a Candidate — the eligible filter, the
+ * dashboard's note and the pre-entry re-check all ask this, so they cannot drift apart.
+ */
+function unavailable(c: Candidate): string {
+  if (store.position(c.address)) return "already held";
+  if (store.onCooldown(c.address)) return "on cooldown after a recent exit";
+  if (store.isBlacklisted(c.address)) return "blacklisted";
+  return "";
+}
 
 async function runScan(): Promise<void> {
   if (scanning) return;
@@ -166,18 +186,10 @@ async function runScan(): Promise<void> {
     store.push();
 
     const all = await gatherCandidates();
-    const held = new Set(store.positions.map((p) => p.address.toLowerCase()));
-    const eligible = all.filter(
-      (c) =>
-        !c.gateFailures.length &&
-        !held.has(c.address.toLowerCase()) &&
-        !store.onCooldown(c.address) &&
-        !store.isBlacklisted(c.address),
-    );
-    // Why each row did or did not reach the model, decided here rather than in the dashboard:
-    // held / cooldown / blacklist live in the store and never travel on a Candidate. Written
-    // before the soundings so calibrate can tell the rows the model actually saw from the ones
-    // that merely scored well.
+    const eligible = all.filter((c) => !c.gateFailures.length && !unavailable(c));
+    // Why each row did or did not reach the model, decided here rather than in the dashboard.
+    // Written before the soundings so calibrate can tell the rows the model actually saw from
+    // the ones that merely scored well.
     const shortlist = eligible.slice(0, ANALYST_SHORTLIST);
     const shown = new Set(shortlist.map((c) => c.address));
     for (const c of all)
@@ -185,13 +197,7 @@ async function runScan(): Promise<void> {
         ? ""
         : shown.has(c.address)
           ? "sent"
-          : store.position(c.address)
-            ? "already held"
-            : store.onCooldown(c.address)
-              ? "on cooldown after a recent exit"
-              : store.isBlacklisted(c.address)
-                ? "blacklisted"
-                : `ranked below the top ${ANALYST_SHORTLIST}`;
+          : unavailable(c) || `ranked below the top ${ANALYST_SHORTLIST}`;
     store.lastCandidates = all.slice(0, 40);
     // The whole sweep, not just the shown 40: `calibrate.ts` needs the rows nobody looked at
     // as much as the ones that scored well, or it only measures what we already believed.
@@ -225,12 +231,7 @@ async function runScan(): Promise<void> {
     if (decision.notes) store.log("model", decision.notes);
 
     // Model-requested exits first — freeing a slot may enable an entry below.
-    for (const x of decision.exits ?? []) {
-      const p = store.position(String(x.address ?? ""));
-      if (!p) continue;
-      const pct = Math.max(1, Math.min(100, num(x.percent, 100)));
-      await closePosition(p, pct, `analyst: ${String(x.reason ?? "thesis changed").slice(0, 140)}`);
-    }
+    await applyExits(decision.exits ?? []);
 
     const slots = cfg.maxOpenPositions - store.positions.length;
     if (slots <= 0) {
@@ -244,49 +245,7 @@ async function runScan(): Promise<void> {
     }
 
     store.phase = "entering";
-    // Re-checked here, not reused from the scan: the model's exits ran in between, and
-    // closing a position puts its address straight onto cooldown.
-    const blocked = new Set<string>();
-    for (const c of eligible)
-      if (store.position(c.address) || store.onCooldown(c.address) || store.isBlacklisted(c.address))
-        blocked.add(c.address.toLowerCase());
-    const byAddress = buyableSet(eligible, blocked);
-    let opened = 0;
-
-    for (const e of decision.entries ?? []) {
-      if (opened >= slots) break;
-      const c = byAddress.get(String(e.address ?? "").toLowerCase());
-      if (!c) {
-        store.log(
-          "warn",
-          // The address is what the lookup actually used, so log it: a mistyped or omitted
-          // one looks identical to a gate failure without it.
-          `Analyst picked ${String(e.symbol ?? "?").slice(0, 20)} (${String(e.address ?? "no address").slice(0, 24)}), which is not eligible — it failed a gate, is on cooldown, or was never scanned. Skipped.`,
-        );
-        continue;
-      }
-      if (store.position(c.address)) continue;
-      const conviction = Math.max(0, Math.min(100, num(e.conviction, c.score)));
-      if (conviction < 40) {
-        store.log("info", `${c.symbol} skipped — conviction ${conviction} below the 40 floor.`);
-        continue;
-      }
-      const mult = Math.max(0.5, Math.min(1.5, num(e.sizeMultiplier, 1)));
-      const stop = Math.max(10, Math.min(60, num(e.stopLossPct, cfg.stopLossPct)));
-      const strategy = entryStrategy(cfg, e.strategy);
-      const size = positionSize(cfg, store.equity, store.cash, conviction) * mult;
-      const floor = minPosition(cfg);
-      if (size < floor) {
-        const capped = store.cash * 0.9 < store.equity * (cfg.riskPerTradePct / 100) ? "cash" : "the risk budget";
-        store.log(
-          "warn",
-          `${c.symbol} skipped — position would be $${size.toFixed(2)}, under the $${floor} floor (limited by ${capped}; cash $${store.cash.toFixed(2)}).`,
-        );
-        continue;
-      }
-      await openPosition(c, size, String(e.thesis ?? "").slice(0, 400), conviction, stop, strategy);
-      opened++;
-    }
+    const opened = await openEntries(decision.entries ?? [], eligible, cfg, slots);
     if (!opened && decision.entries?.length === 0) store.log("info", "No entry this cycle.");
   } catch (e) {
     store.log("error", `Scan failed: ${short(e)}`);
@@ -298,6 +257,71 @@ async function runScan(): Promise<void> {
     store.markEquity();
     store.push();
   }
+}
+
+async function applyExits(exits: Decision["exits"]): Promise<void> {
+  for (const x of exits) {
+    const p = store.position(String(x.address ?? ""));
+    if (!p) continue;
+    await closePosition(p, clamp(x.percent, 1, 100, 100), `analyst: ${String(x.reason ?? "thesis changed").slice(0, 140)}`);
+  }
+}
+
+/** The model's picks, sized and bought. Returns how many positions were opened. */
+async function openEntries(
+  entries: Decision["entries"],
+  eligible: Candidate[],
+  cfg: TradeConfig,
+  slots: number,
+): Promise<number> {
+  // Re-checked here, not reused from the scan: the model's exits ran in between, and
+  // closing a position puts its address straight onto cooldown.
+  const blocked = new Set(eligible.filter(unavailable).map((c) => c.address.toLowerCase()));
+  const byAddress = buyableSet(eligible, blocked);
+  let opened = 0;
+
+  for (const e of entries) {
+    if (opened >= slots) break;
+    const c = byAddress.get(String(e.address ?? "").toLowerCase());
+    if (!c) {
+      store.log(
+        "warn",
+        // The address is what the lookup actually used, so log it: a mistyped or omitted
+        // one looks identical to a gate failure without it.
+        `Analyst picked ${String(e.symbol ?? "?").slice(0, 20)} (${String(e.address ?? "no address").slice(0, 24)}), which is not eligible — it failed a gate, is on cooldown, or was never scanned. Skipped.`,
+      );
+      continue;
+    }
+    if (store.position(c.address)) continue;
+
+    const conviction = clamp(e.conviction, 0, 100, c.score);
+    if (conviction < 40) {
+      store.log("info", `${c.symbol} skipped — conviction ${conviction} below the 40 floor.`);
+      continue;
+    }
+
+    const size = positionSize(cfg, store.equity, store.cash, conviction) * clamp(e.sizeMultiplier, 0.5, 1.5, 1);
+    const floor = minPosition(cfg);
+    if (size < floor) {
+      const capped = store.cash * 0.9 < store.equity * (cfg.riskPerTradePct / 100) ? "cash" : "the risk budget";
+      store.log(
+        "warn",
+        `${c.symbol} skipped — position would be $${size.toFixed(2)}, under the $${floor} floor (limited by ${capped}; cash $${store.cash.toFixed(2)}).`,
+      );
+      continue;
+    }
+
+    await openPosition(
+      c,
+      size,
+      String(e.thesis ?? "").slice(0, 400),
+      conviction,
+      clamp(e.stopLossPct, 10, 60, cfg.stopLossPct),
+      entryStrategy(cfg, e.strategy),
+    );
+    opened++;
+  }
+  return opened;
 }
 
 // ── execution ─────────────────────────────────────────────────────────
@@ -487,37 +511,7 @@ async function runMonitor(): Promise<void> {
       // One price read per position, so a tick over a full book outlives a Stop by a while.
       // Whatever is left of it belongs to a run the operator ended.
       if (stopGen !== gen) break;
-      let info: Record<string, any> | null = null;
-      try {
-        info = await gmgn.tokenInfo(p.chain, p.address);
-      } catch (e) {
-        store.log("warn", `Price refresh failed for ${p.symbol}: ${short(e)}`);
-        continue;
-      }
-      const price = num(info?.price?.price);
-      if (price > 0) {
-        p.lastPrice = price;
-        p.peakPrice = Math.max(p.peakPrice, price);
-      }
-
-      if (cfg.mode === "live" && (await reconcile(p, cfg, holdings))) continue;
-
-      const health = healthExit(p, info ?? {}, p.entryLiquidityUsd);
-      if (health) {
-        await closePosition(p, health.percent, health.reason);
-        continue;
-      }
-
-      const exit = evaluateExit(p, cfg);
-      // Live positions carry their whole plan on GMGN's side, so acting on a price rule here
-      // would be a second sell for an exit that is already placed. What is left is the two
-      // things GMGN was never told: the time stop, and the health exit above it.
-      if (exit && cfg.mode === "live" && exit.kind !== "time") continue;
-      if (exit) {
-        const rung = /^(?:tp|rule)(\d+)$/.exec(exit.kind);
-        if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
-        await closePosition(p, exit.percent, exit.reason);
-      }
+      await checkPosition(p, cfg, holdings);
     }
     store.save();
     store.markEquity();
@@ -529,9 +523,38 @@ async function runMonitor(): Promise<void> {
   }
 }
 
-function short(e: unknown): string {
-  const m = e instanceof Error ? e.message : String(e);
-  return m.replace(/\s+/g, " ").slice(0, 220);
+/** One position against one fresh price: mirror the wallet, then run the exit plan. */
+async function checkPosition(p: Position, cfg: TradeConfig, holdings: Map<string, number> | null): Promise<void> {
+  let info: Record<string, any> | null = null;
+  try {
+    info = await gmgn.tokenInfo(p.chain, p.address);
+  } catch (e) {
+    store.log("warn", `Price refresh failed for ${p.symbol}: ${short(e)}`);
+    return;
+  }
+  const price = num(info?.price?.price);
+  if (price > 0) {
+    p.lastPrice = price;
+    p.peakPrice = Math.max(p.peakPrice, price);
+  }
+
+  if (cfg.mode === "live" && (await reconcile(p, cfg, holdings))) return;
+
+  const health = healthExit(p, info ?? {}, p.entryLiquidityUsd);
+  if (health) {
+    await closePosition(p, health.percent, health.reason);
+    return;
+  }
+
+  const exit = evaluateExit(p, cfg);
+  if (!exit) return;
+  // Live positions carry their whole plan on GMGN's side, so acting on a price rule here
+  // would be a second sell for an exit that is already placed. What is left is the two
+  // things GMGN was never told: the time stop, and the health exit above it.
+  if (cfg.mode === "live" && exit.kind !== "time") return;
+  const rung = /^(?:tp|rule)(\d+)$/.exec(exit.kind);
+  if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
+  await closePosition(p, exit.percent, exit.reason);
 }
 
 // ── lifecycle ─────────────────────────────────────────────────────────
@@ -626,8 +649,8 @@ export async function scanNow(): Promise<void> {
 export async function manualClose(positionId: string, percent = 100): Promise<{ ok: boolean; error?: string }> {
   const p = store.positions.find((x) => x.id === positionId);
   if (!p) return { ok: false, error: "position not found" };
-  await closePosition(p, Math.max(1, Math.min(100, percent)), "closed by hand from the dashboard");
+  await closePosition(p, clamp(percent, 1, 100, 100), "closed by hand from the dashboard");
   return { ok: true };
 }
 
-export const _internals = { runScan, runMonitor, gatherCandidates };
+export const _internals = { runScan, runMonitor, gatherCandidates, unavailable };
