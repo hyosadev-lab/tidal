@@ -128,7 +128,7 @@ whose rule it can still obey.
 | `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
 
-Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
+Data flow per cycle: `gatherCandidates` (4 GMGN feeds, deduped) → `runGates` + `score` →
 top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) → `buyableSet` →
 `broker.buy/sell` → `store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs
 independently and never touches the LLM.
@@ -230,6 +230,15 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   those as `—` and the brief passes the null through. Buy/sell *volume* is on neither feed;
   only the counts and the trenches net figure are. Windows differ too: `volume1hUsd`/`swaps1h`
   fall back to the 24h columns on trenches rows, so they are not comparable across sources.
+- **The `smart-money` feed (signal type 12) carries no flow at all.** Measured live: `volume_*`,
+  `swaps_*`, `buys_*`, `sells_*` and `net_buy_*` are 0 on every window, and `smart_degen_count`
+  is 0 even though the signal *is* a smart-money buy — structure, holders and `renowned_count`
+  are populated. `gatherCandidates` merges it last and blanks `buys`/`sells`/`netBuyUsd` on a row
+  no other feed carried; `volume1hUsd`/`swaps1h` cannot go null on the type, so the brief tells
+  the analyst what a `smart-money` row's zeros mean. It is also the one feed Refine barely
+  reaches — the route takes market-cap bounds and nothing else the panel offers. And it returns
+  **one row per alert**, so the same token arrives several times: `add()` collapses repeated
+  source labels for that reason.
 - **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
   wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes
   `input_amount_bps` (basis points: 50% → `"5000"`) and `input_amount` is a `"0"` placeholder.

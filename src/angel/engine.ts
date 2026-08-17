@@ -63,9 +63,12 @@ async function gatherCandidates(): Promise<Candidate[]> {
       if (!c.address) continue;
       const key = c.address.toLowerCase();
       const prior = seen.get(key);
-      // A token surfacing in more than one feed is a mild confirmation, so keep both labels.
-      if (prior) prior.source = `${prior.source}+${source}`;
-      else seen.set(key, c);
+      // A token surfacing in more than one feed is a mild confirmation, so keep both labels —
+      // but only once each. The signal route returns one row per alert, so a token three smart
+      // wallets bought arrives three times, and appending blindly made one feed read as three.
+      if (prior) {
+        if (!prior.source.split("+").includes(source)) prior.source = `${prior.source}+${source}`;
+      } else seen.set(key, c);
       // The 5m feed reports the same columns over a five-minute window, and nearly every row of
       // it is also in the 1h feed — so keeping only the first row seen dropped exactly the
       // numbers an acceleration test needs. Carry them alongside the hourly ones instead. On a
@@ -77,6 +80,12 @@ async function gatherCandidates(): Promise<Candidate[]> {
         t.sells5m = c.sells;
         t.volume5mUsd = c.volume1hUsd;
       }
+      // The signal route reports no flow on any window — a row it alone surfaced would
+      // otherwise claim zero buyers rather than an unmeasured one. Blank what it does not
+      // measure; `volume_1h_usd` and `swaps_1h` cannot go null on the type, so the brief
+      // says what a `smart-money` row's zeros mean. A row another feed already carried
+      // keeps that feed's numbers and only picks up the label.
+      if (source === "smart-money" && !prior) c.buys = c.sells = c.netBuyUsd = null;
     }
   };
 
@@ -105,6 +114,19 @@ async function gatherCandidates(): Promise<Candidate[]> {
         .then((r): Feed => [r, "graduated"])
         .catch((): Feed => [[], "graduated"]),
     );
+  // Smart-money buys (signal type 12): an alert rather than a rank, and the only feed here
+  // that fires before a token is already trending — which is what `score()` calls its
+  // strongest prior. Cheap to add, thin to read: the route carries structure but no flow,
+  // so most of these rows score low on their own and earn their place by tagging a row the
+  // rank feeds also found. Types 6 (price spike) and 7 (ATH) are one array element away and
+  // deliberately left out — 7 is almost entirely minutes-old $1-liquidity launches.
+  // Refine reaches this route through market cap only; the rest of the panel does not apply.
+  feeds.push(
+    gmgn
+      .signals(cfg.chain, [{ signal_type: [12], mc_min: cfg.refine["marketCapMin"], mc_max: cfg.refine["marketCapMax"] }])
+      .then((r): Feed => [r, "smart-money"])
+      .catch((): Feed => [[], "smart-money"]),
+  );
 
   // Fetched together, merged in a fixed order. `add` keeps the first row it sees for an address,
   // so merging as they landed left a race deciding whether `volume1hUsd` held an hour or five

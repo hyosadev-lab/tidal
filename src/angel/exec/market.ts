@@ -1,5 +1,5 @@
 import { gmgnClient } from "../../gmgn/client.ts";
-import type { SwapParams } from "../../gmgn/endpoint.ts";
+import type { SwapParams, TokenSignalGroup } from "../../gmgn/endpoint.ts";
 import { NATIVE, num, PRIORITY_FEE, TIP_FEE } from "../core/config.ts";
 import type { Chain } from "../core/types.ts";
 
@@ -98,11 +98,23 @@ export async function trenches(
 }
 
 /**
- * Signal types: 12 = smart money buy, 6 = price spike, 7 = ATH.
+ * Alerts, not a ranking: GMGN pushes a row when something happens to a token.
+ * Signal types: 12 = smart money buy, 6 = price spike, 7 = ATH. One group per filter set,
+ * up to 50 rows each — `[{signal_type:[12]},{signal_type:[6]}]` returns 50 of each, where
+ * `[{signal_type:[12,6]}]` returns 50 mixed. Groups also take `mc_min`/`mc_max`.
+ *
+ * Measured on live rows, and the reason callers cannot treat these like a rank row: this
+ * route reports **no flow at all** — `volume_*`, `swaps_*`, `buys_*`, `sells_*` and
+ * `net_buy_*` come back 0 on every window, and `smart_degen_count` is 0 even on a
+ * smart-money signal. Structure (liquidity, holders, rates, dev) and `renowned_count` are
+ * populated; `trigger_mc` is the market cap when the signal fired.
+ *
  * Each row wraps the token payload in `data`; unwrap it so callers see one row shape.
  */
-export async function signals(chain: Chain, signalTypes?: number[]): Promise<RankItem[]> {
-  const groups = signalTypes?.length ? [{ signal_type: signalTypes }] : [{ signal_type: [12] }, { signal_type: [6, 7] }];
+export async function signals(
+  chain: Chain,
+  groups: TokenSignalGroup[] = [{ signal_type: [12] }, { signal_type: [6, 7] }],
+): Promise<RankItem[]> {
   const r = await client().getTokenSignalV2(chain, groups);
   return list(r, "list", "signals").map((s: any) => ({ ...(s.data ?? {}), signal_type: s.signal_type, trigger_mc: s.trigger_mc }));
 }
