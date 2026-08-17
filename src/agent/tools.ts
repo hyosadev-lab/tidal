@@ -1,9 +1,9 @@
 import type { Tool } from "./llm.ts";
 import type { Chain } from "../angel/core/types.ts";
-import { tokenInfo, kline } from "../angel/exec/market.ts";
+import { tokenInfo, kline, tokenTraders } from "../angel/exec/market.ts";
 
 /**
- * The analyst's tools: two read-only GMGN routes, for deep-diving a candidate that is already
+ * The analyst's tools: three read-only GMGN routes, for deep-diving a candidate that is already
  * in the cycle brief. `askAnalyst` takes them through `budgetedTools` — everything here is
  * paid out of the same process-wide rate limit the candidate sweep runs on.
  *
@@ -76,6 +76,54 @@ export const tools: Record<string, Tool> = {
       required: ["chain", "address"],
     },
     run: ({ chain, address }: { chain: Chain; address: string }) => tokenInfo(chain, address),
+  },
+
+  gmgn_token_traders: {
+    // Field list verified against a live `/v1/market/token_top_traders` response; same rule as
+    // above — nothing goes in this list that has not been seen come back.
+    description:
+      "The wallets behind the numbers: one row per wallet that traded this token, ranked. " +
+      "`gmgn_token_info` gives you aggregate rates (sniper hold, fresh wallet, bundler); this says who they are, " +
+      "what they paid, and whether they are still in. Rows are large — keep `limit` small.\n" +
+      "Numbers may arrive as STRINGS; parse before comparing. Amounts are token units, `*_volume_cur` / " +
+      "`usd_value` / `profit` are USD, timestamps are seconds.\n" +
+      "Returns per wallet:\n" +
+      "• who — address, wallet_tag_v2 (rank on this token, e.g. TOP1), tags (fresh_wallet, smart_degen, sniper, " +
+      "bundler, dev, rat_trader, renowned…), maker_token_tags (what this wallet did to THIS token: dev_team, " +
+      "bundler, sniper, paper_hands), is_new, is_suspicious, created_at (wallet first seen), and native_transfer " +
+      "— the CEX or wallet that funded it (several top wallets funded from one source is one actor, not a crowd).\n" +
+      "• still holding — balance, amount_cur, amount_percentage (share of supply), usd_value. Zero across these " +
+      "with sell_amount_percentage 1 means fully exited.\n" +
+      "• flow — buy_volume_cur / sell_volume_cur, buy_amount_cur / sell_amount_cur, netflow_usd, " +
+      "buy_tx_count_cur / sell_tx_count_cur, transfer_in and transfer_in_count / transfer_out_count.\n" +
+      "• P&L — profit, realized_profit, unrealized_profit, total_cost, realized_pnl / profit_change (multiple on " +
+      "cost), avg_cost vs avg_sold (what they entered and exited at — avg_sold near the current price means the " +
+      "wallets in profit are selling into you).\n" +
+      "• timing — start_holding_at, end_holding_at, last_active_timestamp. Bought at launch, out minutes later, " +
+      "is the sniper pattern the summary rates only count.",
+    parameters: {
+      type: "object",
+      properties: {
+        chain: CHAIN,
+        address: ADDRESS,
+        order_by: {
+          type: "string",
+          enum: ["profit", "unrealized_profit", "amount_percentage", "buy_volume_cur", "sell_volume_cur"],
+          description:
+            "rank by (default profit — realized USD). amount_percentage ranks by what is still held; " +
+            "sell_volume_cur finds who is distributing",
+        },
+        tag: {
+          type: "string",
+          enum: ["smart_degen", "renowned", "fresh_wallet", "dev", "sniper", "rat_trader", "bundler", "transfer_in", "dex_bot", "bluechip_owner"],
+          description: "return only wallets with this tag; omit for all. Independent of order_by",
+        },
+        limit: { type: "integer", description: "how many wallets (default 10, max 50)" },
+      },
+      required: ["chain", "address"],
+    },
+    run: ({ chain, address, order_by, tag, limit }: { chain: Chain; address: string; order_by?: string; tag?: string; limit?: number }) =>
+      tokenTraders(chain, address, Math.min(Math.max(limit ?? 10, 1), 50), order_by ?? "profit", tag),
   },
 
   gmgn_token_kline: {

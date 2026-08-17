@@ -154,13 +154,13 @@ THE MACHINE (facts, not advice)
 
 TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
 
-\`gmgn_token_kline\` — OHLCV candles — and \`gmgn_token_info\` — the full profile: bundler and sniper concentration, fresh-wallet and bot rates, deployer history, launch liquidity against current, distance from the all-time high, and the buy vs sell volume split no feed in the brief carries. Both work on any address in the brief or in \`open_positions\`.
+\`gmgn_token_kline\` — OHLCV candles — and \`gmgn_token_info\` — the full profile: bundler and sniper concentration, fresh-wallet and bot rates, deployer history, launch liquidity against current, distance from the all-time high, and the buy vs sell volume split no feed in the brief carries. \`gmgn_token_traders\` — the wallets themselves, ranked: what each paid, whether they are still in, and where they were funded from, which is how a bundled or single-actor holder set stops looking like a crowd. All three work on any address in the brief or in \`open_positions\`.
 
 **Every address you put in \`entries\` must have had \`gmgn_token_kline\` pulled on it this cycle** — the exit plan below is yours to write, and you cannot size one without seeing how far this token actually travels between candles.
 
 How you spend the rest is your call, and spending it well is part of the job. Shortlisting from the brief costs nothing, so narrow first and look only at rows you are close to buying. \`gmgn_token_info\` is the one that answers what the brief structurally cannot: a row can be clean on every number you were given and 62% bundled underneath. Budget left unspent on a token you entered half-blind was not saved, and calls past the budget return a refusal instead of data — decide on what you have then.
 
-One call per token per route. Candles are free inside a request and \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does, so raise \`limit\` rather than calling again at a second resolution. Every request here shares one limiter with the sweep that built this brief and with the buys that follow, and it makes callers wait rather than fail — a redundant lookup is paid in the next cycle's candidate list, not in an error you would see.
+One call per token per route. Rows are free inside a request — \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does and \`gmgn_token_traders\` five times, so raise \`limit\` rather than calling again at a second resolution or for more wallets. Every request here shares one limiter with the sweep that built this brief and with the buys that follow, and it makes callers wait rather than fail — a redundant lookup is paid in the next cycle's candidate list, not in an error you would see.
 
 ${exitPlan(cfg, hurdle)}
 

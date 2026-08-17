@@ -46,8 +46,9 @@ through `src/agent/llm.ts`.
 
 There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
 GMGN tool set plus a skill loader (`src/agent/skills.ts`, `skills/`). All of it went with the
-analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` now holds two of them
-again, `gmgn_token_info` and `gmgn_token_kline` (`git log` it for the old, much larger set).
+analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` now holds three of them
+again, `gmgn_token_info`, `gmgn_token_kline` and `gmgn_token_traders` (`git log` it for the old,
+much larger set).
 
 ### Storage
 
@@ -160,9 +161,11 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   the process is not entitled to grant it on their behalf. Same reasoning behind `liveReady()`.
   This process signs its own trade requests, so that check is now the *entire* barrier — there is
   no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
-- **The analyst's tools are two read routes and nothing else.** `askAnalyst` passes
-  `budgetedTools(LOOKUP_BUDGET)` from `src/agent/tools.ts` — `gmgn_token_info` and
-  `gmgn_token_kline`, both `exist`-auth reads through `market.ts`. The unattended loop still
+- **The analyst's tools are three read routes and nothing else.** `askAnalyst` passes
+  `budgetedTools(LOOKUP_BUDGET)` from `src/agent/tools.ts` — `gmgn_token_info`,
+  `gmgn_token_kline` and `gmgn_token_traders` (the holder set wallet by wallet: cost basis,
+  whether they are still in, and the wallet that funded them — bucket weight 5, the most
+  expensive of the three), all `exist`-auth reads through `market.ts`. The unattended loop still
   cannot reach a shell, a spend route or the operator's wallet, because no such tool exists in
   that record. Keep it that way: add read-only routes one named tool at a time, never a shell,
   never a route that spends, and never the record wholesale from somewhere else.

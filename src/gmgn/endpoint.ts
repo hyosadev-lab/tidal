@@ -27,6 +27,7 @@ const ROUTE: Record<string, { weight?: number; timeoutMs?: number }> = {
   "/v1/market/hot_searches": { weight: 2 },
   "/v1/market/token_signal": { weight: 3 },
   "/v1/market/token_top_holders": { weight: 5 },
+  "/v1/market/token_top_traders": { weight: 5 },
   "/v1/trenches": { weight: 3 },
   "/v1/trade/quote": { weight: 2 },
   "/v1/trade/swap": { weight: 5, timeoutMs: 120_000 },

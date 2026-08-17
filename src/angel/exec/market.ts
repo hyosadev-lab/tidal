@@ -121,6 +121,13 @@ export async function tokenHolders(chain: Chain, address: string, limit = 20, ta
   return list(await client().getTokenTopHolders(chain, address, extra), "list");
 }
 
+/** Same query shape as `tokenHolders`, different route: traders is one row per wallet that traded it. */
+export async function tokenTraders(chain: Chain, address: string, limit = 10, orderBy = "profit", tag?: string): Promise<any[]> {
+  const extra: Record<string, string | number> = { limit, order_by: orderBy, direction: "desc" };
+  if (tag) extra["tag"] = tag;
+  return list(await client().getTokenTopTraders(chain, address, extra), "list");
+}
+
 export async function kline(chain: Chain, address: string, resolution: string, fromSec: number, toSec: number) {
   // The API takes milliseconds here; every other timestamp in this file is seconds.
   const r = await client().getTokenKline(chain, address, resolution, Math.floor(fromSec) * 1000, Math.floor(toSec) * 1000);
