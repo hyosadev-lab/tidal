@@ -20,9 +20,6 @@ import type { Candidate, Decision, StrategyRule, TradeConfig } from "./core/type
 /** Deep-dive lookups the analyst may spend per cycle. Shares GMGN's bucket with the sweep. */
 const LOOKUP_BUDGET = 6;
 
-/** Both lookups are mandatory per entry, so the budget is also the cap on entries per cycle. */
-const FINALISTS = Math.floor(LOOKUP_BUDGET / 2);
-
 // ── the brief ─────────────────────────────────────────────────────────
 //
 // What the analyst is told, in full. It lives here rather than in `plan.ts` because it is
@@ -44,6 +41,11 @@ function exitPlan(cfg: TradeConfig, hurdle: number): string {
   // Two floors under every profit target, and the higher one binds — `viableStrategy` enforces
   // exactly this, so the number quoted here is the one the position will actually run on.
   const floor = Math.max(hurdle, cfg.stopLossPct);
+
+  // A giveback exits at peak × (1 - dd), so a trail needs a peak that much *above* the level it
+  // must still clear on the way down. `ruleExit` guards the trails at the round trip, and
+  // `viableStrategy` lifts a `ttp` arm off `floor` — same formula, two different bases.
+  const peakFor = (base: number, dd: number) => (((1 + base / 100) / (1 - dd / 100) - 1) * 100).toFixed(0);
 
   const cost = `
 WHAT A PROFIT TARGET HAS TO CLEAR: +${floor.toFixed(1)}%
@@ -83,15 +85,21 @@ Give every entry a \`strategy\`: an ordered list of rules, each selling a % of t
   {"kind":"ttp","at":<arm % ≥5>,"dd":<1-90>,"sell":<1-100>}  arm at +at%, sell on a dd% giveback from peak
   {"kind":"tsl","dd":<1-90>,"sell":<1-100>}             sell on a dd% giveback from peak, in profit only
 
+Every rule fires AT MOST ONCE and sells its \`sell\`% of the original size, then it is spent. A
+rule that fired protects nothing afterwards: an \`sl\` selling 40% leaves the other 60% with no
+stop under it at all, and a \`tsl\` selling 50% stops trailing what is left. Whatever you intend
+as the last line of defence sells 100.
+
 How they run, in the order the engine checks them:
 1. \`sl\` — the only rule that acts below break-even, and it is checked first wherever you put it
    in the list, so it cannot be pre-empted by a trailing rule written above it. The whole
    downside is its job. If you want to lose less than -${cfg.stopLossPct}%, write a shallower \`sl\`; nothing else
    in the list will do it for you.
-2. \`tsl\` / \`ttp\` — profit protection only. They cannot fire while the position is underwater,
-   so they never cap a loss. A giveback of dd% is therefore unreachable until the peak clears
-   dd/(100-dd): dd 15 needs a peak above +17.6%, dd 20 needs +25%, dd 50 needs +100%, dd 80
-   needs +400%. A wide dd is not a loose stop — it is a rule that may never fire at all.
+2. \`tsl\` / \`ttp\` — profit protection only, so they never cap a loss. "In profit" means past the
+   round trip, not past zero: both are inert until PnL clears +${hurdle.toFixed(1)}%. A dd% giveback therefore
+   needs a peak above (1 + ${hurdle.toFixed(1)}%) / (1 - dd%) — dd 15 needs +${peakFor(hurdle, 15)}%, dd 20 needs +${peakFor(hurdle, 20)}%, dd 50
+   needs +${peakFor(hurdle, 50)}%, dd 80 needs +${peakFor(hurdle, 80)}%. A wide dd is not a loose stop — it is a rule that may
+   never fire at all.
 3. \`tp\` — checked last, highest rung reached wins. A rung never reached sells nothing.
 
 So the two are not alternatives: size \`dd\` to how much noise the token makes on the way up, and
@@ -99,8 +107,9 @@ set \`sl\` from how much of the position you are willing to lose if it simply ne
 
 Clamps: a stop deeper than -${cfg.stopLossPct}% becomes -${cfg.stopLossPct}%, a plan with no stop gets one at -${cfg.stopLossPct}%, any \`tp\`
 or \`ttp\` target under +${floor.toFixed(1)}% is lifted to it, and an omitted or unusable \`strategy\` falls back to
-the operator's default plan. A \`ttp\` is lifted further than a \`tp\`, because it exits a \`dd\`%
-giveback below its arm rather than at it: an arm of +30 with dd 25 sells at -2.5%, not +30%.
+the operator's default plan. A \`ttp\` is lifted much further than a \`tp\`, because it exits a \`dd\`%
+giveback below its arm rather than at it: the arm becomes (1 + ${floor.toFixed(1)}%) / (1 - dd%), so dd 20 arms no
+lower than +${peakFor(floor, 20)}% and dd 50 no lower than +${peakFor(floor, 50)}%. Write the arm you mean, or the engine will.
 ${time}
 ${cost}`;
 
@@ -121,9 +130,9 @@ ${cost}`;
 }
 
 function systemPrompt(cfg: TradeConfig, hurdle: number): string {
-  // Deliberately mechanical: what is true, what is enforced, what to return. The *policy* —
-  // what makes a token worth buying — is the operator's, and arrives in `userPromptBlock`
-  // from the dashboard. Adding house strategy back here quietly overrules that box.
+  // Deliberately thin: what the machine enforces, what to return, and the exit plan. *Selection*
+  // policy — what makes a token worth buying — is the operator's, and arrives in
+  // `userPromptBlock` from the dashboard. Adding house strategy back here overrules that box.
   const policy = cfg.prompt.trim()
     ? "Your selection policy is the operator's, in OPERATOR INSTRUCTIONS at the end of this message. Follow it. Where it is silent, judge from the numbers in the brief."
     : "The operator has left the instruction box empty this cycle, so selection is entirely your judgment on the numbers in the brief.";
@@ -134,41 +143,24 @@ Each cycle you read the pre-screened candidates and the open book, then return a
 
 ${policy}
 
-WHAT IS ALREADY TRUE (facts about the machine around you, not advice)
+THE MACHINE (facts, not advice)
 
-The candidate list is what you may buy from — all of it, and only it. It comes from a sweep run before you were called, steered by the operator's Refine settings. An address that is not in it has not been screened, priced or sized, so naming it in \`entries\` only wastes a slot.
-
-WINDOWS
-
-A row carries two of them, and the whole difference between a move starting and a move ending is in the comparison. \`buys_5m\`, \`sells_5m\` and \`volume_5m_usd\` cover the last five minutes. \`buys\`, \`sells\`, \`swaps_1h\` and \`volume_1h_usd\` cover the row's own longer window — an hour on the rank feed, 24h on a \`graduated\` row. A token trading at a steady rate therefore prints about a twelfth of its hourly counts in the five-minute window; materially more than that is flow accelerating, materially less is a move that has already passed. Read the buy/sell split the same way — 5m buys against 5m sells says what is happening now, the hourly pair says what happened over the move as a whole.
-
-The blank rules still apply: null is "this row's feeds did not report it", not zero. A row whose \`seen_in\` is \`trending-5m\` alone has no hourly baseline — its two windows are the same five minutes, so it carries no acceleration reading at all.
+- You may buy only from the candidate list. An address that is not in it was never screened, priced or sized, so naming it in \`entries\` wastes a slot.
+- \`null\` on a candidate field means that row's feed did not report it — a blank, not a zero.
+- \`buys\`, \`sells\`, \`swaps_1h\` and \`volume_1h_usd\` cover the row's own longer window — an hour on the rank feed, 24h on a \`graduated\` row. The \`_5m\` fields cover the last five minutes.
+- Gates already applied: no wash trading, no honeypot, a readable address and price. That is all — pool depth, rug_ratio, concentration, smart money and dev holdings are reported, not screened on, and \`structure_score\` grades them without stopping anything. Each pick still faces a security refusal on tax > 10% and, on Solana, live mint/freeze authority or an unburned pool.
+- Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your conviction, max ${cfg.maxOpenPositions} open at once. Conviction under 40 is dropped by the engine, and anything over a limit stated here is clamped in code.
+- An empty \`entries\` array is a valid answer.
 
 TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
 
-\`gmgn_token_info\` and \`gmgn_token_kline\` deep-dive a candidate that is already in the brief. They answer different questions and neither substitutes for the other:
+\`gmgn_token_kline\` — OHLCV candles — and \`gmgn_token_info\` — the full profile: bundler and sniper concentration, fresh-wallet and bot rates, deployer history, launch liquidity against current, distance from the all-time high, and the buy vs sell volume split no feed in the brief carries. Both work on any address in the brief or in \`open_positions\`.
 
-- \`gmgn_token_kline\` — OHLCV candles. The brief's 1m/5m/1h changes cannot tell a clean trend from one wick and a fade, and that difference is the whole entry.
-- \`gmgn_token_info\` — the full profile. This is where the brief's blanks get filled: bundler and sniper concentration, fresh-wallet and bot rates, whether the deployer still holds and how many tokens they have launched before, the pool's launch liquidity against what it holds now, distance from the all-time high, and the buy-volume vs sell-volume split that no feed in the brief carries. A row can look clean on every number you were given and be 62% bundled underneath.
+**Every address you put in \`entries\` must have had \`gmgn_token_kline\` pulled on it this cycle** — the exit plan below is yours to write, and you cannot size one without seeing how far this token actually travels between candles.
 
-Work in two passes:
+How you spend the rest is your call, and spending it well is part of the job. Shortlisting from the brief costs nothing, so narrow first and look only at rows you are close to buying. \`gmgn_token_info\` is the one that answers what the brief structurally cannot: a row can be clean on every number you were given and 62% bundled underneath. Budget left unspent on a token you entered half-blind was not saved, and calls past the budget return a refusal instead of data — decide on what you have then.
 
-1. Shortlist from the brief alone. It costs nothing, and it is where you narrow ${cfg.maxOpenPositions > 1 ? "a dozen-odd rows" : "the list"} down to the few you would actually buy.
-2. Deep-dive those finalists before committing. **Every token you put in \`entries\` must have had BOTH \`gmgn_token_info\` and \`gmgn_token_kline\` pulled on it this cycle.** Not one or the other — the chart tells you whether the move is real, the profile tells you who is behind it, and an entry is a claim about both.
-
-That is 2 calls per finalist against a budget of ${LOOKUP_BUDGET}, so the budget covers ${FINALISTS} entries per cycle. Shortlist to ${FINALISTS} before you spend anything. If you would rather enter fewer positions and look harder at each, that is a good trade; entering more by looking at none is not. Should the budget run out before you finished a token, either drop it or say plainly in its \`thesis\` which lookup you never got.
-
-Do not survey the whole list, do not re-check what the brief already states, and do not spend the budget on rows you have already decided against. Every call is paid out of the same rate limit the sweep runs on, so a cycle that burns it on browsing degrades the next cycle's candidate list. Once it is spent every further call just says so; decide on what you have then. A number neither the brief nor a lookup carries is a stated blank, not something to guess at.
-
-The same two tools work on an address in \`open_positions\` when you are weighing an early exit.
-
-Gates already applied to every row you see: no wash trading, no honeypot, a readable address and a readable price. That is the whole list — pool depth, rug_ratio, top-10 concentration, smart-money count and dev holdings are reported to you, not screened on. \`structure_score\` grades them; it stops nothing.
-
-Before entry each pick still faces a security refusal on tax > 10% and, on Solana, live mint/freeze authority or an unburned pool.
-
-Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your conviction, max ${cfg.maxOpenPositions} open at once. An entry with conviction under 40 is dropped by the engine, and requests that exceed any limit stated here are clamped in code, not negotiated.
-
-An empty \`entries\` array is a valid answer.
+One call per token per route. Candles are free inside a request and \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does, so raise \`limit\` rather than calling again at a second resolution. Every request here shares one limiter with the sweep that built this brief and with the buys that follow, and it makes callers wait rather than fail — a redundant lookup is paid in the next cycle's candidate list, not in an error you would see.
 
 ${exitPlan(cfg, hurdle)}
 
