@@ -13,7 +13,7 @@
  * This does not tune anything. It hands you numbers; the weights stay hand-edited in plan.ts,
  * because a curve fitted to a few hundred memecoins is a worse prior than a stated judgement.
  *
- *   npm run calibrate -- --min-age=6 --max-age=48 --limit=300
+ *   npm run calibrate -- --min-age=0.25 --max-age=1 --limit=300
  *
  * `--limit=0` reports on what is already resolved without spending a single API call.
  */
@@ -118,8 +118,11 @@ export function bands(rows: { score: number; ret: number }[], edges = [20, 40, 6
  * outcomes.jsonl, so a later run never re-fetches a row — the dataset accumulates across
  * runs instead of being rebuilt.
  *
- * Rows younger than `minAgeH` are left alone deliberately: resolving one at 10 minutes old
- * would lock in a meaningless answer forever.
+ * Rows younger than `minAgeH` are left alone. An outcome is written once and never revisited,
+ * so the horizon has to match how long a position is actually held — measure a two-day return
+ * and you are grading the score on a question the engine never asks. `timeStopMinutes` is what
+ * sets that length; the default here is the short end of it, so raise `--min-age` (and
+ * `--max-age` with it, or the oldest pending rows eat the budget first) when you hold longer.
  */
 async function resolve(minAgeH: number, maxAgeH: number, limit: number): Promise<number> {
   const now = Date.now();
@@ -159,7 +162,15 @@ const rho = (x: number): string => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
 function report(minAgeH: number, maxAgeH: number): void {
   const rows: { s: Sounding; ret: number; age: number }[] = [];
   let unreadable = 0;
+  let offHorizon = 0;
   for (const { s, o } of resolvedPairs()) {
+    // An outcome is permanent and answers only for the horizon it was priced at, so the table
+    // accumulates every horizon anyone has ever run. Averaging a 15-minute move together with a
+    // two-day one and calling the result a ranking is worse than having no number at all.
+    if (o.ageHours < minAgeH || o.ageHours > maxAgeH) {
+      offHorizon++;
+      continue;
+    }
     if (o.priceThen <= 0) continue;
     if (o.priceNow === null) {
       unreadable++;
@@ -168,7 +179,10 @@ function report(minAgeH: number, maxAgeH: number): void {
     rows.push({ s, ret: (o.priceNow - o.priceThen) / o.priceThen, age: o.ageHours });
   }
 
-  console.log(`\nsoundings ${soundingCount()} · resolved ${rows.length} · unreadable ${unreadable}`);
+  console.log(
+    `\nsoundings ${soundingCount()} · resolved ${rows.length} · unreadable ${unreadable}` +
+      (offHorizon ? ` · ${offHorizon} excluded, priced at another horizon` : ""),
+  );
   if (unreadable) {
     const share = unreadable / (rows.length + unreadable);
     console.log(
@@ -178,8 +192,11 @@ function report(minAgeH: number, maxAgeH: number): void {
     );
   }
   if (rows.length < 30) {
-    console.log(`\nToo few resolved rows to read anything into. Let the agent run; re-run this in a day.`);
-    console.log(`(rows become resolvable ${minAgeH}h after their scan, and expire at ${maxAgeH}h.)\n`);
+    console.log(`\nToo few rows at this horizon to read anything into.`);
+    console.log(
+      `(a row is resolvable from ${minAgeH}h after its scan and expires at ${maxAgeH}h, so run this while` +
+        ` the agent is running — a row nobody priced inside that window cannot be priced later.)\n`,
+    );
     return;
   }
 
@@ -228,8 +245,8 @@ async function main(): Promise<void> {
     const v = process.argv.find((a) => a.startsWith(`--${k}=`))?.split("=")[1];
     return v === undefined || Number.isNaN(Number(v)) ? d : Number(v);
   };
-  const minAge = arg("min-age", 6);
-  const maxAge = arg("max-age", 48);
+  const minAge = arg("min-age", 0.25);
+  const maxAge = arg("max-age", 1);
   const limit = arg("limit", 300);
 
   if (!soundingCount()) {

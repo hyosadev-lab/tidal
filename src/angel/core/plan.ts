@@ -211,6 +211,14 @@ export function gateTally(candidates: Candidate[]): string {
  * judgement. `npm run calibrate` is what turns that into a measurement — it re-prices past
  * soundings and reports each term's rank correlation with the forward return. Change a weight
  * because that report says to, not because a number here looks tidy.
+ *
+ * A term also has to *rank* to earn its place, which is a separate question from whether it
+ * points the right way and needs no forward return to answer. Measured over 2465 recorded
+ * candidates, three terms fired for nearly every row and so only added a constant: top-10
+ * holder rate (spread 1.2–3.6 of a possible 6), `swaps1h > 300` (85% of rows, and turnover
+ * already reads the same flow), and `holderCount > 500` (19% of rows, 0.6 points on average).
+ * Dropping all three moved 26 rows across the top-18 cut in 42 cycles. They are gone; adding
+ * one back means showing it changes the order, not that it sounds relevant.
  */
 export function score(c: Candidate): number {
   let s = 0;
@@ -222,6 +230,9 @@ export function score(c: Candidate): number {
   // Momentum, but the reward curve turns down once a move is already extended:
   // buying +400% in an hour is buying someone else's exit.
   // The turn is at +120%; the project's own written heuristic was +150%.
+  // In practice this is a penalty far more often than a reward — 70% of scanned rows arrive
+  // already past +120%, so the term averages -1.3 points. That is the sweep's doing, not a
+  // bug here, but read the curve as "how extended is this" rather than "how strong".
   const m = c.change1hPct;
   s += m <= 0 ? 0 : m < 120 ? (m / 120) * 18 : Math.max(-16, 18 - (m - 120) / 25);
   if (c.change5mPct > 0 && c.change5mPct < 40) s += 5;
@@ -232,13 +243,10 @@ export function score(c: Candidate): number {
   // Turnover — real two-way flow rather than a single whale print.
   const turnover = c.marketCapUsd > 0 ? c.volume1hUsd / c.marketCapUsd : 0;
   s += Math.min(12, turnover * 30);
-  if (c.swaps1h > 300) s += 4;
 
-  // Structure. 0.3 is GMGN's published Skip line for rug_ratio; the 0.4 below is judgement
-  // (their bands are Pass < 0.2, Skip > 0.5).
+  // Structure. 0.3 is GMGN's published Skip line for rug_ratio (their bands are Pass < 0.2,
+  // Skip > 0.5).
   s += (1 - Math.min(1, c.rugRatio / 0.3)) * 8;
-  s += (1 - Math.min(1, c.top10HolderRate / 0.4)) * 6;
-  if (c.holderCount > 500) s += 3;
 
   // Age: too new is unpriced, very old memecoins are usually done.
   if (c.ageMinutes > 60 && c.ageMinutes < 2880) s += 4;

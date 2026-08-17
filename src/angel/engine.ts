@@ -185,33 +185,33 @@ async function runScan(): Promise<void> {
     store.phase = "scanning";
     store.push();
 
-    const all = await gatherCandidates();
-    const eligible = all.filter((c) => !c.gateFailures.length && !unavailable(c));
+    const candidates = await gatherCandidates();
+    const eligible = candidates.filter((c) => !c.gateFailures.length && !unavailable(c));
     // Why each row did or did not reach the model, decided here rather than in the dashboard.
     // Written before the soundings so calibrate can tell the rows the model actually saw from
     // the ones that merely scored well.
     const shortlist = eligible.slice(0, ANALYST_SHORTLIST);
     const shown = new Set(shortlist.map((c) => c.address));
-    for (const c of all)
+    for (const c of candidates)
       c.analystNote = c.gateFailures.length
         ? ""
         : shown.has(c.address)
           ? "sent"
           : unavailable(c) || `ranked below the top ${ANALYST_SHORTLIST}`;
-    store.lastCandidates = all.slice(0, 40);
+    store.lastCandidates = candidates.slice(0, 40);
     // The whole sweep, not just the shown 40: `calibrate.ts` needs the rows nobody looked at
     // as much as the ones that scored well, or it only measures what we already believed.
-    recordSoundings(cycle, cfg.chain, all);
+    recordSoundings(cycle, cfg.chain, candidates);
     store.log(
       "info",
-      `Cycle ${cycle}: ${all.length} tokens scanned, ${eligible.length} through the gates.`,
+      `Cycle ${cycle}: ${candidates.length} tokens scanned, ${eligible.length} through the gates.`,
       eligible.length ? eligible.slice(0, 8).map((c) => `${c.symbol} ${c.score}`).join("  ") : undefined,
     );
     // Which gate did the killing. The thresholds are fixed now, so the only thing left worth
     // measuring is which of them actually fires — a gate that never fires is dead weight, and
     // one that rejects most of the sweep is quietly the whole strategy. Counts exceed the
     // number of rejects: a token can fail several gates at once.
-    const tally = gateTally(all);
+    const tally = gateTally(candidates);
     if (tally) store.log("info", `Gates: ${tally}`);
 
     if (!eligible.length && !store.positions.length) {
