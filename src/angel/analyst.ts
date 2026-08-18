@@ -148,7 +148,8 @@ THE MACHINE (facts, not advice)
 - You may buy only from the candidate list. An address that is not in it was never screened, priced or sized, so naming it in \`entries\` wastes a slot.
 - \`null\` on a candidate field means that row's feed did not report it — a blank, not a zero.
 - \`buys\`, \`sells\`, \`swaps_1h\` and \`volume_1h_usd\` cover the row's own longer window — an hour on the rank feed, 24h on a \`graduated\` row. The \`_5m\` fields cover the last five minutes.
-- \`seen_in\` names the feed, and \`smart-money\` is not a ranking: GMGN fired it because a wallet it tracks bought this token. That feed reports structure but no flow, so on a row seen *only* there, \`volume_1h_usd\` and \`swaps_1h\` are zeros nobody measured — no trades were reported, not none happened, and \`buys\`/\`sells\` are null to say so. \`seen_in\` listing two feeds is one token found twice, and the numbers on it come from the other one.
+- \`seen_in\` names the feed. \`trending-1h\`, \`trending-5m\` and \`graduated\` are rankings and every row here came from one of them; the numbers on the row are theirs. The rest are alerts GMGN fired on the same token, and they are labels only, never a source — no volume, no trade counts, no price of their own: \`smart-money\` (a wallet GMGN tracks bought it), \`price-spike\` (the price jumped), and \`alert-3\` / \`alert-13\`, two alert types GMGN does not say what it fires on — measured, \`alert-13\` lands on large, established tokens that KOL-tagged wallets hold and \`alert-3\` on small ones often flagged as community takeovers. Treat all four as weak confirmation: two names in \`seen_in\` is one token found twice, nothing more.
+- \`alert_mcap_usd\` is the market cap at the moment that alert fired, and \`mcap_usd\` is now. The gap is the point: a token at half its alert cap means whoever the alert was reporting is already underwater, and one above it means you are paying more than they did. Null when no alert tagged the row.
 - Gates already applied: no wash trading, no honeypot, a readable address and price. That is all — pool depth, rug_ratio, concentration, smart money and dev holdings are reported, not screened on, and \`structure_score\` grades them without stopping anything. Each pick still faces a security refusal on tax > 10% and, on Solana, live mint/freeze authority or an unburned pool.
 - Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your conviction, max ${cfg.maxOpenPositions} open at once. Conviction under 40 is dropped by the engine, and anything over a limit stated here is clamped in code.
 - An empty \`entries\` array is a valid answer.
@@ -275,6 +276,8 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
       sells_5m: c.sells5m,
       volume_5m_usd: c.volume5mUsd === null ? null : Math.round(c.volume5mUsd),
       net_buy_usd: c.netBuyUsd,
+      // The market cap when the alert in `seen_in` fired. Null on a row no alert tagged.
+      alert_mcap_usd: c.triggerMcUsd === null ? null : Math.round(c.triggerMcUsd),
       holders: c.holderCount,
       smart_money: c.smartDegenCount,
       kols: c.renownedCount,

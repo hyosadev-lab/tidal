@@ -53,22 +53,60 @@ const clamp = (v: unknown, lo: number, hi: number, fallback: number): number =>
 
 // ── scan ──────────────────────────────────────────────────────────────
 
-async function gatherCandidates(): Promise<Candidate[]> {
-  const cfg = store.config;
-  const seen = new Map<string, Candidate>();
+type Feed = [rows: Record<string, any>[], source: string];
 
-  const add = (rows: Record<string, any>[], source: string) => {
+/**
+ * The signal types the sweep asks for, and the label each one leaves on a candidate. GMGN
+ * documents the route as "price spikes, smart money buys, large buys, Dex ads, CTO events, and
+ * more" but publishes no number-to-event mapping, so 3 and 13 keep their type number as their
+ * name rather than a guess: measured, a 13 row is a large, established token that KOL-tagged
+ * wallets hold, and a 3 row is small and often community-takeover flagged. What decides
+ * membership here is overlap with the rank feeds, since nothing else survives the merge —
+ * against one live sweep: 3 → 20/50, 11 → 18/50, 12 → 17/41, 6 → 12/46, 13 → 9/28. Type 7 (ATH)
+ * managed 1/50 and stays out; the queryable range is 1–13 and 17–20 (14–16 the API refuses).
+ */
+const ALERTS: [type: number, label: string][] = [
+  [12, "smart-money"],
+  [6, "price-spike"],
+  [3, "alert-3"],
+  [13, "alert-13"],
+];
+
+/**
+ * Every label above. No signal type carries flow — `volume_*`, `swaps_*` and `buys_*` come back
+ * zero on all of them — so a row the rank feeds never surfaced has nothing to judge, and
+ * `mergeFeeds` keeps the label while throwing the row away.
+ */
+const SIGNAL_LABELS = new Set(ALERTS.map(([, label]) => label));
+
+/**
+ * Every feed's rows deduped into one candidate per address. The merge order is the caller's and
+ * it matters: the 1h rank feed defines the window the numbers cover, and the signal feeds run
+ * last because they can only tag rows the rank feeds already produced.
+ */
+function mergeFeeds(feeds: Feed[]): Candidate[] {
+  const seen = new Map<string, Candidate>();
+  for (const [rows, source] of feeds) {
     for (const r of rows) {
       const c = toCandidate(r, source);
       if (!c.address) continue;
       const key = c.address.toLowerCase();
       const prior = seen.get(key);
+      // A signal is a confirmation, not a source: it fires on an event, reports no flow, and
+      // may tag a trending or graduated row — it may not put one into the sweep on its own.
+      // Nothing of the row survives but the label; the numbers stay the rank feed's.
+      if (!prior && SIGNAL_LABELS.has(source)) continue;
       // A token surfacing in more than one feed is a mild confirmation, so keep both labels —
       // but only once each. The signal route returns one row per alert, so a token three smart
       // wallets bought arrives three times, and appending blindly made one feed read as three.
       if (prior) {
         if (!prior.source.split("+").includes(source)) prior.source = `${prior.source}+${source}`;
       } else seen.set(key, c);
+      // The one number worth keeping off an alert row before it is thrown away: what the market
+      // cap was when the alert fired. First one wins — the route returns newest first and
+      // `ALERTS` asks for smart money first, so a token several alerts tagged reports the most
+      // recent smart-money trigger rather than whichever type happened to land last.
+      if (prior && SIGNAL_LABELS.has(source) && prior.triggerMcUsd === null) prior.triggerMcUsd = c.triggerMcUsd;
       // The 5m feed reports the same columns over a five-minute window, and nearly every row of
       // it is also in the 1h feed — so keeping only the first row seen dropped exactly the
       // numbers an acceleration test needs. Carry them alongside the hourly ones instead. On a
@@ -80,20 +118,18 @@ async function gatherCandidates(): Promise<Candidate[]> {
         t.sells5m = c.sells;
         t.volume5mUsd = c.volume1hUsd;
       }
-      // The signal route reports no flow on any window — a row it alone surfaced would
-      // otherwise claim zero buyers rather than an unmeasured one. Blank what it does not
-      // measure; `volume_1h_usd` and `swaps_1h` cannot go null on the type, so the brief
-      // says what a `smart-money` row's zeros mean. A row another feed already carried
-      // keeps that feed's numbers and only picks up the label.
-      if (source === "smart-money" && !prior) c.buys = c.sells = c.netBuyUsd = null;
     }
-  };
+  }
+  return [...seen.values()];
+}
+
+async function gatherCandidates(): Promise<Candidate[]> {
+  const cfg = store.config;
 
   // The sweep applies no floor of its own: Refine is the only thing that narrows these feeds,
   // and an empty Refine means an unfiltered feed. That is the point — structural quality is
   // `score()`'s job and the operator's, so a hardcoded default here would be a gate wearing a
   // different name. Expect more noise per cycle when Refine is blank.
-  type Feed = [rows: Record<string, any>[], source: string];
   const feeds: Promise<Feed>[] = [
     gmgn
       .trending(cfg.chain, { interval: "1h", limit: 50, refine: refineQuery(cfg.refine) })
@@ -114,27 +150,23 @@ async function gatherCandidates(): Promise<Candidate[]> {
         .then((r): Feed => [r, "graduated"])
         .catch((): Feed => [[], "graduated"]),
     );
-  // Smart-money buys (signal type 12): an alert rather than a rank, and the only feed here
-  // that fires before a token is already trending — which is what `score()` calls its
-  // strongest prior. Cheap to add, thin to read: the route carries structure but no flow,
-  // so most of these rows score low on their own and earn their place by tagging a row the
-  // rank feeds also found. Types 6 (price spike) and 7 (ATH) are one array element away and
-  // deliberately left out — 7 is almost entirely minutes-old $1-liquidity launches.
-  // Refine reaches this route through market cap only; the rest of the panel does not apply.
-  feeds.push(
-    gmgn
-      .signals(cfg.chain, [{ signal_type: [12], mc_min: cfg.refine["marketCapMin"], mc_max: cfg.refine["marketCapMax"] }])
-      .then((r): Feed => [r, "smart-money"])
-      .catch((): Feed => [[], "smart-money"]),
-  );
+  // Alerts rather than ranks, and all of `ALERTS` rides one request: a group is a filter set
+  // inside the same POST and the route bills per call, not per group, so a type past the first
+  // is free on the bucket. Split the rows apart by `signal_type` on the way out, or a price
+  // spike would arrive wearing the smart-money label. Refine reaches this route through market
+  // cap only; the rest of the panel does not apply.
+  const mc = { mc_min: cfg.refine["marketCapMin"], mc_max: cfg.refine["marketCapMax"] };
+  const alerts = gmgn
+    .signals(cfg.chain, ALERTS.map(([type]) => ({ signal_type: [type], ...mc })))
+    .catch((): Record<string, any>[] => []);
+  for (const [type, label] of ALERTS)
+    feeds.push(alerts.then((rows): Feed => [rows.filter((r) => num(r["signal_type"]) === type), label]));
 
-  // Fetched together, merged in a fixed order. `add` keeps the first row it sees for an address,
-  // so merging as they landed left a race deciding whether `volume1hUsd` held an hour or five
-  // minutes; the 1h feed goes first for that reason, and the 5m rows arrive knowing they are a
-  // second window on a row that already exists.
-  for (const [rows, source] of await Promise.all(feeds)) add(rows, source);
-
-  const all = [...seen.values()];
+  // Fetched together, merged in a fixed order. `mergeFeeds` keeps the first row it sees for an
+  // address, so merging as they landed left a race deciding whether `volume1hUsd` held an hour or
+  // five minutes; the 1h feed goes first for that reason, and the 5m rows arrive knowing they are
+  // a second window on a row that already exists.
+  const all = mergeFeeds(await Promise.all(feeds));
   for (const c of all) {
     c.gateFailures = runGates(c);
     c.score = c.gateFailures.length ? 0 : score(c);
@@ -551,8 +583,11 @@ async function checkPosition(p: Position, cfg: TradeConfig, holdings: Map<string
   try {
     info = await gmgn.tokenInfo(p.chain, p.address);
   } catch (e) {
+    // No return. The time stop is a clock, not a price rule, and a position whose price
+    // cannot be read is exactly the one that must not sit open forever. Everything below
+    // survives a missing read: `healthExit` ignores an absent liquidity figure, and the
+    // price rules are held back at the exit gate.
     store.log("warn", `Price refresh failed for ${p.symbol}: ${short(e)}`);
-    return;
   }
   const price = num(info?.price?.price);
   if (price > 0) {
@@ -573,7 +608,9 @@ async function checkPosition(p: Position, cfg: TradeConfig, holdings: Map<string
   // Live positions carry their whole plan on GMGN's side, so acting on a price rule here
   // would be a second sell for an exit that is already placed. What is left is the two
   // things GMGN was never told: the time stop, and the health exit above it.
-  if (cfg.mode === "live" && exit.kind !== "time") return;
+  // Same on a failed read, whatever the mode: `lastPrice` is stale, so only the clock is
+  // still telling the truth.
+  if ((cfg.mode === "live" || !info) && exit.kind !== "time") return;
   const rung = /^(?:tp|rule)(\d+)$/.exec(exit.kind);
   if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
   await closePosition(p, exit.percent, exit.reason);
@@ -675,4 +712,4 @@ export async function manualClose(positionId: string, percent = 100): Promise<{ 
   return { ok: true };
 }
 
-export const _internals = { runScan, runMonitor, gatherCandidates, unavailable };
+export const _internals = { runScan, runMonitor, gatherCandidates, mergeFeeds, unavailable };

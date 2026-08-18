@@ -57,6 +57,9 @@ export function toCandidate(r: Record<string, any>, source: string): Candidate {
     volume5mUsd: null,
     // Only trenches reports it, and only over 24h.
     netBuyUsd: numOrNull(r.net_buy_24h),
+    // Only the signal route reports it, and the sweep carries it across from there — see
+    // `mergeFeeds`, which keeps this one number and discards the rest of the alert row.
+    triggerMcUsd: numOrNull(r.trigger_mc),
     holderCount: num(r.holder_count),
     smartDegenCount: num(r.smart_degen_count),
     renownedCount: num(r.renowned_count),

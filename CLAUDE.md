@@ -233,12 +233,27 @@ candidate row: widening the analyst's view usually means adding a field in `askA
 - **The `smart-money` feed (signal type 12) carries no flow at all.** Measured live: `volume_*`,
   `swaps_*`, `buys_*`, `sells_*` and `net_buy_*` are 0 on every window, and `smart_degen_count`
   is 0 even though the signal *is* a smart-money buy — structure, holders and `renowned_count`
-  are populated. `gatherCandidates` merges it last and blanks `buys`/`sells`/`netBuyUsd` on a row
-  no other feed carried; `volume1hUsd`/`swaps1h` cannot go null on the type, so the brief tells
-  the analyst what a `smart-money` row's zeros mean. It is also the one feed Refine barely
-  reaches — the route takes market-cap bounds and nothing else the panel offers. And it returns
-  **one row per alert**, so the same token arrives several times: `add()` collapses repeated
-  source labels for that reason.
+  are populated. Because a row it alone surfaced would carry no flow to judge, **it is a label,
+  not a source**: `mergeFeeds` runs it last and drops any address the rank feeds did not already
+  produce, so a `smart-money` tag always sits beside `trending-*` or `graduated` and the numbers
+  are that feed's. It is also the one feed Refine barely reaches — the route takes market-cap
+  bounds and nothing else the panel offers. And it returns **one row per alert**, so the same
+  token arrives several times: the merge collapses repeated source labels for that reason.
+- **Signal types are groups inside one request, so a second type is free.** `ALERTS` in
+  `engine.ts` is the whole list — type number and the label it leaves — and it drives both the
+  request and `SIGNAL_LABELS`, so adding a type is one row there. All of them ride a single POST
+  (the route bills per call, not per group) and the rows are split back apart by `signal_type`.
+  Queryable types are 1–13 and 17–20; 14–16 the API refuses. What decides whether a type earns a
+  label is its overlap with the rank feeds, since nothing else survives the merge — one live
+  sweep: 3 → 20/50, 11 → 18/50, 12 → 17/41, 6 → 12/46, 13 → 9/28, 7 → 1/50 (which is why 7 is
+  out). GMGN publishes no number-to-event mapping, so only three are named from evidence:
+  12 is smart money (its own docs say so), 6 price spike, and 11 CTO (`cto_flag` true on 50/50
+  rows). 3 and 13 keep their numbers rather than a guessed name. No type carries flow — the one
+  number the merge keeps off an alert row before discarding it is `trigger_mc`, the market cap
+  when the alert fired, carried onto the ranked row as `Candidate.triggerMcUsd` and reaching the
+  analyst as `alert_mcap_usd`. First alert wins. Against `mcap_usd` it is the only thing an alert
+  says that a rank feed cannot; measured on one live sweep the median tagged row sits at 0.61x
+  its alert cap and only 11 of 46 are above it.
 - **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
   wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes
   `input_amount_bps` (basis points: 50% → `"5000"`) and `input_amount` is a `"0"` placeholder.

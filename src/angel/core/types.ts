@@ -110,6 +110,13 @@ export type Candidate = {
   sells5m: number | null;
   volume5mUsd: number | null;
   netBuyUsd: number | null;
+  /**
+   * `trigger_mc` off a signal row: the market cap when the alert fired, carried onto the ranked
+   * row the alert tagged. Against `marketCapUsd` it is the one thing an alert says that a rank
+   * feed cannot — whether the token is still near where the smart money bought or 60% under it
+   * (the live median for signal type 12). `null` when no alert tagged this row.
+   */
+  triggerMcUsd: number | null;
   devHoldRate: number | null;
   insiderRate: number | null;
   bundlerRate: number | null;

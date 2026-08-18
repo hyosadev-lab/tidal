@@ -121,3 +121,42 @@ test("stopping before the first scan fires cancels it", async () => {
   if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
   else process.env.OPENROUTER_API_KEY = saved;
 });
+
+// ── feed merge ────────────────────────────────────────────────────────
+
+test("a signal alert tags a ranked row but cannot become one on its own", () => {
+  const row = (address: string, extra: Record<string, unknown> = {}) => ({
+    address,
+    symbol: address,
+    price: 0.001,
+    liquidity: 50_000,
+    volume: 10_000,
+    swaps: 200,
+    buys: 120,
+    sells: 80,
+    ...extra,
+  });
+
+  const merged = _internals.mergeFeeds([
+    [[row("RANKED")], "trending-1h"],
+    [[row("RANKED", { volume: 3_000, buys: 40, sells: 20 })], "trending-5m"],
+    // The signal route returns one row per alert, newest first, so the same token arrives
+    // repeatedly — and only the first alert's trigger cap is kept.
+    [[row("RANKED", { trigger_mc: 90_000 }), row("RANKED", { trigger_mc: 40_000 }), row("ALERTONLY")], "smart-money"],
+    [[row("RANKED", { trigger_mc: 70_000 }), row("SPIKEONLY")], "price-spike"],
+  ]);
+
+  assert.deepEqual(
+    merged.map((c) => c.address),
+    ["RANKED"],
+    "a token only a signal feed carried never enters the sweep",
+  );
+  assert.equal(
+    merged[0]?.source,
+    "trending-1h+trending-5m+smart-money+price-spike",
+    "repeated alerts add each label once",
+  );
+  assert.equal(merged[0]?.volume1hUsd, 10_000, "the hourly numbers stay the rank feed's");
+  assert.equal(merged[0]?.volume5mUsd, 3_000, "the 5m window is carried alongside");
+  assert.equal(merged[0]?.triggerMcUsd, 90_000, "the first alert's trigger cap survives the row it came on");
+});
