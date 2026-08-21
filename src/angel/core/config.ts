@@ -195,7 +195,6 @@ export const DEFAULT_CONFIG: TradeConfig = {
   trailArmPct: 45,
   trailGivebackPct: 25,
   timeStopMinutes: 180,
-  timeStopMinPnlPct: 8,
   cooldownMinutes: 120,
 
   refine: {},
@@ -301,7 +300,6 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     trailArmPct: clamp(input.trailArmPct, 5, 1000, base.trailArmPct),
     trailGivebackPct: clamp(input.trailGivebackPct, 5, 80, base.trailGivebackPct),
     timeStopMinutes: clamp(input.timeStopMinutes, 5, 10080, base.timeStopMinutes),
-    timeStopMinPnlPct: clamp(input.timeStopMinPnlPct, -50, 500, base.timeStopMinPnlPct),
     cooldownMinutes: clamp(input.cooldownMinutes, 0, 10080, base.cooldownMinutes),
 
     // Feed query filters, not gates — the only thing that narrows what the sweep fetches.

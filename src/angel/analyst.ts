@@ -36,7 +36,7 @@ function describeRule(r: StrategyRule): string {
 
 /** The exit half of the brief — it changes shape with `fixedStrategy`. */
 function exitPlan(cfg: TradeConfig, hurdle: number): string {
-  const time = `  time stop: flat out after ${cfg.timeStopMinutes}m if the position is under +${Math.max(cfg.timeStopMinPnlPct, hurdle).toFixed(1)}%`;
+  const time = `  time stop: flat out after ${cfg.timeStopMinutes}m, whatever the position is doing — a plan whose targets need longer than that will not reach them`;
 
   // Two floors under every profit target, and the higher one binds — `viableStrategy` enforces
   // exactly this, so the number quoted here is the one the position will actually run on.

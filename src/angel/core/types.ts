@@ -42,10 +42,8 @@ export type TradeConfig = {
   trailArmPct: number;
   /** Trailing stop distance from peak, %. */
   trailGivebackPct: number;
-  /** Close a position that has gone nowhere after this many minutes. */
+  /** Maximum holding time, minutes. A position older than this is closed whatever its PnL. */
   timeStopMinutes: number;
-  /** A position must clear this PnL% to survive the time stop. */
-  timeStopMinPnlPct: number;
   /** Don't re-enter a token for this long after exiting it. */
   cooldownMinutes: number;
 

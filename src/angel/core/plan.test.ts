@@ -233,10 +233,15 @@ test("the trailing stop arms above the threshold and fires on giveback", () => {
   assert.equal(e?.percent, 100);
 });
 
-test("the time stop closes dead money but spares a winner", () => {
+test("the time stop is a hard cap — it closes a winner too", () => {
   const old = Date.now() - (cfg.timeStopMinutes + 10) * 60_000;
   assert.equal(evaluateExit(position({ openedAt: old, lastPrice: 0.00101 }), cfg)?.kind, "time");
-  assert.equal(evaluateExit(position({ openedAt: old, lastPrice: 0.00109 }), cfg), null);
+  const winner = evaluateExit(position({ openedAt: old, lastPrice: 0.00109 }), cfg);
+  assert.equal(winner?.kind, "time");
+  assert.equal(winner?.percent, 100);
+  // Still nothing before the cap, at any PnL.
+  const young = Date.now() - (cfg.timeStopMinutes - 5) * 60_000;
+  assert.equal(evaluateExit(position({ openedAt: young, lastPrice: 0.00101 }), cfg), null);
 });
 
 // ── rule-set exits (Fixed trading strategy / the analyst's own plan) ──

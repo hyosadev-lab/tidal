@@ -312,16 +312,16 @@ export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
 
 function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | null {
   const ageMin = (Date.now() - p.openedAt) / 60_000;
-  // "Under +8% after three hours is not working" means nothing if +8% is under the round trip:
-  // on a small position the hurdle is the higher number and the one that decides.
-  const floor = Math.max(cfg.timeStopMinPnlPct, p.breakevenPct ?? 0);
-  if (ageMin >= cfg.timeStopMinutes && pnlPct < floor)
-    return {
-      percent: 100,
-      reason: `time stop — ${Math.round(ageMin)}m in and only ${pnlPct.toFixed(1)}%, under the +${floor.toFixed(1)}% it has to clear`,
-      kind: "time",
-    };
-  return null;
+  // A hard cap on holding time, not a performance test. It used to fire only on a position that
+  // was also under a PnL floor, which meant a green one aged forever: measured on this ledger,
+  // one ran 307m against a 60m setting and gave back a +226% peak to +3.7% before anything
+  // could touch it. Whatever the position is doing at this age, it is done.
+  if (ageMin < cfg.timeStopMinutes) return null;
+  return {
+    percent: 100,
+    reason: `time stop — max hold ${Math.round(ageMin)}m reached at ${pnlPct.toFixed(1)}%`,
+    kind: "time",
+  };
 }
 
 /**
