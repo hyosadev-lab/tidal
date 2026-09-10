@@ -6,7 +6,7 @@ import type { Chain } from "./types.ts";
  * anything else in. The measured ones say where they were measured; keep it that way.
  */
 
-export const CHAINS: Chain[] = ["sol", "bsc", "base", "eth"];
+export const CHAINS: Chain[] = ["sol", "bsc", "base", "eth", "robinhood"];
 
 /** Native currency address + decimals per chain — copied from the gmgn-swap skill table. */
 export const NATIVE: Record<Chain, { symbol: string; address: string; decimals: number }> = {
@@ -14,13 +14,14 @@ export const NATIVE: Record<Chain, { symbol: string; address: string; decimals: 
   bsc: { symbol: "BNB", address: "0x0000000000000000000000000000000000000000", decimals: 18 },
   base: { symbol: "ETH", address: "0x0000000000000000000000000000000000000000", decimals: 18 },
   eth: { symbol: "ETH", address: "0x0000000000000000000000000000000000000000", decimals: 18 },
+  robinhood: { symbol: "ETH", address: "0x0000000000000000000000000000000000000000", decimals: 18 },
 };
 
 /**
  * Smallest position worth opening per chain. Driven by round-trip friction:
  * SOL gas is fractions of a cent, ETH mainnet gas is not.
  */
-export const MIN_POSITION_USD: Record<Chain, number> = { sol: 3, bsc: 5, base: 5, eth: 25 };
+export const MIN_POSITION_USD: Record<Chain, number> = { sol: 3, bsc: 5, base: 5, eth: 25, robinhood: 5 };
 
 /**
  * Cap on the simulated price impact of a paper fill when slippage is on auto. Live swaps ask
@@ -34,11 +35,11 @@ export const AUTO_SLIPPAGE_CAP = 20;
  * present. Real-world knob: too low and the protected buy lands late on a busy block, too high
  * and it eats the edge. `GMGN_PRIORITY_FEE` / `GMGN_TIP_FEE` override for all chains.
  */
-export const PRIORITY_FEE: Record<Chain, number> = { sol: 0.002, bsc: 0.0005, base: 0.00002, eth: 0.0005 };
-export const TIP_FEE: Record<Chain, number> = { sol: 0.001, bsc: 0.0002, base: 0.00001, eth: 0.0002 };
+export const PRIORITY_FEE: Record<Chain, number> = { sol: 0.002, bsc: 0.0005, base: 0.00002, eth: 0.0005, robinhood: 0.0001 };
+export const TIP_FEE: Record<Chain, number> = { sol: 0.001, bsc: 0.0002, base: 0.00001, eth: 0.0002, robinhood: 0.00005 };
 
 /** Native units kept aside for gas. Without this, a full deployment cannot pay to exit. */
-export const GAS_RESERVE: Record<Chain, number> = { sol: 0.02, bsc: 0.004, base: 0.0015, eth: 0.004 };
+export const GAS_RESERVE: Record<Chain, number> = { sol: 0.02, bsc: 0.004, base: 0.0015, eth: 0.004, robinhood: 0.002 };
 
 /**
  * ── What a swap costs, and what that implies ──────────────────────────
@@ -51,10 +52,11 @@ export const GAS_RESERVE: Record<Chain, number> = { sol: 0.02, bsc: 0.004, base:
  * percentages — which is what this file's numbers used to be.
  *
  * The Solana figures are measured off `sol_cost` in a live `/v1/trade/quote`; the other chains
- * carry the priority + tip their own swaps send.
+ * carry the priority + tip their own swaps send. Robinhood (an Arbitrum-Orbit L2, gas in ETH) is
+ * not measured: 0.0003 ETH is ~200k gas at the ~1.4 gwei its `/v1/chain/gas_price` averaged.
  */
-export const SWAP_FEE_PCT: Record<Chain, number> = { sol: 2.2, bsc: 1.3, base: 1.3, eth: 1.3 };
-export const TX_COST_NATIVE: Record<Chain, number> = { sol: 0.006, bsc: 0.0007, base: 0.00003, eth: 0.0007 };
+export const SWAP_FEE_PCT: Record<Chain, number> = { sol: 2.2, bsc: 1.3, base: 1.3, eth: 1.3, robinhood: 1.3 };
+export const TX_COST_NATIVE: Record<Chain, number> = { sol: 0.006, bsc: 0.0007, base: 0.00003, eth: 0.0007, robinhood: 0.0003 };
 
 /** A paper leg's two costs, applied to the USD crossing it: a percentage, then the flat tx fee. */
 export const netOfFees = (chain: Chain, gross: number, nativeUsd: number): number =>
@@ -94,10 +96,3 @@ export const minLegUsd = (chain: Chain, nativeUsd: number): number =>
  * ~4.6% and passes, a $5 buy ~12% and does not.
  */
 export const MAX_ENTRY_COST_PCT = 8;
-
-export const EXPLORER: Record<Chain, string> = {
-  sol: "https://solscan.io/tx/",
-  bsc: "https://bscscan.com/tx/",
-  base: "https://basescan.org/tx/",
-  eth: "https://etherscan.io/tx/",
-};

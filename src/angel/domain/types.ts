@@ -1,6 +1,6 @@
 /** Shared types for the automated trading engine. */
 
-export type Chain = "sol" | "bsc" | "base" | "eth";
+export type Chain = "sol" | "bsc" | "base" | "eth" | "robinhood";
 export type Mode = "paper" | "live";
 export type RunState = "stopped" | "running" | "halted";
 

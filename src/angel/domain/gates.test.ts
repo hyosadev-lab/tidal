@@ -43,7 +43,7 @@ test("an unreadable or silent security response fails closed rather than passing
 });
 
 test("the renounce and burn halves do not apply on EVM, where neither means the same thing", () => {
-  for (const chain of ["bsc", "base", "eth"]) {
+  for (const chain of ["bsc", "base", "eth", "robinhood"]) {
     assert.equal(securityRisk({ renounced_mint: false, burn_status: "none" }, chain), "");
   }
 });
@@ -51,7 +51,7 @@ test("the renounce and burn halves do not apply on EVM, where neither means the 
 // Tax is the one half that applies everywhere — it lives here rather than in runGates because
 // only token_security answers it reliably. Threshold is GMGN's own 🔴 band (>0.10).
 test("a tax above 10% is refused on every chain", () => {
-  for (const chain of ["sol", "bsc", "base", "eth"]) {
+  for (const chain of ["sol", "bsc", "base", "eth", "robinhood"]) {
     assert.match(securityRisk({ ...safeSec, sell_tax: 0.4 }, chain), /tax 40% > 10%/);
     assert.match(securityRisk({ ...safeSec, buy_tax: 0.11 }, chain), /tax 11% > 10%/);
     // At the threshold, and absent entirely, both pass. Solana carries no tax fields at all.

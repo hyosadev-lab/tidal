@@ -106,7 +106,7 @@ export async function gatherCandidates(): Promise<Candidate[]> {
       .then((r): Feed => [r, "trending-5m"])
       .catch((): Feed => [[], "trending-5m"]),
   ];
-  if (cfg.chain === "sol" || cfg.chain === "bsc")
+  if (cfg.chain === "sol" || cfg.chain === "bsc" || cfg.chain === "robinhood")
     feeds.push(
       gmgn
         .trenches(cfg.chain, "completed", 40, refineQuery(cfg.refine, "trenches"))

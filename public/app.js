@@ -16,9 +16,9 @@ const PRESETS = {
     "Capital preservation first. Require deep liquidity relative to market cap, a dev who has fully exited, and top-10 concentration under 20%. Size down to a 0.6 multiplier on everything. Ask to exit early at the first sign of smart money distributing.",
 };
 
-const FLOORS = { sol: 3, bsc: 5, base: 5, eth: 25 };
+const FLOORS = { sol: 3, bsc: 5, base: 5, eth: 25, robinhood: 5 };
 // Fee is denominated in whatever the chain pays gas in — mirrors NATIVE in src/trading/core/config.ts.
-const NATIVE_SYMBOL = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
+const NATIVE_SYMBOL = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH", robinhood: "ETH" };
 
 // Refine rows — must match REFINE_FIELDS in src/trading/core/config.ts. Blank = no filter.
 const REFINE = ["age", "liquidity", "marketCap", "fee", "kol", "smartMoney", "top10", "devHolding", "insider"];

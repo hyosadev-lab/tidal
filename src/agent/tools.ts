@@ -1,5 +1,6 @@
 import type { Tool } from "./llm.ts";
 import type { Chain } from "../angel/domain/types.ts";
+import { CHAINS } from "../angel/domain/chains.ts";
 import { tokenInfo, kline, tokenTraders } from "../angel/market/gmgn.ts";
 
 /**
@@ -32,7 +33,7 @@ export function budgetedTools(max = 6): Record<string, Tool> {
   );
 }
 
-const CHAIN = { type: "string", enum: ["sol", "bsc", "base", "eth"], description: "chain" } as const;
+const CHAIN = { type: "string", enum: CHAINS, description: "chain" } as const;
 const ADDRESS = { type: "string", description: "token contract address" } as const;
 
 export const tools: Record<string, Tool> = {

@@ -204,7 +204,7 @@ export async function nativeUsdPrice(chain: Chain): Promise<number> {
   return (await gasQuote(chain)).nativeUsd;
 }
 
-export const NATIVE_SYMBOL: Record<string, string> = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH" };
+export const NATIVE_SYMBOL: Record<string, string> = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH", robinhood: "ETH" };
 
 /**
  * Native balance of the API-key-bound wallet, in whole units (SOL / BNB / ETH).
@@ -308,7 +308,7 @@ export async function swap(a: SwapArgs): Promise<SwapResult> {
     ...(a.autoSlippage ? { auto_slippage: true } : { slippage: a.slippage }),
   };
   if (a.percent != null) params.input_amount_bps = String(Math.round(a.percent * 100));
-  if (a.antiMev && a.chain !== "base") params.is_anti_mev = true;
+  if (a.antiMev && a.chain !== "base" && a.chain !== "robinhood") params.is_anti_mev = true;
   if (a.conditionOrders?.length) {
     params.condition_orders = a.conditionOrders as SwapParams["condition_orders"];
     params.sell_ratio_type = a.sellRatioType ?? "hold_amount";
