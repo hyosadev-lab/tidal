@@ -63,18 +63,18 @@ test("partial exits book PnL against only the slice sold", async () => {
 test("a risk envelope that can never clear the floor is refused at start", async () => {
   const saved = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "test";
-  store.updateConfig({ chain: "sol", mode: "paper", paperStartEquityUsd: 45, riskPerTradePct: 5 });
+  store.updateConfig({ chain: "sol", mode: "paper", positionSizeNative: { sol: 0.001 } });
   store.reset();
   const bad = await start();
   stop();
   assert.equal(bad.ok, false);
   assert.match(bad.error ?? "", /under the \$3 minimum/);
 
-  store.updateConfig({ riskPerTradePct: 25 });
+  store.updateConfig({ positionSizeNative: { sol: 0.1 } });
   store.reset();
   const good = await start();
   stop();
-  assert.equal(good.ok, true, "25% of $45 clears the SOL floor");
+  assert.equal(good.ok, true, "0.1 SOL clears the SOL floor");
 
   store.updateConfig({ ...DEFAULT_CONFIG });
   store.reset();
@@ -108,7 +108,7 @@ test("unavailable() names why a gate-passing row still cannot be bought", async 
 test("stopping before the first scan fires cancels it", async () => {
   const saved = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "test";
-  store.updateConfig({ ...DEFAULT_CONFIG, mode: "paper" });
+  store.updateConfig({ ...DEFAULT_CONFIG, mode: "paper", positionSizeNative: { sol: 0.1 } });
   store.reset();
 
   const r = await start();

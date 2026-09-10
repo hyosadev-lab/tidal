@@ -1,4 +1,4 @@
-import { num, numOrNull, sanitizeStrategy } from "./config.ts";
+import { num, numOrNull, sanitizeStrategy, tradeSize } from "./config.ts";
 import type { Candidate, Position, StrategyRule, TradeConfig } from "./types.ts";
 
 /**
@@ -257,12 +257,13 @@ export function score(c: Candidate): number {
   return Math.max(0, Math.min(100, Math.round(s)));
 }
 
-/** USD to commit, scaled by conviction and clamped by the risk envelope. */
-export function positionSize(cfg: TradeConfig, equity: number, cash: number, conviction: number): number {
-  const base = equity * (cfg.riskPerTradePct / 100);
-  const scaled = base * (0.6 + 0.4 * Math.min(1, Math.max(0, conviction) / 100));
-  // Never commit the last of the cash — fees and the next stop-loss need headroom.
-  return Math.max(0, Math.min(scaled, cash * 0.9));
+/**
+ * USD to commit. A fixed amount of the native token, priced at `nativeUsd` — same size every
+ * entry, whatever the conviction. Never commits the last of the cash: fees and the next
+ * stop-loss need headroom, so a thin balance shrinks the buy (and the floor check skips it).
+ */
+export function positionSize(cfg: TradeConfig, cash: number, nativeUsd: number): number {
+  return Math.max(0, Math.min(tradeSize(cfg) * nativeUsd, cash * 0.9));
 }
 
 export type ExitSignal = { percent: number; reason: string; kind: string };

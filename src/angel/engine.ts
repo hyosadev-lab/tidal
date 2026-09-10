@@ -1,5 +1,5 @@
 import { askAnalyst } from "./analyst.ts";
-import { gasReserve, liveReady, minPosition, num, refineQuery } from "./core/config.ts";
+import { gasReserve, liveReady, minPosition, num, refineQuery, tradeSize } from "./core/config.ts";
 import * as broker from "./exec/broker.ts";
 import * as gmgn from "./exec/market.ts";
 import {
@@ -334,6 +334,14 @@ async function openEntries(
   const byAddress = buyableSet(eligible, blocked);
   let opened = 0;
 
+  // Size is a fixed amount of the native token, so entries need its USD price. Cached for 30s
+  // and asked for by every buy anyway; without it there is nothing to size against.
+  const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
+  if (!(nativeUsd > 0)) {
+    store.log("warn", `Could not read the ${cfg.chain.toUpperCase()} price — entries skipped this cycle rather than sized off a guess.`);
+    return 0;
+  }
+
   for (const e of entries) {
     if (opened >= slots) break;
     const c = byAddress.get(String(e.address ?? "").toLowerCase());
@@ -354,13 +362,12 @@ async function openEntries(
       continue;
     }
 
-    const size = positionSize(cfg, store.equity, store.cash, conviction) * clamp(e.sizeMultiplier, 0.5, 1.5, 1);
+    const size = positionSize(cfg, store.cash, nativeUsd);
     const floor = minPosition(cfg);
     if (size < floor) {
-      const capped = store.cash * 0.9 < store.equity * (cfg.riskPerTradePct / 100) ? "cash" : "the risk budget";
       store.log(
         "warn",
-        `${c.symbol} skipped — position would be $${size.toFixed(2)}, under the $${floor} floor (limited by ${capped}; cash $${store.cash.toFixed(2)}).`,
+        `${c.symbol} skipped — position would be $${size.toFixed(2)}, under the $${floor} floor (${tradeSize(cfg)} ${gmgn.NATIVE_SYMBOL[cfg.chain]}; cash $${store.cash.toFixed(2)}).`,
       );
       continue;
     }
@@ -652,19 +659,20 @@ export async function start(): Promise<{ ok: boolean; error?: string }> {
   }
   if (!process.env.OPENROUTER_API_KEY) return { ok: false, error: "OPENROUTER_API_KEY is missing from .env." };
 
-  // The best case is conviction 100 with no size multiplier. If even that lands under
-  // the floor, every candidate will be skipped forever — say so now, not next cycle.
-  const ceiling = store.equity * (cfg.riskPerTradePct / 100);
+  // A fixed size that lands under the chain's floor skips every candidate forever — say so
+  // now, not next cycle. A price we cannot read just leaves the check unrun.
+  const sym = gmgn.NATIVE_SYMBOL[cfg.chain];
+  const size = tradeSize(cfg);
+  if (!(size > 0))
+    return { ok: false, error: `Set a size per trade for ${cfg.chain.toUpperCase()} first — it is blank, so there is nothing to buy with.` };
+  const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
   const floor = minPosition(cfg);
-  if (ceiling < floor) {
-    const needed = Math.ceil((floor / Math.max(1, store.equity)) * 100);
+  if (nativeUsd > 0 && size * nativeUsd < floor) {
     return {
       ok: false,
       error:
-        `With $${store.equity.toFixed(2)} and ${cfg.riskPerTradePct}% risk per trade, the largest position is $${ceiling.toFixed(2)} — under the $${floor} minimum for ${cfg.chain.toUpperCase()}. ` +
-        (needed <= 25
-          ? `Raise risk per trade to at least ${needed}%, or trade a larger balance.`
-          : `Reaching the floor would need ${needed}% of the balance in a single position, which the ${cfg.chain.toUpperCase()} settings cannot support. Trade a larger balance or a cheaper chain.`),
+        `${size} ${sym} is $${(size * nativeUsd).toFixed(2)} — under the $${floor} minimum for ${cfg.chain.toUpperCase()}. ` +
+        `Raise size per trade to at least ${(floor / nativeUsd).toPrecision(2)} ${sym}.`,
     };
   }
 

@@ -214,14 +214,18 @@ function fillForm(c, s) {
     rules = JSON.parse(incoming);
     renderRules();
   }
-  set("in-risk", c.riskPerTradePct);
+  // Per-chain, and the box only ever shows the chain in play. `sizeChain` is what the box is
+  // currently holding a value *for* — on a chain switch it still names the old one, so the
+  // number the operator typed lands back on the chain they typed it for.
+  sizes = { ...c.positionSizeNative };
+  sizeChain = c.chain;
+  set("in-size", sizes[c.chain] ?? "");
   set("in-maxpos", c.maxOpenPositions);
   set("in-daily", c.maxDailyLossPct);
   set("in-timestop", c.timeStopMinutes);
   set("in-cooldown", c.cooldownMinutes);
   // 0 means "per-chain default" — show that as an empty box with an `auto` placeholder
   // rather than a 0 the operator has to decode.
-  set("in-minpos", c.minPositionUsd || "");
   set("in-gasres", c.gasReserveNative || "");
   for (const k of REFINE)
     for (const side of ["Min", "Max"]) {
@@ -233,14 +237,14 @@ function fillForm(c, s) {
   set("in-wallet", c.walletAddress);
 
   // Make the floor visible before it silently eats every candidate.
-  $("lbl-fee-unit").textContent = NATIVE_SYMBOL[c.chain] ?? "";
+  const sym = NATIVE_SYMBOL[c.chain] ?? "";
+  $("lbl-fee-unit").textContent = sym;
+  $("lbl-size-unit").textContent = sym;
 
-  const floor = c.minPositionUsd || FLOORS[c.chain] || 5;
-  const ceiling = (s.stats?.equity ?? 0) * (c.riskPerTradePct / 100);
-  $("lbl-floor").textContent = usd(floor);
-  const ceilEl = $("lbl-ceiling");
-  ceilEl.textContent = usd(ceiling);
-  ceilEl.className = ceiling < floor ? "down" : "";
+  // Whether the fixed size clears the floor needs the native price, which the browser does
+  // not have — `start()` refuses with the exact numbers if it doesn't.
+  $("lbl-floor").textContent = usd(FLOORS[c.chain] || 5);
+  $("lbl-ceiling").textContent = sizes[c.chain] ? `${sizes[c.chain]} ${sym}` : `— (no size set for ${sym})`;
   $("live-status").textContent = s.liveReady
     ? "Armed. Live swaps will execute without further confirmation."
     : "Not armed. Live entries will be refused until GMGN_ALLOW_AUTOMATED_TRADES=1 is set and a wallet is saved.";
@@ -445,6 +449,19 @@ async function post(path, body) {
   return data;
 }
 
+let sizes = {};
+let sizeChain = "sol";
+
+/** The stored per-chain sizes with the box's current value written back onto its own chain. */
+function sizesWithInput() {
+  const out = { ...sizes };
+  const raw = $("in-size").value.trim();
+  const v = Number(raw);
+  if (raw === "" || !Number.isFinite(v) || v <= 0) delete out[sizeChain];
+  else out[sizeChain] = v;
+  return out;
+}
+
 function collectConfig() {
   const n = (id, fallback) => {
     const v = Number($(id).value);
@@ -465,17 +482,16 @@ function collectConfig() {
     mode: document.querySelector('#seg-mode button[aria-pressed="true"]')?.dataset.v ?? "paper",
     intervalMinutes: n("in-interval", 15),
     prompt: $("in-prompt").value,
-    riskPerTradePct: n("in-risk", 4),
+    positionSizeNative: sizesWithInput(),
     maxOpenPositions: n("in-maxpos", 5),
     fixedStrategy: $("in-fixed").checked,
     strategy: rules,
     maxDailyLossPct: n("in-daily", 15),
     timeStopMinutes: n("in-timestop", 180),
     cooldownMinutes: n("in-cooldown", 120),
-    minPositionUsd: n("in-minpos", 0),
     gasReserveNative: n("in-gasres", 0),
     refine,
-    slippagePct: n("in-slip", 20),
+    slippagePct: n("in-slip", 0),
     paperStartEquityUsd: n("in-bankroll", 1000),
     walletAddress: $("in-wallet").value,
   };

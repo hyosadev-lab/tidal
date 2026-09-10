@@ -190,14 +190,18 @@ test("deeper liquidity scores higher", () => {
 
 // ── sizing ────────────────────────────────────────────────────────────
 
-test("size respects the risk budget and never spends the last of the cash", () => {
-  const full = positionSize(cfg, 1000, 1000, 100);
-  assert.ok(full <= 1000 * (cfg.riskPerTradePct / 100) + 0.001);
-  assert.ok(positionSize(cfg, 1000, 20, 100) <= 18);
+test("size is the fixed native amount, and never the last of the cash", () => {
+  const c = { ...cfg, chain: "sol" as const, positionSizeNative: { sol: 0.1, eth: 0.005 } };
+  assert.equal(positionSize(c, 1000, 200), 20, "0.1 × $200 regardless of the balance");
+  assert.equal(positionSize(c, 10000, 200), 20);
+  assert.equal(positionSize(c, 20, 200), 18, "a thin balance shrinks the buy");
+  assert.equal(positionSize({ ...c, chain: "bsc" }, 1000, 200), 0, "a chain with no size set does not trade");
 });
 
-test("higher conviction sizes larger", () => {
-  assert.ok(positionSize(cfg, 1000, 1000, 100) > positionSize(cfg, 1000, 1000, 0));
+test("sizes are kept per chain, and a blank one is not carried over", () => {
+  const c = sanitizeConfig({ positionSizeNative: { sol: 0.1, eth: "", bsc: -1, doge: 5 } as never });
+  assert.deepEqual(c.positionSizeNative, { sol: 0.1 });
+  assert.deepEqual(sanitizeConfig({}, c).positionSizeNative, { sol: 0.1 }, "untouched input keeps what was stored");
 });
 
 // ── exits ─────────────────────────────────────────────────────────────
@@ -367,7 +371,7 @@ test("drained liquidity forces an exit", () => {
 // ── config safety ─────────────────────────────────────────────────────
 
 test("0 is the auto flag on the three fields that have one, not a real value", () => {
-  const c = sanitizeConfig({ slippagePct: 0, minPositionUsd: 0, gasReserveNative: 0 });
+  const c = sanitizeConfig({ slippagePct: 0, gasReserveNative: 0 });
   assert.equal(c.slippagePct, 0);
   // Auto still has to produce a usable number for a paper fill and for sizing.
   assert.equal(slippage(c), AUTO_SLIPPAGE_CAP);
@@ -380,8 +384,7 @@ test("0 is the auto flag on the three fields that have one, not a real value", (
 });
 
 test("out-of-range config is clamped rather than trusted", () => {
-  const c = sanitizeConfig({ riskPerTradePct: 900, intervalMinutes: 0, stopLossPct: -5, maxOpenPositions: 999 });
-  assert.equal(c.riskPerTradePct, 50);
+  const c = sanitizeConfig({ intervalMinutes: 0, stopLossPct: -5, maxOpenPositions: 999 });
   assert.equal(c.intervalMinutes, 1);
   assert.equal(c.stopLossPct, 5);
   assert.equal(c.maxOpenPositions, 20);
@@ -544,9 +547,8 @@ test("a 5m feed row lands in the unsuffixed fields, and the 5m ones stay blank",
 // ── minimum position size ─────────────────────────────────────────────
 
 test("the position floor tracks the chain's round-trip cost", () => {
-  assert.equal(minPosition({ ...cfg, chain: "sol", minPositionUsd: 0 }), 3);
-  assert.equal(minPosition({ ...cfg, chain: "eth", minPositionUsd: 0 }), 25);
-  assert.equal(minPosition({ ...cfg, chain: "sol", minPositionUsd: 10 }), 10, "an explicit value wins");
+  assert.equal(minPosition({ ...cfg, chain: "sol" }), 3);
+  assert.equal(minPosition({ ...cfg, chain: "eth" }), 25);
 });
 
 test("gas is held back so a fully deployed wallet can still pay to exit", () => {

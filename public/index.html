@@ -119,9 +119,8 @@
 
       <p class="sect">Position sizing</p>
       <div class="grid2">
-        <label class="mini"><span>Risk per trade %</span><input type="number" id="in-risk" min="0.5" max="50" step="0.5" /></label>
+        <label class="mini"><span>Size per trade <small id="lbl-size-unit">SOL</small></span><input type="number" id="in-size" min="0.0001" step="0.01" placeholder="not set" /></label>
         <label class="mini"><span>Max open</span><input type="number" id="in-maxpos" min="1" max="20" step="1" /></label>
-        <label class="mini"><span>Min position $</span><input type="number" id="in-minpos" min="0" step="1" placeholder="auto" /></label>
         <label class="mini"><span>Paper bankroll $</span><input type="number" id="in-bankroll" min="10" step="100" /></label>
       </div>
 
@@ -138,7 +137,7 @@
         <label class="mini"><span>Gas reserve</span><input type="number" id="in-gasres" min="0" step="0.001" placeholder="auto" /></label>
       </div>
 
-      <p class="hint">Largest position these settings allow: <b id="lbl-ceiling">—</b>. Anything under the <b id="lbl-floor">—</b> floor is skipped, because fees and slippage would outweigh the trade.</p>
+      <p class="hint">Every entry buys the same <b id="lbl-ceiling">—</b>, whatever the conviction. Each chain keeps its own size — 0.1 is a small buy on SOL and a large one on ETH. Anything under the <b id="lbl-floor">—</b> floor is skipped, because fees and slippage would outweigh the trade.</p>
     </details>
 
     <details class="fold">

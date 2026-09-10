@@ -29,7 +29,7 @@ const sell = (id: string, pnl: number): Trade => ({
 
 test("trades, stats and config survive a reopen", () => {
   const a = new Store();
-  a.updateConfig({ riskPerTradePct: 7 });
+  a.updateConfig({ maxOpenPositions: 7 });
   a.cash = 500;
   a.addTrade(sell("t1", 10));
   a.addTrade(sell("t2", -4));
@@ -45,7 +45,7 @@ test("trades, stats and config survive a reopen", () => {
   // the debounced save has not fired yet — force it before reopening
   a.saveNow();
   const b = new Store();
-  assert.equal(b.config.riskPerTradePct, 7);
+  assert.equal(b.config.maxOpenPositions, 7);
   assert.equal(b.cash, 500);
   assert.equal(b.trades()[0]?.id, "t2"); // newest first
   assert.equal(b.stats().wins, 1);
@@ -58,5 +58,5 @@ test("reset clears the ledger but not the config", () => {
   s.reset();
   assert.equal(s.tradeCount(), 0);
   assert.equal(s.equitySeries().length, 0);
-  assert.equal(s.config.riskPerTradePct, 7);
+  assert.equal(s.config.maxOpenPositions, 7);
 });

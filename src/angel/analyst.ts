@@ -1,6 +1,6 @@
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
-import { breakevenPct } from "./core/config.ts";
+import { breakevenPct, tradeSize } from "./core/config.ts";
 import { entryStrategy, pnlPct, positionSize } from "./core/plan.ts";
 import * as gmgn from "./exec/market.ts";
 import { store } from "./state/store.ts";
@@ -151,7 +151,7 @@ THE MACHINE (facts, not advice)
 - \`seen_in\` names the feed. \`trending-1h\`, \`trending-5m\` and \`graduated\` are rankings and every row here came from one of them; the numbers on the row are theirs. The rest are alerts GMGN fired on the same token, and they are labels only, never a source — no volume, no trade counts, no price of their own: \`smart-money\` (a wallet GMGN tracks bought it), \`price-spike\` (the price jumped), and \`alert-3\` / \`alert-13\`, two alert types GMGN does not say what it fires on — measured, \`alert-13\` lands on large, established tokens that KOL-tagged wallets hold and \`alert-3\` on small ones often flagged as community takeovers. Treat all four as weak confirmation: two names in \`seen_in\` is one token found twice, nothing more.
 - \`alert_mcap_usd\` is the market cap at the moment that alert fired, and \`mcap_usd\` is now. The gap is the point: a token at half its alert cap means whoever the alert was reporting is already underwater, and one above it means you are paying more than they did. Null when no alert tagged the row.
 - Gates already applied: no wash trading, no honeypot, a readable address and price. That is all — pool depth, rug_ratio, concentration, smart money and dev holdings are reported, not screened on, and \`structure_score\` grades them without stopping anything. Each pick still faces a security refusal on tax > 10% and, on Solana, live mint/freeze authority or an unburned pool.
-- Sizing: ${cfg.riskPerTradePct}% of equity per position, scaled by your conviction, max ${cfg.maxOpenPositions} open at once. Conviction under 40 is dropped by the engine, and anything over a limit stated here is clamped in code.
+- Sizing: a fixed ${tradeSize(cfg)} ${gmgn.NATIVE_SYMBOL[cfg.chain]} per position — the same every entry, max ${cfg.maxOpenPositions} open at once. Conviction does not change the size, it only decides whether the entry happens at all: under 40 the engine drops it.
 - An empty \`entries\` array is a valid answer.
 
 TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
@@ -174,7 +174,7 @@ OUTPUT
 
 Reply with raw JSON only. No prose, no markdown fences.
 {
-  "entries": [{"address":"...","symbol":"...","conviction":0-100,"sizeMultiplier":0.5-1.5,"stopLossPct":10-60,${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl|ttp|tsl","at":<%>,"dd":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}],
+  "entries": [{"address":"...","symbol":"...","conviction":0-100,"stopLossPct":10-60,${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl|ttp|tsl","at":<%>,"dd":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}],
   "exits":   [{"address":"...","percent":1-100,"reason":"what changed"}],
   "notes":   "one line on the market read this cycle"
 }
@@ -239,8 +239,8 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
   // the engine bills against, so the number in the prompt is the one the exit rules enforce; the
   // native price is the cached one a buy asks for anyway, and a chain that will not answer just
   // leaves the percentage half standing.
-  const typicalSize = positionSize(cfg, store.equity, store.cash, 70);
   const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
+  const typicalSize = positionSize(cfg, store.cash, nativeUsd);
   const hurdle = breakevenPct(cfg.chain, typicalSize, nativeUsd);
 
   const brief = {

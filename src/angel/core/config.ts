@@ -181,7 +181,7 @@ export const DEFAULT_CONFIG: TradeConfig = {
   monitorSeconds: 30,
   prompt: "",
 
-  riskPerTradePct: 4,
+  positionSizeNative: {},
   maxOpenPositions: 5,
   maxDailyLossPct: 15,
   fixedStrategy: true,
@@ -198,15 +198,16 @@ export const DEFAULT_CONFIG: TradeConfig = {
   cooldownMinutes: 120,
 
   refine: {},
-  slippagePct: 20,
+  slippagePct: 0,
 
-  minPositionUsd: 0,
   gasReserveNative: 0,
   paperStartEquityUsd: 1000,
   walletAddress: "",
 };
 
-export const minPosition = (cfg: TradeConfig): number => cfg.minPositionUsd || MIN_POSITION_USD[cfg.chain];
+export const minPosition = (cfg: TradeConfig): number => MIN_POSITION_USD[cfg.chain];
+/** The fixed buy size for the chain in play. 0 = the operator has not set one, so nothing trades. */
+export const tradeSize = (cfg: TradeConfig): number => cfg.positionSizeNative[cfg.chain] ?? 0;
 export const gasReserve = (cfg: TradeConfig): number => cfg.gasReserveNative || GAS_RESERVE[cfg.chain];
 /** Paper's impact cap. Live reads `slippagePct === 0` directly — that is the auto flag. */
 export const slippage = (cfg: TradeConfig): number => cfg.slippagePct || AUTO_SLIPPAGE_CAP;
@@ -253,6 +254,22 @@ function sanitizeRefine(input: unknown): Record<string, number> {
   return out;
 }
 
+/**
+ * Buy size per chain. Kept per chain because 0.1 is a small buy on SOL and a large one on ETH,
+ * so switching chains must not carry the number over. A missing or unusable entry stays missing:
+ * an unset chain does not trade rather than trading a guessed size.
+ */
+function sanitizeSizes(input: unknown, base: Partial<Record<Chain, number>>): Partial<Record<Chain, number>> {
+  if (input === undefined || input === null) return base;
+  const src = (input ?? {}) as Record<string, unknown>;
+  const out: Partial<Record<Chain, number>> = {};
+  for (const chain of CHAINS) {
+    const v = Number(src[chain]);
+    if (Number.isFinite(v) && v > 0) out[chain] = Math.min(1000, v);
+  }
+  return out;
+}
+
 /** Exit-builder rows. Same clamps as the fields they replace — a rule is a risk limit. */
 export function sanitizeStrategy(input: unknown, base: StrategyRule[]): StrategyRule[] {
   if (!Array.isArray(input)) return base;
@@ -290,7 +307,7 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     monitorSeconds: clamp(input.monitorSeconds, 10, 600, base.monitorSeconds),
     prompt: typeof input.prompt === "string" ? input.prompt.slice(0, 8000) : base.prompt,
 
-    riskPerTradePct: clamp(input.riskPerTradePct, 0.5, 50, base.riskPerTradePct),
+    positionSizeNative: sanitizeSizes(input.positionSizeNative, base.positionSizeNative),
     maxOpenPositions: Math.round(clamp(input.maxOpenPositions, 1, 20, base.maxOpenPositions)),
     maxDailyLossPct: clamp(input.maxDailyLossPct, 1, 90, base.maxDailyLossPct),
     fixedStrategy: typeof input.fixedStrategy === "boolean" ? input.fixedStrategy : base.fixedStrategy,
@@ -307,7 +324,6 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     // 0 is not a tolerance, it is the auto flag — same convention as the two fields below.
     slippagePct: Math.round(clamp(input.slippagePct, 0, 100, base.slippagePct)),
 
-    minPositionUsd: clamp(input.minPositionUsd, 0, 100_000, base.minPositionUsd),
     gasReserveNative: clamp(input.gasReserveNative, 0, 10, base.gasReserveNative),
     paperStartEquityUsd: clamp(input.paperStartEquityUsd, 10, 10_000_000, base.paperStartEquityUsd),
     walletAddress: typeof input.walletAddress === "string" ? input.walletAddress.trim().slice(0, 80) : base.walletAddress,

@@ -25,8 +25,8 @@ export type TradeConfig = {
   prompt: string;
 
   // ── Risk envelope (enforced in code, never by the model) ────────────
-  /** % of equity committed per new position. */
-  riskPerTradePct: number;
+  /** Fixed amount of the native token committed per entry, per chain (e.g. `{ sol: 0.1 }`). Unset = no trading on that chain. */
+  positionSizeNative: Partial<Record<Chain, number>>;
   maxOpenPositions: number;
   /** Stop trading for the day once realised+unrealised loss exceeds this %. */
   maxDailyLossPct: number;
@@ -59,8 +59,6 @@ export type TradeConfig = {
   slippagePct: number;
 
   // ── Wallet / accounting ─────────────────────────────────────────────
-  /** Smallest position worth opening, USD. 0 = per-chain default. */
-  minPositionUsd: number;
   /** Native units held back for gas and never sized into. 0 = per-chain default. */
   gasReserveNative: number;
 
@@ -267,7 +265,6 @@ export type Decision = {
     address: string;
     symbol?: string;
     conviction: number;
-    sizeMultiplier?: number;
     stopLossPct?: number;
     /** Dynamic mode only — the exit plan the model wants for this position. */
     strategy?: StrategyRule[];
