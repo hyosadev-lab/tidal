@@ -1,7 +1,8 @@
+import { NATIVE, PRIORITY_FEE, TIP_FEE } from "../domain/chains.ts";
+import { num } from "../domain/num.ts";
+import type { Chain } from "../domain/types.ts";
 import { gmgnClient } from "../../gmgn/client.ts";
 import type { SwapParams, TokenSignalGroup } from "../../gmgn/endpoint.ts";
-import { NATIVE, num, PRIORITY_FEE, TIP_FEE } from "../core/config.ts";
-import type { Chain } from "../core/types.ts";
 
 /**
  * The market layer: what the trading engine asks the GMGN API, in the engine's own
@@ -49,15 +50,6 @@ export async function trending(
     ...opts.refine,
   };
   return list(await client().getTrendingSwaps(chain, opts.interval ?? "1h", q), "rank");
-}
-
-/**
- * Most-searched tokens on GMGN. A crowd-attention feed, not a quality signal.
- * The response nests the real rows one level down, per requested chain/interval.
- */
-export async function hotSearches(chain: Chain, interval = "1h", limit = 30): Promise<RankItem[]> {
-  const r = await client().getHotSearches([{ chain, interval, limit }]);
-  return list(r, "list", "rank").flatMap((g: any) => list(g, "tokens"));
 }
 
 /** Mirrors the CLI's `--filter-preset strict`. */
@@ -127,13 +119,7 @@ export async function tokenSecurity(chain: Chain, address: string): Promise<Reco
   return obj(await client().getTokenSecurity(chain, address));
 }
 
-export async function tokenHolders(chain: Chain, address: string, limit = 20, tag?: string): Promise<any[]> {
-  const extra: Record<string, string | number> = { limit, order_by: "amount_percentage", direction: "desc" };
-  if (tag) extra["tag"] = tag;
-  return list(await client().getTokenTopHolders(chain, address, extra), "list");
-}
-
-/** Same query shape as `tokenHolders`, different route: traders is one row per wallet that traded it. */
+/** One row per wallet that traded it: what they paid, whether they are still in, who funded them. */
 export async function tokenTraders(chain: Chain, address: string, limit = 10, orderBy = "profit", tag?: string): Promise<any[]> {
   const extra: Record<string, string | number> = { limit, order_by: orderBy, direction: "desc" };
   if (tag) extra["tag"] = tag;
@@ -144,10 +130,6 @@ export async function kline(chain: Chain, address: string, resolution: string, f
   // The API takes milliseconds here; every other timestamp in this file is seconds.
   const r = await client().getTokenKline(chain, address, resolution, Math.floor(fromSec) * 1000, Math.floor(toSec) * 1000);
   return list(r, "list");
-}
-
-export async function smartMoney(chain: Chain, limit = 60): Promise<any[]> {
-  return list(await client().getSmartMoney(chain, limit), "list");
 }
 
 export type GasQuote = {

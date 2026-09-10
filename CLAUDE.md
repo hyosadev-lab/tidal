@@ -18,7 +18,7 @@ and do not add npm dependencies without being asked.
 ```bash
 npm start                                     # dashboard + engine → http://127.0.0.1:3111
 npm test                                      # node --test, all *.test.ts
-node --test src/trading/core/plan.test.ts     # one file
+node --test src/angel/domain/positions.test.ts # one file
 node --test --test-name-pattern="stop-loss"   # one test by name
 npx tsc --noEmit                              # type check
 npm run calibrate -- --limit=0                # is score() ranking anything? (--limit=0 spends nothing)
@@ -30,29 +30,31 @@ it signs `swap` and `query_order`, the two routes GMGN requires a signature on. 
 `gmgn-cli` dependency; `gmgn-skills/` is an untracked reference clone of its source, kept only
 to look up endpoint shapes and field semantics, and excluded from `tsconfig.json`.
 
-**One test file is not hermetic.** `src/trading/engine.test.ts` calls `engine.start()`, which
+**One test file is not hermetic.** `src/angel/cycle/cycle.test.ts` calls `start()`, which
 schedules a real scan 1.5s later; that scan hits the live GMGN API and writes to `data/tta.db`.
 Expect network calls, a few seconds of runtime, and a mutated `data/` (gitignored). Point `TTA_DB`
 at a scratch file to keep a test off the real ledger — `db.test.ts` does exactly that.
-It also drives the shared `store` singleton. Every other test file is pure — put new tests in
-`plan.test.ts` unless they genuinely need the network or the store. `npm test` loads `.env`
+It also drives the shared `store` singleton. Every other test file is pure and sits beside the
+module it pins (`domain/gates.test.ts`, `domain/positions.test.ts`, …) — put a new test in the
+one named after the file you changed, and in `cycle/cycle.test.ts` only if it genuinely needs
+the network or the store. `npm test` loads `.env`
 so the key is present.
 
 ## Architecture
 
 One entry point: `src/index.ts` — static file server + JSON control API + SSE stream, driving
-`src/trading/`. Its analyst is one LLM call per cycle (plus a capped few read-only GMGN lookups),
+`src/angel/`. Its analyst is one LLM call per cycle (plus a capped few read-only GMGN lookups),
 through `src/agent/llm.ts`.
 
 There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
-GMGN tool set plus a skill loader (`src/agent/skills.ts`, `skills/`). All of it went with the
+GMGN tool set plus a skill loader. All of it went with the
 analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` now holds three of them
 again, `gmgn_token_info`, `gmgn_token_kline` and `gmgn_token_traders` (`git log` it for the old,
 much larger set).
 
 ### Storage
 
-Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/trading/state/db.ts`
+Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/angel/data/db.ts`
 with `node:sqlite` — stdlib, so the zero-dependency rule holds. The split is by shape:
 bounded state that the engine mutates in place (config, cash, open positions, cooldowns,
 blacklist) is a JSON blob in `kv`; unbounded append-only series (`trades`, `equity`,
@@ -80,13 +82,13 @@ the two requests already queued behind it are what turn a 30s cooldown into `RAT
 until the model replies without tool calls; the analyst passes two read-only ones, so a cycle is
 one request plus one more per lookup it spends.
 
-### The central split (`src/trading/core/plan.ts` header states it; respect it)
+### The central split (`src/angel/domain/positions.ts` header states it; respect it)
 
 **Gates, sizing, and exit *execution* are deterministic code. The model only ranks, writes theses,
 and — in dynamic mode — proposes the shape of an exit plan.**
 A position must never depend on an LLM call succeeding in order to be closed. The model can veto a
 trade or request an early exit; it can never widen a risk limit. When adding features, keep new
-risk logic in `plan.ts`/`config.ts` — not in prompts.
+risk logic in `domain/` — not in prompts.
 
 `cfg.fixedStrategy` picks who writes the plan. On: the operator's rows from the dashboard's exit
 builder (`cfg.strategy`). Off: the analyst returns a `strategy` array per entry. Either way the
@@ -105,27 +107,47 @@ two things GMGN was never told, the time stop and `healthExit`, and books everyt
 the balance. That is why an exit plan must survive translation — a rule `conditionOrders` drops
 is a rule that does not exist in live.
 
-### `src/trading/` layering
+### `src/angel/` layering
 
-Three folders and a root, and **imports only ever point inward**: `core/` imports nothing but
-itself, `state/` and `exec/` import `core/`, and the root files assemble all three. Nothing in
-`core/` may import from `state/`, `exec/`, or the root — that rule is what keeps `core/plan.ts`
-testable without opening the database or the API client. A new file goes in the deepest folder
-whose rule it can still obey.
+Four folders and two root files, and **imports only ever point inward**:
+
+```
+domain/   pure rules — imports nothing but itself
+data/     persistence — imports domain/
+market/   GMGN-facing — imports domain/
+cycle/    one cycle's steps — imports domain/, data/, market/, and cycle/control.ts
+runtime.ts  assembles all of it; nothing imports it back except src/index.ts
+```
+
+Nothing in `domain/` may import from `data/`, `market/`, `cycle/` or the root — that rule is
+what keeps the rules testable without opening the database or the API client. A new file goes
+in the deepest folder whose rule it can still obey. `cycle/control.ts` is the one exception
+worth knowing: every step imports it, so it imports no step (the timer callbacks are passed
+in, not imported).
 
 | File | Role |
 |---|---|
-| `core/types.ts` | shared types, no logic |
-| `core/config.ts` | defaults, per-chain constants, `num`, `sanitizeConfig` (every dashboard input is clamped here — these bounds are safety limits, not input tidying), `liveReady`. Imports nothing but `types.ts` — keep it that way |
-| `core/plan.ts` | pure functions: `toCandidate`, `runGates`, `score`, `positionSize`, `evaluateExit`, `healthExit`, `isDust`. No I/O, and importing it must not open the database or the API client — this is where tests concentrate |
-| `core/fixtures.ts` | `candidate()` / `position()` builders; only `*.test.ts` imports it |
-| `state/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
-| `state/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE |
-| `state/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
-| `exec/market.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
-| `exec/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
-| `analyst.ts` | the model half of a cycle: the prompts (`systemPrompt`, `exitPlan`, `describeRule`), the cycle brief, `askAnalyst`, `extractJson`. One LLM call, two read-only tools on a per-cycle budget, spends nothing |
-| `engine.ts` | scan loop (interval minutes) + monitor loop (30s), entries and exits, lifecycle. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
+| `domain/types.ts` | shared types, no logic |
+| `domain/num.ts` | `num`, `numOrNull`, `truthy`, `clamp`, `short` — the coercions every wire value passes through, so the pure layer can read a feed row without the HTTP client |
+| `domain/chains.ts` | per-chain constants and the fee arithmetic on them: `NATIVE`, `MIN_POSITION_USD`, `GAS_RESERVE`, `SWAP_FEE_PCT`, `netOfFees`, `breakevenPct`, `minLegUsd` |
+| `domain/config.ts` | `DEFAULT_CONFIG`, the Refine spec, `sanitizeConfig` (every dashboard input is clamped here — safety limits, not input tidying), the derived reads (`tradeSize`, `minPosition`, `slippage`), `liveReady` |
+| `domain/candidates.ts` | `toCandidate` + `buyableSet`: a feed row becomes a `Candidate` here and only here |
+| `domain/gates.ts` | what disqualifies a row and what ranks the rest: `runGates`, `gateTally`, `securityRisk`, `score` |
+| `domain/positions.ts` | size it, plan its exit, decide when it leaves: `positionSize`, `entryStrategy`, `viableStrategy`, `evaluateExit`, `healthExit`, `isDust`. **The central split is stated in this file's header** |
+| `domain/fixtures.ts` | `candidate()` / `position()` builders; only `*.test.ts` imports it |
+| `data/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
+| `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
+| `data/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
+| `market/gmgn.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
+| `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
+| `cycle/control.ts` | the run's mutable state: the generation a Stop bumps (`generation`/`aborted`), the timer handles (`arm`/`disarm`), and `halt` |
+| `cycle/sweep.ts` | the whole search: `ALERTS`, `mergeFeeds`, `gatherCandidates` — feeds in, one gated and scored list out |
+| `cycle/scan.ts` | **one cycle, top to bottom** — read `runScan` and that is the flow. Also `syncLiveBalance` |
+| `cycle/entries.ts` | `openEntries` + `openPosition`: the only place that opens a position |
+| `cycle/exits.ts` | every path out: `applyExits`, `closePosition`, `bookSell`, `withdrawExitPlan`, the daily loss budget. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
+| `cycle/monitor.ts` | the 30s loop: mirror the wallet (`reconcile`), then run the exit plan. Never calls the model |
+| `analyst.ts` | the model half of a cycle: the prompts, the cycle brief, `askAnalyst`, `extractJson`. One LLM call, two read-only tools on a per-cycle budget |
+| `runtime.ts` | lifecycle: `start`, `stop`, `reschedule`, `scanNow`, `manualClose`. The whole surface `src/index.ts` drives |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
 
 Data flow per cycle: `gatherCandidates` (4 GMGN feeds, deduped) → `runGates` + `score` →
@@ -165,7 +187,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   `budgetedTools(LOOKUP_BUDGET)` from `src/agent/tools.ts` — `gmgn_token_info`,
   `gmgn_token_kline` and `gmgn_token_traders` (the holder set wallet by wallet: cost basis,
   whether they are still in, and the wallet that funded them — bucket weight 5, the most
-  expensive of the three), all `exist`-auth reads through `market.ts`. The unattended loop still
+  expensive of the three), all `exist`-auth reads through `market/gmgn.ts`. The unattended loop still
   cannot reach a shell, a spend route or the operator's wallet, because no such tool exists in
   that record. Keep it that way: add read-only routes one named tool at a time, never a shell,
   never a route that spends, and never the record wholesale from somewhere else.
@@ -198,7 +220,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
 - **In live mode the wallet, not the ledger, says what is still held.** The whole exit plan runs
   on GMGN's side, so positions shrink and disappear without this process selling anything — and
   the operator can sell from GMGN's UI too. One `walletHoldings` read per monitor tick (not per
-  position) is the mirror; `reconcile` in `engine.ts` books whatever left through
+  position) is the mirror; `reconcile` in `cycle/monitor.ts` books whatever left through
   `broker.recordExternalSell`, which submits nothing and prices the slice at the last seen price,
   so that trade's PnL is an estimate. A wallet that cannot be read, and an address the holdings
   page did not carry, both close nothing — only an explicit zero balance does. When this process
@@ -212,7 +234,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   route does not answer for, and `GMGN_PRIORITY_FEE` / `GMGN_TIP_FEE` override everything. GMGN
   rejects the swap outright when one is missing, so a protected buy silently becomes no buy.
 - **`buyableSet` is the last word on what can be bought.** It re-checks gates, cooldown,
-  blacklist and open positions in `engine.ts` immediately before entries — deliberately *after*
+  blacklist and open positions in `cycle/entries.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto
   cooldown. An address the analyst names that is not in the set is logged and skipped, with the
   address included in the log line: a mistyped or omitted one is indistinguishable from a gate
@@ -240,7 +262,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   bounds and nothing else the panel offers. And it returns **one row per alert**, so the same
   token arrives several times: the merge collapses repeated source labels for that reason.
 - **Signal types are groups inside one request, so a second type is free.** `ALERTS` in
-  `engine.ts` is the whole list — type number and the label it leaves — and it drives both the
+  `cycle/sweep.ts` is the whole list — type number and the label it leaves — and it drives both the
   request and `SIGNAL_LABELS`, so adding a type is one row there. All of them ride a single POST
   (the route bills per call, not per group) and the rows are split back apart by `signal_type`.
   Queryable types are 1–13 and 17–20; 14–16 the API refuses. What decides whether a type earns a
@@ -257,7 +279,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
 - **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
   wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes
   `input_amount_bps` (basis points: 50% → `"5000"`) and `input_amount` is a `"0"` placeholder.
-- **`kline` takes milliseconds**; every other timestamp in `market.ts` is seconds.
+- **`kline` takes milliseconds**; every other timestamp in `market/gmgn.ts` is seconds.
 - **In live mode, sizing comes from the real wallet** (`syncLiveBalance` → `/v1/user/info`),
   not the paper bankroll. If the balance can't be read, entries are skipped for that cycle rather
   than sized off a guess — GMGN rate-limits `insufficient token balance` errors specifically.
@@ -275,7 +297,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   data the sweep already fetched. Not a tool — the analyst has none, and a new GMGN call per
   candidate is paid out of the sweep's rate limit.
 - **New GMGN route**: add it to `OpenApiClient` in `src/gmgn/endpoint.ts` and wrap it in
-  `market.ts`, which is the cast boundary. Nothing above `market.ts` speaks HTTP.
+  `market/gmgn.ts`, which is the cast boundary. Nothing above it speaks HTTP.
 - **A tool, if it ever comes back**: `src/agent/tools.ts` is the empty template — shape,
   schema rules and the allowlist discipline are in its header.
-- **New config knob**: `types.ts` → `DEFAULT_CONFIG` → a clamp in `sanitizeConfig` → the UI.
+- **New config knob**: `domain/types.ts` → `DEFAULT_CONFIG` → a clamp in `sanitizeConfig` → the UI.

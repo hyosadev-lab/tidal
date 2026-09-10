@@ -1,6 +1,6 @@
 import type { Tool } from "./llm.ts";
-import type { Chain } from "../angel/core/types.ts";
-import { tokenInfo, kline, tokenTraders } from "../angel/exec/market.ts";
+import type { Chain } from "../angel/domain/types.ts";
+import { tokenInfo, kline, tokenTraders } from "../angel/market/gmgn.ts";
 
 /**
  * The analyst's tools: three read-only GMGN routes, for deep-diving a candidate that is already

@@ -1,17 +1,6 @@
-import { DEFAULT_CONFIG, sanitizeConfig, liveReady } from "../core/config.ts";
 import { db, insertEquity, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
-import type {
-  Candidate,
-  EquityPoint,
-  LogEntry,
-  LogLevel,
-  Position,
-  RunState,
-  Snapshot,
-  Stats,
-  Trade,
-  TradeConfig,
-} from "../core/types.ts";
+import { DEFAULT_CONFIG, liveReady, sanitizeConfig } from "../domain/config.ts";
+import type { Candidate, EquityPoint, LogEntry, LogLevel, Position, RunState, Snapshot, Stats, Trade, TradeConfig } from "../domain/types.ts";
 
 const MAX_LOGS = 400;
 /** Only what the tide strip draws — the table keeps the rest. */
@@ -208,6 +197,19 @@ export class Store {
 
   isBlacklisted(address: string): boolean {
     return this.s.blacklist.includes(address.toLowerCase());
+  }
+
+  /**
+   * Why a candidate that cleared the gates still cannot be bought, or "" when it can. Held,
+   * cooled-down and blacklisted are all store state and never travel on a Candidate, so the
+   * eligible filter, the dashboard's note and the pre-entry re-check all ask this one question
+   * and cannot drift apart.
+   */
+  unavailable(address: string): string {
+    if (this.position(address)) return "already held";
+    if (this.onCooldown(address)) return "on cooldown after a recent exit";
+    if (this.isBlacklisted(address)) return "blacklisted";
+    return "";
   }
 
   // ── equity / stats ────────────────────────────────────────────────

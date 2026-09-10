@@ -1,11 +1,12 @@
+import { store } from "../data/store.ts";
+import { DEFAULT_CONFIG } from "../domain/config.ts";
+import { candidate } from "../domain/fixtures.ts";
+import type { TradeConfig } from "../domain/types.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_CONFIG } from "./core/config.ts";
-import { store } from "./state/store.ts";
-import * as broker from "./exec/broker.ts";
-import { start, stop, _internals } from "./engine.ts";
-import { candidate } from "./core/fixtures.ts";
-import type { TradeConfig } from "./core/types.ts";
+import * as broker from "../market/broker.ts";
+import { mergeFeeds } from "./sweep.ts";
+import { start, stop } from "../runtime.ts";
 
 // Not hermetic. These drive the shared store singleton and rewrite `data/`, and `start()`
 // schedules a real scan against the live GMGN API 1.5s later — expect network and a few
@@ -86,8 +87,8 @@ test("a risk envelope that can never clear the floor is refused at start", async
 // note and the pre-entry re-check all read it, so a drift here silently changes all three.
 test("unavailable() names why a gate-passing row still cannot be bought", async () => {
   store.reset();
-  const { unavailable } = _internals;
   const c = candidate({ address: "0xAbC" });
+  const unavailable = (x: typeof c) => store.unavailable(x.address);
 
   assert.equal(unavailable(c), "", "a clean row is buyable");
 
@@ -137,7 +138,7 @@ test("a signal alert tags a ranked row but cannot become one on its own", () => 
     ...extra,
   });
 
-  const merged = _internals.mergeFeeds([
+  const merged = mergeFeeds([
     [[row("RANKED")], "trending-1h"],
     [[row("RANKED", { volume: 3_000, buys: 40, sells: 20 })], "trending-5m"],
     // The signal route returns one row per alert, newest first, so the same token arrives

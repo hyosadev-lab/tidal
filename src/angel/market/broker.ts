@@ -1,9 +1,11 @@
+import { breakevenPct, MAX_ENTRY_COST_PCT, minLegUsd, NATIVE, netOfFees } from "../domain/chains.ts";
+import { slippage } from "../domain/config.ts";
+import { num } from "../domain/num.ts";
+import { peakPct, viableStrategy } from "../domain/positions.ts";
+import type { store as Store } from "../data/store.ts";
+import type { Candidate, Chain, Position, StrategyRule, Trade, TradeConfig } from "../domain/types.ts";
 import { randomUUID } from "node:crypto";
-import { breakevenPct, MAX_ENTRY_COST_PCT, minLegUsd, NATIVE, netOfFees, num, slippage } from "../core/config.ts";
-import { peakPct, viableStrategy } from "../core/plan.ts";
-import * as gmgn from "./market.ts";
-import type { store as Store } from "../state/store.ts";
-import type { Candidate, Chain, Position, StrategyRule, TradeConfig, Trade } from "../core/types.ts";
+import * as gmgn from "./gmgn.ts";
 
 /** Price impact a paper fill should expect, given trade size against pool depth. */
 function paperSlip(usd: number, liquidityUsd: number, cap: number): number {

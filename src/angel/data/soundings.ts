@@ -1,3 +1,5 @@
+import { db, insertOutcome, insertSounding, rowsJson } from "./db.ts";
+import type { Candidate, Chain } from "../domain/types.ts";
 /**
  * Forward-outcome log: every candidate the sweep saw, and what its price did afterwards.
  *
@@ -18,8 +20,6 @@
  * ponytail: no retention policy. ~40 rows a cycle stays small for years in SQLite; if it ever
  * matters, `delete from soundings where ts < …` older than the longest horizon you report on.
  */
-import { db, insertOutcome, insertSounding, rowsJson } from "./db.ts";
-import type { Candidate, Chain } from "../core/types.ts";
 
 /** One candidate as `score()` saw it, at the moment it was scored. */
 export type Sounding = { ts: number; cycle: number; chain: Chain; c: Candidate };

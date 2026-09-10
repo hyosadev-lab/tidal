@@ -1,10 +1,11 @@
+import { store } from "./data/store.ts";
+import { breakevenPct } from "./domain/chains.ts";
+import { tradeSize } from "./domain/config.ts";
+import { entryStrategy, pnlPct, positionSize } from "./domain/positions.ts";
+import type { Candidate, Decision, StrategyRule, TradeConfig } from "./domain/types.ts";
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
-import { breakevenPct, tradeSize } from "./core/config.ts";
-import { entryStrategy, pnlPct, positionSize } from "./core/plan.ts";
-import * as gmgn from "./exec/market.ts";
-import { store } from "./state/store.ts";
-import type { Candidate, Decision, StrategyRule, TradeConfig } from "./core/types.ts";
+import * as gmgn from "./market/gmgn.ts";
 
 /**
  * The model half of a cycle: what the analyst is told, and what comes back.

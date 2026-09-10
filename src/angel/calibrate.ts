@@ -17,11 +17,11 @@
  *
  * `--limit=0` reports on what is already resolved without spending a single API call.
  */
-import { num } from "./core/config.ts";
-import * as gmgn from "./exec/market.ts";
-import { recordOutcome, resolvedPairs, soundingCount, soundingKey, unresolved } from "./state/soundings.ts";
-import type { Sounding } from "./state/soundings.ts";
-import type { Candidate } from "./core/types.ts";
+import { recordOutcome, resolvedPairs, soundingCount, soundingKey, unresolved } from "./data/soundings.ts";
+import { num } from "./domain/num.ts";
+import type { Sounding } from "./data/soundings.ts";
+import type { Candidate } from "./domain/types.ts";
+import * as gmgn from "./market/gmgn.ts";
 
 /** The terms `score()` actually reads. Keep in step with it, or a new term goes unmeasured. */
 const FEATURES = [
