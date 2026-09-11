@@ -1,6 +1,6 @@
 import { sanitizeStrategy, tradeSize } from "./config.ts";
 import type { Position, StrategyRule, TradeConfig } from "./types.ts";
-import { num } from "./num.ts";
+import { clamp, num } from "./num.ts";
 
 /**
  * THE TRADING PLAN
@@ -147,6 +147,15 @@ export function entryStrategy(cfg: TradeConfig, proposed: unknown): StrategyRule
     ? capped
     : [...capped, { kind: "sl" as const, at: -cfg.stopLossPct, sell: 100 }];
 }
+
+/**
+ * The model's per-entry stop, which the legacy path (no rule set) runs on — in paper through
+ * `evaluateExit`, in live as the `loss_stop` GMGN is handed. It may tighten the operator's stop,
+ * never deepen it. The floor keeps a model stop out of the token's own noise, unless the operator
+ * already set one tighter than that.
+ */
+export const entryStop = (cfg: TradeConfig, proposed: unknown): number =>
+  clamp(proposed, Math.min(10, cfg.stopLossPct), cfg.stopLossPct, cfg.stopLossPct);
 
 /**
  * The same plan, priced. `entryStrategy` writes the shape; this is what the fees allow of it,

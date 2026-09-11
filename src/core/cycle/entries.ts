@@ -2,7 +2,7 @@ import { buyableSet } from "../domain/candidates.ts";
 import { liveReady, minPosition, tradeSize } from "../domain/config.ts";
 import { securityRisk } from "../domain/gates.ts";
 import { clamp, short } from "../domain/num.ts";
-import { entryStrategy, positionSize } from "../domain/positions.ts";
+import { entryStop, entryStrategy, positionSize } from "../domain/positions.ts";
 import { store } from "../data/store.ts";
 import * as broker from "../market/broker.ts";
 import * as gmgn from "../market/gmgn.ts";
@@ -75,7 +75,7 @@ export async function openEntries(
       size,
       String(e.thesis ?? "").slice(0, 400),
       conviction,
-      clamp(e.stopLossPct, 10, 60, cfg.stopLossPct),
+      entryStop(cfg, e.stopLossPct),
       entryStrategy(cfg, e.strategy),
     );
     opened++;

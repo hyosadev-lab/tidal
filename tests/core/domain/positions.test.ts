@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gasReserve, minPosition, sanitizeConfig } from "../../../src/core/domain/config.ts";
 import { position } from "./fixtures.ts";
-import { entryStrategy, evaluateExit, healthExit, positionSize } from "../../../src/core/domain/positions.ts";
+import { entryStop, entryStrategy, evaluateExit, healthExit, positionSize } from "../../../src/core/domain/positions.ts";
 import type { StrategyRule } from "../../../src/core/domain/types.ts";
 import { DEFAULT_CONFIG } from "../../../src/core/domain/config.ts";
 import type { TradeConfig } from "../../../src/core/domain/types.ts";
@@ -164,6 +164,14 @@ test("the model may shape the exit plan but not outrun the stop", () => {
   ]);
   assert.deepEqual(out[0], { kind: "sl", at: -25, sell: 100 });
   assert.equal(out.length, 2);
+});
+
+test("the model's per-entry stop may tighten the operator's, never deepen it", () => {
+  assert.equal(entryStop({ ...cfg, stopLossPct: 25 }, 60), 25);
+  assert.equal(entryStop({ ...cfg, stopLossPct: 25 }, 15), 15);
+  assert.equal(entryStop({ ...cfg, stopLossPct: 25 }, "nonsense"), 25);
+  // An operator stop tighter than the model's floor still binds.
+  assert.equal(entryStop({ ...cfg, stopLossPct: 5 }, 10), 5);
 });
 
 test("a plan with no stop gets one, and an unusable plan falls back to the config", () => {

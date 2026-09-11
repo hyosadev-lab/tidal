@@ -175,7 +175,7 @@ OUTPUT
 
 Reply with raw JSON only. No prose, no markdown fences.
 {
-  "entries": [{"address":"...","symbol":"...","conviction":0-100,"stopLossPct":10-60,${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl|ttp|tsl","at":<%>,"dd":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}],
+  "entries": [{"address":"...","symbol":"...","conviction":0-100,"stopLossPct":${Math.min(10, cfg.stopLossPct)}-${cfg.stopLossPct},${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl|ttp|tsl","at":<%>,"dd":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}],
   "exits":   [{"address":"...","percent":1-100,"reason":"what changed"}],
   "notes":   "one line on the market read this cycle"
 }
