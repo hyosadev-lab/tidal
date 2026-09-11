@@ -194,9 +194,9 @@ test("fixed mode ignores whatever the model proposes", () => {
 });
 
 test("drained liquidity forces an exit", () => {
-  const e = healthExit(position(), { liquidity: 20_000 }, 80_000);
+  const e = healthExit(position({ entryLiquidityUsd: 80_000 }), { liquidity: 20_000 });
   assert.equal(e?.percent, 100);
-  assert.equal(healthExit(position(), { liquidity: 79_000 }, 80_000), null);
+  assert.equal(healthExit(position({ entryLiquidityUsd: 80_000 }), { liquidity: 79_000 }), null);
 });
 
 // ── minimum position size ─────────────────────────────────────────────

@@ -4,11 +4,6 @@
  * without importing the HTTP client to do it.
  */
 
-/**
- * Every number off the GMGN wire arrives as `unknown` — string, number, null, or absent.
- * This is the one coercion for all of them, and it lives here rather than in `market.ts`
- * so the pure layer can read a feed row without importing the HTTP client to do it.
- */
 export const num = (v: unknown, d = 0): number => {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : d;

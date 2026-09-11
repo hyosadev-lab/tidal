@@ -106,7 +106,7 @@ async function checkPosition(p: Position, cfg: TradeConfig, holdings: Map<string
 
   if (cfg.mode === "live" && (await reconcile(p, cfg, holdings))) return;
 
-  const health = healthExit(p, info ?? {}, p.entryLiquidityUsd);
+  const health = healthExit(p, info ?? {});
   if (health) {
     await closePosition(p, health.percent, health.reason);
     return;

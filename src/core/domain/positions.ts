@@ -31,28 +31,28 @@ export type ExitSignal = { percent: number; reason: string; kind: string };
  */
 export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
   if (p.lastPrice <= 0 || p.entryPrice <= 0) return null;
-  const pnlPct = ((p.lastPrice - p.entryPrice) / p.entryPrice) * 100;
+  const pnl = pnlPct(p);
   const stop = p.stopLossPct || cfg.stopLossPct;
 
   // A position carrying its own rule set runs on those instead of the config's
   // stop / trail / ladder. The time stop below still applies either way.
   if (p.strategy?.length) {
-    const hit = ruleExit(p, pnlPct, p.breakevenPct ?? 0);
+    const hit = ruleExit(p, pnl, p.breakevenPct ?? 0);
     if (hit) return hit;
-    return timeStop(p, cfg, pnlPct);
+    return timeStop(p, cfg, pnl);
   }
 
-  if (pnlPct <= -stop)
-    return { percent: 100, reason: `stop-loss hit at ${pnlPct.toFixed(1)}%`, kind: "stop" };
+  if (pnl <= -stop)
+    return { percent: 100, reason: `stop-loss hit at ${pnl.toFixed(1)}%`, kind: "stop" };
 
-  if (pnlPct >= cfg.trailArmPct) p.trailArmed = true;
+  if (pnl >= cfg.trailArmPct) p.trailArmed = true;
 
   if (p.trailArmed) {
     const giveback = ((p.peakPrice - p.lastPrice) / p.peakPrice) * 100;
     if (giveback >= cfg.trailGivebackPct)
       return {
         percent: 100,
-        reason: `trailing stop — gave back ${giveback.toFixed(1)}% from peak (still +${pnlPct.toFixed(1)}%)`,
+        reason: `trailing stop — gave back ${giveback.toFixed(1)}% from peak (still +${pnl.toFixed(1)}%)`,
         kind: "trail",
       };
   }
@@ -61,11 +61,11 @@ export function evaluateExit(p: Position, cfg: TradeConfig): ExitSignal | null {
   for (let i = cfg.takeProfit.length - 1; i >= 0; i--) {
     const rung = cfg.takeProfit[i];
     if (!rung || p.filledRungs.includes(i)) continue;
-    if (pnlPct >= rung.at)
-      return { percent: rung.sell, reason: `take-profit rung ${i + 1} at +${pnlPct.toFixed(1)}%`, kind: `tp${i}` };
+    if (pnl >= rung.at)
+      return { percent: rung.sell, reason: `take-profit rung ${i + 1} at +${pnl.toFixed(1)}%`, kind: `tp${i}` };
   }
 
-  return timeStop(p, cfg, pnlPct);
+  return timeStop(p, cfg, pnl);
 }
 
 function timeStop(p: Position, cfg: TradeConfig, pnlPct: number): ExitSignal | null {
@@ -228,11 +228,8 @@ export function viableStrategy(
 }
 
 /** Live risk checks against fresh token data for a position we already hold. */
-export function healthExit(
-  p: Position,
-  info: Record<string, any>,
-  entryLiquidity: number,
-): ExitSignal | null {
+export function healthExit(p: Position, info: Record<string, any>): ExitSignal | null {
+  const entryLiquidity = p.entryLiquidityUsd;
   const liq = num(info?.liquidity ?? info?.pool?.liquidity);
   if (entryLiquidity > 0 && liq > 0 && liq < entryLiquidity * 0.45)
     return { percent: 100, reason: `liquidity drained ${Math.round((1 - liq / entryLiquidity) * 100)}%`, kind: "health" };
