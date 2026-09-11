@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gasReserve, minPosition, sanitizeConfig } from "./config.ts";
+import { gasReserve, minPosition, sanitizeConfig } from "../../../src/core/domain/config.ts";
 import { position } from "./fixtures.ts";
-import { entryStrategy, evaluateExit, healthExit, positionSize } from "./positions.ts";
-import type { StrategyRule } from "./types.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
-import type { TradeConfig } from "./types.ts";
+import { entryStrategy, evaluateExit, healthExit, positionSize } from "../../../src/core/domain/positions.ts";
+import type { StrategyRule } from "../../../src/core/domain/types.ts";
+import { DEFAULT_CONFIG } from "../../../src/core/domain/config.ts";
+import type { TradeConfig } from "../../../src/core/domain/types.ts";
 
 // Sizing, the exit plan, and the rules that run every monitor tick. Pure: no network, no store.
 

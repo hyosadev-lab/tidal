@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { constants, generateKeyPairSync, verify } from "node:crypto";
 import { test } from "node:test";
 
-import { buildMessage, detectAlgorithm, sign } from "./signer.ts";
-import { gmgnClient } from "./client.ts";
-import { OpenApiClient } from "./endpoint.ts";
+import { buildMessage, detectAlgorithm, sign } from "../../src/gmgn/signer.ts";
+import { gmgnClient } from "../../src/gmgn/client.ts";
+import { OpenApiClient } from "../../src/gmgn/endpoint.ts";
 
 // Pure, no network — pins the exact byte format GMGN verifies the signature against.
 

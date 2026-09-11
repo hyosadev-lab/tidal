@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bands, median, spearman } from "./calibrate.ts";
-import { score } from "./domain/gates.ts";
+import { bands, median, spearman } from "../../src/core/calibrate.ts";
+import { score } from "../../src/core/domain/gates.ts";
 
 // The report is only worth acting on if the maths under it is right — a sign error here
 // would argue for inverting a weight that is fine.

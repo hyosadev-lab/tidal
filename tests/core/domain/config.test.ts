@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AUTO_SLIPPAGE_CAP } from "./chains.ts";
-import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig, slippage } from "./config.ts";
-import { trenchesFilters } from "../market/gmgn.ts";
-import type { TradeConfig } from "./types.ts";
+import { AUTO_SLIPPAGE_CAP } from "../../../src/core/domain/chains.ts";
+import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig, slippage } from "../../../src/core/domain/config.ts";
+import { trenchesFilters } from "../../../src/core/market/gmgn.ts";
+import type { TradeConfig } from "../../../src/core/domain/types.ts";
 
 // The clamps are safety limits, not input tidying — every one of them is pinned here.
 

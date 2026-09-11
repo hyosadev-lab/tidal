@@ -1,4 +1,4 @@
-import type { Candidate, Position } from "./types.ts";
+import type { Candidate, Position } from "../../../src/core/domain/types.ts";
 
 /** Test fixtures. Nothing in the product imports this — `*.test.ts` files do. */
 

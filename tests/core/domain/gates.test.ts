@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buyableSet } from "./candidates.ts";
+import { buyableSet } from "../../../src/core/domain/candidates.ts";
 import { candidate } from "./fixtures.ts";
-import { gateTally, runGates, score, securityRisk } from "./gates.ts";
-import type { Candidate } from "./types.ts";
+import { gateTally, runGates, score, securityRisk } from "../../../src/core/domain/gates.ts";
+import type { Candidate } from "../../../src/core/domain/types.ts";
 
 // What refuses a row and what ranks the rest. Pure: no network, no store.
 

@@ -2,7 +2,7 @@
  * The SQLite store, against a scratch database — `TTA_DB` must be set before anything
  * imports `db.ts`, hence the dynamic imports. Pure otherwise: no network, no `data/`.
  */
-import type { Trade } from "../domain/types.ts";
+import type { Trade } from "../../../src/core/domain/types.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.TTA_DB = join(mkdtempSync(join(tmpdir(), "tta-")), "test.db");
-const { Store } = await import("./store.ts");
+const { Store } = await import("../../../src/core/data/store.ts");
 
 const sell = (id: string, pnl: number): Trade => ({
   id,

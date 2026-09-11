@@ -39,7 +39,7 @@ const FEATURES = [
   "marketCapUsd",
 ] as const satisfies readonly (keyof Candidate)[];
 
-// ── statistics (pure; tested in plan.test.ts) ─────────────────────────
+// ── statistics (pure; tested in tests/core/calibrate.test.ts) ─────────────────────────
 
 const mean = (v: number[]): number => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0);
 

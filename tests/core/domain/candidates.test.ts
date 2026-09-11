@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toCandidate } from "./candidates.ts";
+import { toCandidate } from "../../../src/core/domain/candidates.ts";
 import { candidate } from "./fixtures.ts";
 
 // A feed row becoming a Candidate: the one place the two feeds' disagreeing columns are

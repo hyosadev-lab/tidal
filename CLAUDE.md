@@ -17,8 +17,8 @@ and do not add npm dependencies without being asked.
 
 ```bash
 npm start                                     # dashboard + engine → http://127.0.0.1:3111
-npm test                                      # node --test, all *.test.ts
-node --test src/core/domain/positions.test.ts # one file
+npm test                                      # node --test, all tests/**/*.test.ts
+node --test tests/core/domain/positions.test.ts # one file
 node --test --test-name-pattern="stop-loss"   # one test by name
 npx tsc --noEmit                              # type check
 npm run calibrate -- --limit=0                # is score() ranking anything? (--limit=0 spends nothing)
@@ -30,13 +30,14 @@ it signs `swap` and `query_order`, the two routes GMGN requires a signature on. 
 `gmgn-cli` dependency; `gmgn-skills/` is an untracked reference clone of its source, kept only
 to look up endpoint shapes and field semantics, and excluded from `tsconfig.json`.
 
-**One test file is not hermetic.** `src/core/cycle/cycle.test.ts` calls `start()`, which
+**One test file is not hermetic.** `tests/core/cycle/cycle.test.ts` calls `start()`, which
 schedules a real scan 1.5s later; that scan hits the live GMGN API and writes to `data/tta.db`.
 Expect network calls, a few seconds of runtime, and a mutated `data/` (gitignored). Point `TTA_DB`
 at a scratch file to keep a test off the real ledger — `db.test.ts` does exactly that.
-It also drives the shared `store` singleton. Every other test file is pure and sits beside the
-module it pins (`domain/gates.test.ts`, `domain/positions.test.ts`, …) — put a new test in the
-one named after the file you changed, and in `cycle/cycle.test.ts` only if it genuinely needs
+It also drives the shared `store` singleton. Every other test file is pure. Tests live under `tests/`, which
+mirrors `src/` (`tests/core/domain/gates.test.ts` pins `src/core/domain/gates.ts`, …) — put a new
+test in the one named after the file you changed (the `candidate()` / `position()` builders are in
+`tests/core/domain/fixtures.ts`), and in `cycle/cycle.test.ts` only if it genuinely needs
 the network or the store. `npm test` loads `.env`
 so the key is present.
 
@@ -134,7 +135,6 @@ in, not imported).
 | `domain/candidates.ts` | `toCandidate` + `buyableSet`: a feed row becomes a `Candidate` here and only here |
 | `domain/gates.ts` | what disqualifies a row and what ranks the rest: `runGates`, `gateTally`, `securityRisk`, `score` |
 | `domain/positions.ts` | size it, plan its exit, decide when it leaves: `positionSize`, `entryStrategy`, `viableStrategy`, `evaluateExit`, `healthExit`, `isDust`. **The central split is stated in this file's header** |
-| `domain/fixtures.ts` | `candidate()` / `position()` builders; only `*.test.ts` imports it |
 | `data/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
 | `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
 | `data/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |

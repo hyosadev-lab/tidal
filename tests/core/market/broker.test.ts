@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { breakevenPct, minLegUsd, netOfFees } from "../domain/chains.ts";
-import { DEFAULT_CONFIG, slippage } from "../domain/config.ts";
+import { breakevenPct, minLegUsd, netOfFees } from "../../../src/core/domain/chains.ts";
+import { DEFAULT_CONFIG, slippage } from "../../../src/core/domain/config.ts";
 import { position } from "../domain/fixtures.ts";
-import { evaluateExit, isDust, viableStrategy } from "../domain/positions.ts";
-import { conditionOrders, recordExternalSell, settle } from "./broker.ts";
-import type { StrategyRule } from "../domain/types.ts";
+import { evaluateExit, isDust, viableStrategy } from "../../../src/core/domain/positions.ts";
+import { conditionOrders, recordExternalSell, settle } from "../../../src/core/market/broker.ts";
+import type { StrategyRule } from "../../../src/core/domain/types.ts";
 
 // Order translation and the sell paths. `settle` and `recordExternalSell` are pure enough
 // to pin here; anything that submits lives in cycle.test.ts.

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.ts",
     "calibrate": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/core/calibrate.ts",
-    "test": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --test"
+    "test": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --test 'tests/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/node": "^26.1.2"

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractJson } from "./analyst.ts";
+import { extractJson } from "../../src/core/analyst.ts";
 
 // The model answers in prose around its JSON often enough that recovering the object is
 // part of the contract, not a nicety.
