@@ -9,7 +9,6 @@ import { aborted, generation } from "./control.ts";
 import { openEntries } from "./entries.ts";
 import { applyExits } from "./exits.ts";
 import { gatherCandidates } from "./sweep.ts";
-import type { Candidate } from "../domain/types.ts";
 
 /**
  * One cycle, in the order it happens: sweep → gate → rank → shortlist → ask the analyst →
@@ -62,18 +61,6 @@ export async function syncLiveBalance(): Promise<boolean> {
     store.log("warn", `Wallet balance check failed: ${short(e)} — skipping entries this cycle.`);
     return false;
   }
-}
-
-/**
- * Why a row that cleared the gates still cannot be bought, or "" when it can. Held / cooldown
- * / blacklist live in the store and never travel on a Candidate — the eligible filter, the
- * dashboard's note and the pre-entry re-check all ask this, so they cannot drift apart.
- */
-function unavailable(c: Candidate): string {
-  if (store.position(c.address)) return "already held";
-  if (store.onCooldown(c.address)) return "on cooldown after a recent exit";
-  if (store.isBlacklisted(c.address)) return "blacklisted";
-  return "";
 }
 
 export async function runScan(): Promise<void> {
