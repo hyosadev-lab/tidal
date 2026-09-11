@@ -18,7 +18,7 @@ and do not add npm dependencies without being asked.
 ```bash
 npm start                                     # dashboard + engine → http://127.0.0.1:3111
 npm test                                      # node --test, all *.test.ts
-node --test src/angel/domain/positions.test.ts # one file
+node --test src/core/domain/positions.test.ts # one file
 node --test --test-name-pattern="stop-loss"   # one test by name
 npx tsc --noEmit                              # type check
 npm run calibrate -- --limit=0                # is score() ranking anything? (--limit=0 spends nothing)
@@ -30,7 +30,7 @@ it signs `swap` and `query_order`, the two routes GMGN requires a signature on. 
 `gmgn-cli` dependency; `gmgn-skills/` is an untracked reference clone of its source, kept only
 to look up endpoint shapes and field semantics, and excluded from `tsconfig.json`.
 
-**One test file is not hermetic.** `src/angel/cycle/cycle.test.ts` calls `start()`, which
+**One test file is not hermetic.** `src/core/cycle/cycle.test.ts` calls `start()`, which
 schedules a real scan 1.5s later; that scan hits the live GMGN API and writes to `data/tta.db`.
 Expect network calls, a few seconds of runtime, and a mutated `data/` (gitignored). Point `TTA_DB`
 at a scratch file to keep a test off the real ledger — `db.test.ts` does exactly that.
@@ -43,7 +43,7 @@ so the key is present.
 ## Architecture
 
 One entry point: `src/index.ts` — static file server + JSON control API + SSE stream, driving
-`src/angel/`. Its analyst is one LLM call per cycle (plus a capped few read-only GMGN lookups),
+`src/core/`. Its analyst is one LLM call per cycle (plus a capped few read-only GMGN lookups),
 through `src/agent/llm.ts`.
 
 There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
@@ -54,7 +54,7 @@ much larger set).
 
 ### Storage
 
-Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/angel/data/db.ts`
+Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/core/data/db.ts`
 with `node:sqlite` — stdlib, so the zero-dependency rule holds. The split is by shape:
 bounded state that the engine mutates in place (config, cash, open positions, cooldowns,
 blacklist) is a JSON blob in `kv`; unbounded append-only series (`trades`, `equity`,
@@ -82,7 +82,7 @@ the two requests already queued behind it are what turn a 30s cooldown into `RAT
 until the model replies without tool calls; the analyst passes two read-only ones, so a cycle is
 one request plus one more per lookup it spends.
 
-### The central split (`src/angel/domain/positions.ts` header states it; respect it)
+### The central split (`src/core/domain/positions.ts` header states it; respect it)
 
 **Gates, sizing, and exit *execution* are deterministic code. The model only ranks, writes theses,
 and — in dynamic mode — proposes the shape of an exit plan.**
@@ -107,7 +107,7 @@ two things GMGN was never told, the time stop and `healthExit`, and books everyt
 the balance. That is why an exit plan must survive translation — a rule `conditionOrders` drops
 is a rule that does not exist in live.
 
-### `src/angel/` layering
+### `src/core/` layering
 
 Four folders and two root files, and **imports only ever point inward**:
 

@@ -34,7 +34,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 
 # runtime trading state (ledger, config, equity history). Anchored: `data/` unanchored also
-# swallows src/angel/data/, which is source.
+# swallows src/core/data/, which is source.
 /data/
 
 # reference clone of the gmgn-cli source, read-only (see CLAUDE.md)
