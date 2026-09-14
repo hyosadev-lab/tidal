@@ -490,8 +490,10 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 
 .btn-primary { background: var(--flood); border-color: var(--flood); color: #04211A; font-weight: 700; }
 .btn-primary:hover { background: #74EDC8; border-color: #74EDC8; color: #04211A; }
-.btn-primary[data-stop="1"] { background: transparent; color: var(--ebb); border-color: var(--ebb); }
-.btn-primary[data-stop="1"]:hover { background: var(--ebb); color: #2A0B08; }
+.btn-primary[data-state="running"] { background: transparent; color: var(--ebb); border-color: var(--ebb); }
+.btn-primary[data-state="running"]:hover { background: var(--ebb); color: #2A0B08; }
+.btn-primary[data-state="halted"] { background: var(--lamp); border-color: var(--lamp); color: #241A03; }
+.btn-primary[data-state="halted"]:hover { background: #F7C465; border-color: #F7C465; color: #241A03; }
 
 .btn-quiet { background: transparent; border-color: var(--rule); color: var(--haze); }
 .btn-danger { background: var(--lamp); border-color: var(--lamp); color: #241A03; font-weight: 700; }

@@ -2,7 +2,7 @@ import { minPosition, liveReady, tradeSize } from "./domain/config.ts";
 import { clamp } from "./domain/num.ts";
 import { store } from "./data/store.ts";
 import * as gmgn from "./market/gmgn.ts";
-import { arm, cancelInFlight, disarm } from "./cycle/control.ts";
+import { arm, cancelInFlight, disarm, onResume } from "./cycle/control.ts";
 import { closePosition } from "./cycle/exits.ts";
 import { runMonitor } from "./cycle/monitor.ts";
 import { runScan, syncLiveBalance } from "./cycle/scan.ts";
@@ -13,6 +13,17 @@ import { runScan, syncLiveBalance } from "./cycle/scan.ts";
  */
 
 export { syncLiveBalance };
+
+// A loss halt resumes through the same checks as Start. If they refuse, it stays halted and says why.
+onResume(() => {
+  if (store.runState !== "halted") return;
+  void start().then((r) => {
+    if (r.ok) return;
+    store.haltReason = `Could not resume automatically: ${r.error}`;
+    store.log("warn", store.haltReason);
+    store.push();
+  });
+});
 
 export async function start(): Promise<{ ok: boolean; error?: string }> {
   if (store.runState === "running") return { ok: true };

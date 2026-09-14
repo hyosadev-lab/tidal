@@ -25,6 +25,12 @@ export async function openEntries(
   slots: number,
   gen: number,
 ): Promise<number> {
+  // The daily loss halt is enforced here, the one place that buys: a manual scan still runs
+  // while halted, and its exits are welcome — its entries are not.
+  if (store.runState === "halted") {
+    if (entries.length) store.log("info", "Entries skipped — trading is halted by the daily loss limit.");
+    return 0;
+  }
   // Re-checked here, not reused from the scan: the model's exits ran in between, and
   // closing a position puts its address straight onto cooldown.
   const blocked = new Set(eligible.filter((c) => store.unavailable(c.address)).map((c) => c.address.toLowerCase()));

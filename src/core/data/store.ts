@@ -221,17 +221,16 @@ export class Store {
     return this.s.cash + this.exposure;
   }
 
-  /** Roll the daily loss budget at midnight local time. */
+  /**
+   * Roll the daily loss budget at midnight UTC. A loss halt is left alone: its resume timer
+   * (`cycle/control.ts`) is what ends it, and a manual scan rolling the day first must not
+   * turn it into a plain stop that never resumes.
+   */
   rollDay(): void {
     const d = today();
     if (this.s.dayStamp !== d) {
       this.s.dayStamp = d;
       this.s.dayStartEquity = this.equity;
-      if (this.runState === "halted") {
-        this.runState = "stopped";
-        this.haltReason = "";
-        this.log("info", "Daily loss budget reset — restart the agent when you're ready.");
-      }
       this.save();
     }
   }

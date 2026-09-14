@@ -145,8 +145,8 @@ function render(s) {
   $("beacon").dataset.state = s.runState;
   $("run-label").textContent = s.cycle.busy ? s.cycle.phase : s.runState;
   const runBtn = $("btn-run");
-  runBtn.textContent = s.runState === "running" ? "Stop agent" : "Start agent";
-  runBtn.dataset.stop = s.runState === "running" ? "1" : "0";
+  runBtn.textContent = { running: "Stop agent", halted: "Resume agent" }[s.runState] ?? "Start agent";
+  runBtn.dataset.state = s.runState;
 
   const banner = $("banner");
   if (s.haltReason) {

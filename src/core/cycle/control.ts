@@ -17,6 +17,11 @@ let stopGen = 0;
 let monitorTimer: NodeJS.Timeout | null = null;
 let scanTimer: NodeJS.Timeout | null = null;
 let kickoffTimer: NodeJS.Timeout | null = null;
+let resumeTimer: NodeJS.Timeout | null = null;
+let resume: () => void = () => {};
+
+/** What a halt runs once the loss budget rolls over — passed in, for the same reason `arm`'s callbacks are. */
+export const onResume = (fn: () => void): void => void (resume = fn);
 
 /** The number a cycle captures at its start. */
 export const generation = (): number => stopGen;
@@ -54,18 +59,32 @@ export function disarm(): void {
   if (monitorTimer) clearInterval(monitorTimer);
   if (scanTimer) clearInterval(scanTimer);
   if (kickoffTimer) clearTimeout(kickoffTimer);
-  monitorTimer = scanTimer = kickoffTimer = null;
+  if (resumeTimer) clearTimeout(resumeTimer);
+  monitorTimer = scanTimer = kickoffTimer = resumeTimer = null;
 }
+
+const DAY_MS = 86_400_000;
 
 /**
  * Trading stops for the day. Separate from `stop()` so the loss budget can pull the plug from
  * inside a cycle without importing the lifecycle that owns Start and Stop.
+ *
+ * Only the scan stops. The monitor keeps running — it never calls the model, and a halt can
+ * last most of a day, far too long for open positions to go unwatched — and `openEntries`
+ * refuses to buy while halted, which also covers a manual "Scan now".
+ *
+ * It resumes on its own once the day rolls over. `store.rollDay` keys on the UTC date, so that
+ * is UTC midnight — plus a second, so the resume never lands on the old day and re-halts.
  */
 export function halt(reason: string): void {
   store.runState = "halted";
   store.haltReason = reason;
   cancelInFlight();
-  disarm();
+  if (scanTimer) clearInterval(scanTimer);
+  if (kickoffTimer) clearTimeout(kickoffTimer);
+  if (resumeTimer) clearTimeout(resumeTimer);
+  scanTimer = kickoffTimer = null;
+  resumeTimer = setTimeout(resume, DAY_MS - (Date.now() % DAY_MS) + 1000);
   store.nextRunAt = 0;
   store.log("warn", reason);
   store.push();

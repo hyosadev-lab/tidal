@@ -83,6 +83,6 @@ async function withdrawExitPlan(p: Position, cfg: TradeConfig): Promise<void> {
 function checkDailyLoss(): void {
   const s = store.stats();
   if (store.runState === "running" && s.dayPnlPct <= -store.config.maxDailyLossPct)
-    halt(`Daily loss limit hit (${s.dayPnlPct.toFixed(1)}%). Trading halted until tomorrow or a manual restart.`);
+    halt(`Daily loss limit hit (${s.dayPnlPct.toFixed(1)}%). Trading halted — resumes automatically at 00:00 UTC, or press Resume agent.`);
 }
 
