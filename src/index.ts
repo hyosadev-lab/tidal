@@ -4,10 +4,18 @@ import { join, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { store } from "./core/data/store.ts";
 import * as engine from "./core/runtime.ts";
+import { authProblem, hasSession, loginPage, sameOriginPost, sameSecret, sessionCookie } from "./auth.ts";
 
 const PUBLIC = join(fileURLToPath(new URL("..", import.meta.url)), "public");
 const PORT = Number(process.env.PORT ?? 3111);
 const HOST = process.env.HOST ?? "127.0.0.1";
+const TOKEN = process.env.DASHBOARD_TOKEN || undefined;
+
+const problem = authProblem(HOST, TOKEN);
+if (problem) {
+  console.error(`  ! ${problem}`);
+  process.exit(1);
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -22,7 +30,7 @@ function json(res: ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-async function readBody(req: IncomingMessage): Promise<any> {
+async function readText(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
@@ -30,7 +38,27 @@ async function readBody(req: IncomingMessage): Promise<any> {
     if (size > 256 * 1024) throw new Error("body too large");
     chunks.push(chunk);
   }
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readBody(req: IncomingMessage): Promise<any> {
+  const text = await readText(req);
+  return text ? JSON.parse(text) : {};
+}
+
+const HTML = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+
+/** The one route open without a session: trade the token for a cookie. */
+async function login(req: IncomingMessage, res: ServerResponse, token: string): Promise<void> {
+  const given = new URLSearchParams(await readText(req)).get("token") ?? "";
+  if (!sameSecret(given, token)) {
+    await new Promise((r) => setTimeout(r, 1000)); // slows guessing; a per-IP lockout behind a proxy would lock out everyone
+    res.writeHead(401, HTML).end(loginPage("Token salah."));
+    return;
+  }
+  // Behind Caddy/nginx the socket is plain HTTP; the proxy says whether the browser's side was TLS.
+  const secure = req.headers["x-forwarded-proto"] === "https";
+  res.writeHead(303, { location: "/", "set-cookie": sessionCookie(token, secure) }).end();
 }
 
 async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> {
@@ -118,11 +146,23 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
 
 const server = createServer(async (req, res) => {
   const path = new URL(req.url ?? "/", "http://localhost").pathname;
+  res.setHeader("x-frame-options", "DENY");
+  res.setHeader("x-content-type-options", "nosniff");
   try {
+    if (TOKEN) {
+      if (path === "/login" && req.method === "POST") return await login(req, res, TOKEN);
+      if (!hasSession(req.headers.cookie, TOKEN)) {
+        if (path.startsWith("/api/")) return json(res, 401, { error: "login required — reload the page" });
+        res.writeHead(401, HTML).end(loginPage());
+        return;
+      }
+    }
+
     if (path === "/api/stream") return stream(req, res);
 
     const action = req.method === "POST" ? ACTIONS[path] : undefined;
     if (action) {
+      if (!sameOriginPost(req.headers["content-type"])) return json(res, 415, { error: "application/json required" });
       const r = await action(await readBody(req));
       return json(res, r.ok ? 200 : 400, r);
     }

@@ -243,5 +243,14 @@ OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=anthropic/claude-sonnet-4.5
 PORT=3111                          # opsional
 HOST=127.0.0.1                     # opsional
+DASHBOARD_TOKEN=                   # wajib kalau HOST bukan loopback; min. 32 karakter
 GMGN_ALLOW_AUTOMATED_TRADES=1      # HANYA kalau kamu mau live trading otomatis
 ```
+
+### Deploy ke VPS
+
+`HOST=0.0.0.0` tanpa `DASHBOARD_TOKEN` bikin proses nolak start. Dengan token, dashboard
+menampilkan halaman login; masukkan token, sesinya (cookie HttpOnly) berlaku 30 hari. Ganti
+token = semua sesi lama otomatis logout. Pasang HTTPS di depannya, misalnya Caddy
+(`tidal.domainmu.com { reverse_proxy 127.0.0.1:3111 }`) — lalu biarkan `HOST=127.0.0.1` supaya
+port 3111 gak kebuka langsung ke internet.
