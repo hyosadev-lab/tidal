@@ -80,6 +80,19 @@ export function stop(keepState = false): void {
   store.push();
 }
 
+let walletCache: { at: number; list: gmgn.BoundWallet[] } | null = null;
+
+/**
+ * The wallets the dashboard's picker offers, with their balances. Cached because every page load
+ * asks and the read is paid out of the sweep's rate limit; `fresh` is the picker's refresh
+ * button. A failed read is not cached.
+ */
+export async function wallets(fresh = false): Promise<{ at: number; list: gmgn.BoundWallet[] }> {
+  if (fresh || !walletCache || Date.now() - walletCache.at > 5 * 60_000)
+    walletCache = { at: Date.now(), list: await gmgn.boundWallets() };
+  return walletCache;
+}
+
 /** Restart the timers so a changed interval takes effect immediately. */
 export function reschedule(): void {
   if (store.runState !== "running") return;

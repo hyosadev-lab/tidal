@@ -1,4 +1,4 @@
-import { NATIVE, PRIORITY_FEE, TIP_FEE } from "../domain/chains.ts";
+import { CHAINS, NATIVE, PRIORITY_FEE, TIP_FEE } from "../domain/chains.ts";
 import { num } from "../domain/num.ts";
 import type { Chain } from "../domain/types.ts";
 import { gmgnClient } from "../../gmgn/client.ts";
@@ -223,6 +223,36 @@ export async function nativeBalance(chain: Chain, wallet: string): Promise<numbe
   if (!row) return null;
   const bal = num(row.balance, -1);
   return bal >= 0 ? bal : null;
+}
+
+/**
+ * Every (chain, address) the key is bound to, on the chains this engine trades — same route as
+ * `nativeBalance`. One EVM address comes back once per EVM chain, and GMGN also lists chains
+ * (`arc`, `stable`) that `CHAINS` does not, which are dropped.
+ */
+export type BoundWallet = {
+  chain: Chain;
+  address: string;
+  /** Native balance, or null when the route carried no native row. */
+  native: number | null;
+  /** The other balances the route reports — in practice the chain's stablecoin. */
+  tokens: { symbol: string; balance: number }[];
+};
+
+export async function boundWallets(): Promise<BoundWallet[]> {
+  return list(await client().getUserInfo(), "wallets")
+    .map((w) => {
+      const chain = String(w?.chain ?? "").toLowerCase() as Chain;
+      const rows = list(w, "balances").map((b) => ({ symbol: String(b?.symbol ?? ""), balance: num(b?.balance, -1) }));
+      const nativeRow = rows.find((b) => b.symbol.toUpperCase() === NATIVE_SYMBOL[chain]);
+      return {
+        chain,
+        address: String(w?.address ?? ""),
+        native: nativeRow && nativeRow.balance >= 0 ? nativeRow.balance : null,
+        tokens: rows.filter((b) => b !== nativeRow && b.symbol && b.balance >= 0),
+      };
+    })
+    .filter((w) => w.address && CHAINS.includes(w.chain));
 }
 
 /**

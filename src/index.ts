@@ -4,6 +4,8 @@ import { join, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { store } from "./core/data/store.ts";
 import * as engine from "./core/runtime.ts";
+import { chainLock } from "./core/domain/config.ts";
+import { GAS_RESERVE } from "./core/domain/chains.ts";
 import { authProblem, hasSession, loginPage, sameOriginPost, sameSecret, sessionCookie } from "./auth.ts";
 
 const PUBLIC = join(fileURLToPath(new URL("..", import.meta.url)), "public");
@@ -97,6 +99,8 @@ function stream(req: IncomingMessage, res: ServerResponse): void {
 const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]: unknown }>> = {
   "/api/config": async (body) => {
     const before = store.config;
+    const locked = chainLock(before, store.positions.length, body ?? {});
+    if (locked) return { ok: false, error: locked };
     const cfg = store.updateConfig(body ?? {});
     if (cfg.intervalMinutes !== before.intervalMinutes || cfg.monitorSeconds !== before.monitorSeconds)
       engine.reschedule();
@@ -105,7 +109,7 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
     // Live sizing is the wallet's, not the paper bankroll's. Without this the dashboard
     // shows the paper number until the next scan — and that number is what the operator
     // reads before deciding whether to start the agent at all.
-    if (cfg.mode === "live" && (cfg.mode !== before.mode || cfg.chain !== before.chain))
+    if (cfg.mode === "live" && (cfg.mode !== before.mode || cfg.chain !== before.chain || cfg.walletAddress !== before.walletAddress))
       await engine.syncLiveBalance();
     // Paper equity and wallet equity are different pots of money, so the yardsticks that
     // compare them — day PnL, drawdown, the loss halt — start again on a mode switch.
@@ -115,7 +119,11 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
   },
 
   "/api/start": async (body) => {
-    if (body?.config) store.updateConfig(body.config);
+    if (body?.config) {
+      const locked = chainLock(store.config, store.positions.length, body.config);
+      if (locked) return { ok: false, error: locked };
+      store.updateConfig(body.config);
+    }
     return engine.start();
   },
 
@@ -159,6 +167,14 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === "/api/stream") return stream(req, res);
+    if (path === "/api/wallets") {
+      const fresh = new URL(req.url ?? "/", "http://localhost").searchParams.has("fresh");
+      const body = await engine.wallets(fresh).then(
+        (w) => ({ wallets: w.list, at: w.at, gasReserve: GAS_RESERVE }),
+        (e) => ({ wallets: [], error: String(e?.message ?? e), gasReserve: GAS_RESERVE }),
+      );
+      return json(res, 200, body);
+    }
 
     const action = req.method === "POST" ? ACTIONS[path] : undefined;
     if (action) {

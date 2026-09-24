@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AUTO_SLIPPAGE_CAP } from "../../../src/core/domain/chains.ts";
-import { DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig, slippage } from "../../../src/core/domain/config.ts";
+import { chainLock, DEFAULT_CONFIG, gasReserve, liveReady, minPosition, refineQuery, sanitizeConfig, slippage } from "../../../src/core/domain/config.ts";
 import { trenchesFilters } from "../../../src/core/market/gmgn.ts";
 import type { TradeConfig } from "../../../src/core/domain/types.ts";
 
@@ -79,4 +79,13 @@ test("live mode stays disarmed without the operator's opt-in", () => {
   assert.equal(liveReady({ ...cfg, walletAddress: "abc" }).ok, true);
   if (saved === undefined) delete process.env.GMGN_ALLOW_AUTOMATED_TRADES;
   else process.env.GMGN_ALLOW_AUTOMATED_TRADES = saved;
+});
+
+test("chainLock: chain and wallet stay put while a position is open", () => {
+  const c: TradeConfig = { ...DEFAULT_CONFIG, chain: "sol", walletAddress: "0xAbC" };
+  assert.equal(chainLock(c, 0, { chain: "bsc", walletAddress: "0xdef" }), null);
+  assert.match(chainLock(c, 2, { chain: "bsc" })!, /2 open positions/);
+  assert.match(chainLock(c, 1, { walletAddress: "0xdef" })!, /open position first/);
+  // the dashboard posts the whole form: unchanged values, in any case, are not a change
+  assert.equal(chainLock(c, 1, { chain: "sol", walletAddress: " 0xabc ", intervalMinutes: 5 }), null);
 });

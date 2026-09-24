@@ -78,8 +78,7 @@ with a reset time closes it for *every* route until then and doubles the pacing 
 successes decay back. That gate is the fix for the real failure mode — a 429 is survivable, but
 the two requests already queued behind it are what turn a 30s cooldown into `RATE_LIMIT_BANNED`.
 
-`src/agent/llm.ts` is a ~80-line OpenRouter loop (`runAgent`) and the only file left under
-`src/agent/`. It still supports tools (`{description, parameters (JSON Schema), run}`) and loops
+`src/agent/llm.ts` is a ~80-line OpenRouter loop (`runAgent`). It still supports tools (`{description, parameters (JSON Schema), run}`) and loops
 until the model replies without tool calls; the analyst passes two read-only ones, so a cycle is
 one request plus one more per lookup it spends.
 
@@ -290,6 +289,17 @@ candidate row: widening the analyst's view usually means adding a field in `askA
 
 `public/` is vanilla HTML/CSS/JS with no build step — `src/index.ts` serves the directory as-is and
 `app.js` consumes `/api/stream` (SSE). Keep it dependency-free.
+
+### Analyst skills (`skills/`, `src/agent/skills.ts`)
+
+Markdown method the analyst reads in its system prompt, loaded fresh every cycle by
+`loadSkills()` and framed by `skillBlock()` in `analyst.ts` — after THE MACHINE, before
+OPERATOR INSTRUCTIONS, so a skill ranks under both. Layers, in order: `standard`
+(`skills/standard/SKILL.md`, public, tracked) and `edge` (`skills/edge/SKILL.md`, the owner's
+private layer, **gitignored** — never commit it, never quote it into a tracked file). A missing
+layer is skipped silently; the cycle log line `Analyst: … · skills: …` says which loaded.
+`TTA_SKILLS=standard|none` overrides. A skill is method, not policy: a limit you would want a
+skill to enforce belongs in `domain/`, because nothing but the model reads a SKILL.md.
 
 ## Extending
 

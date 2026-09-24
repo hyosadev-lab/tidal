@@ -61,12 +61,17 @@
   <aside class="panel rail">
     <h2 class="eyebrow">Controls</h2>
 
-    <label class="field">
-      <span class="field-k">Chain</span>
-      <div class="seg" id="seg-chain">
-        <button data-v="sol">SOL</button><button data-v="bsc">BSC</button><button data-v="base">BASE</button><button data-v="eth">ETH</button><button data-v="robinhood">HOOD</button>
+    <div class="field">
+      <span class="field-k" id="lbl-wallet">Wallet · chain</span>
+      <div class="wallet-wrap">
+        <button type="button" class="wallet-pick" id="in-wallet" value="" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="lbl-wallet"></button>
+        <div class="menu wallet-menu" id="wallet-menu" hidden>
+          <div role="listbox" id="wallet-options" aria-labelledby="lbl-wallet"></div>
+          <div class="wallet-foot"><span id="wallet-asof">—</span><button type="button" id="btn-wallet-refresh">↻ refresh</button></div>
+        </div>
       </div>
-    </label>
+      <span class="hint" id="live-status">—</span>
+    </div>
 
     <label class="field">
       <span class="field-k">Trading mode</span>
@@ -163,12 +168,6 @@
         <label class="pair"><span>Dev Holding <small>%</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-devHoldingMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-devHoldingMax" /></label>
         <label class="pair"><span>Insiders <small>%</small></span><input type="text" inputmode="decimal" autocomplete="off" id="in-insiderMin" /><input type="text" inputmode="decimal" autocomplete="off" id="in-insiderMax" /></label>
       </div>
-    </details>
-
-    <details class="fold" id="fold-live">
-      <summary>Live wallet</summary>
-      <label class="mini"><span>Wallet address (bound to your GMGN API key)</span><input type="text" id="in-wallet" spellcheck="false" placeholder="…" /></label>
-      <p class="hint" id="live-status">—</p>
     </details>
 
     <div class="rail-actions">

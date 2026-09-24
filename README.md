@@ -129,7 +129,10 @@ jalan lagi sampai besok atau sampai kamu start manual. Reset otomatis tengah mal
 
 `npm start` -> http://127.0.0.1:3111
 
-- **Chain** — SOL / BSC / BASE / ETH
+- **Wallet · chain** — pilih wallet yang terikat ke API key GMGN; chain ikut wallet itu. Tiap
+  baris nunjukin saldo native + stablecoin dan cukup buat berapa kali beli. Chain tanpa wallet
+  tetap bisa dipilih buat paper, gak bisa buat live. Selama ada posisi terbuka, wallet/chain
+  dikunci — posisi dijual di chain dan wallet dari config
 - **Mode** — paper atau live (live minta konfirmasi ketik, lihat di bawah)
 - **Start / Stop** — posisi terbuka sengaja dibiarkan pas stop; tutup manual kalau mau keluar
 - **Instructions** — prompt opsional buat ngarahin analis, plus 4 preset siap pakai

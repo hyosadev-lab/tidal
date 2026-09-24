@@ -210,6 +210,20 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
 }
 
 /**
+ * Chain and wallet are what an open position is sold on — `broker.sell` and the monitor read
+ * both off the config, not off the position — so neither may move while one is open. Returns
+ * the refusal, or null when the change is safe.
+ */
+export function chainLock(cfg: TradeConfig, openPositions: number, input: Partial<TradeConfig>): string | null {
+  if (!openPositions) return null;
+  const chain = input.chain !== undefined && input.chain !== cfg.chain;
+  const wallet =
+    typeof input.walletAddress === "string" && input.walletAddress.trim().toLowerCase() !== cfg.walletAddress.toLowerCase();
+  if (!chain && !wallet) return null;
+  return `Close the ${openPositions} open position${openPositions > 1 ? "s" : ""} first — they are sold on ${cfg.chain.toUpperCase()} from the current wallet, so chain and wallet stay put until then.`;
+}
+
+/**
  * Live trading needs an explicit opt-in the operator sets in their own shell.
  * We never set GMGN_ALLOW_AUTOMATED_TRADES ourselves — that variable is the human's
  * consent to headless execution, so setting it from here would hollow out the barrier

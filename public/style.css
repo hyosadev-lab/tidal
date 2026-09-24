@@ -465,6 +465,83 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .mini span { display: block; font-size: 10.5px; color: var(--haze); margin-bottom: 4px; }
 .mini input { padding: 7px 8px; }
 
+/* ── wallet picker: a listbox, because a <select> option can only hold one line of text ── */
+.wallet-wrap { position: relative; }
+
+.wallet-pick,
+.wallet-menu [role="option"] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+}
+.wallet-pick {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  appearance: none;
+  background: var(--abyss);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--foam);
+  font-family: var(--sans);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.wallet-pick:hover, .wallet-pick[aria-expanded="true"] { border-color: var(--rule-2); }
+.wallet-pick:focus-visible, .wallet-menu button:focus-visible { outline: 2px solid var(--flood); outline-offset: 1px; }
+/* Drawn, not a glyph: ▾ is missing from the mono face and falls back to a dot. */
+.wallet-caret {
+  width: 7px;
+  height: 7px;
+  margin: 0 3px 3px;
+  border-right: 1.5px solid var(--haze);
+  border-bottom: 1.5px solid var(--haze);
+  transform: rotate(45deg);
+  transition: transform .12s;
+}
+.wallet-pick[aria-expanded="true"] .wallet-caret { transform: translateY(3px) rotate(-135deg); }
+
+.w-chain {
+  min-width: 46px;
+  padding: 3px 6px;
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius);
+  font: 500 9.5px var(--mono);
+  letter-spacing: .12em;
+  text-align: center;
+  color: var(--foam);
+}
+[aria-selected="true"] .w-chain, .wallet-pick .w-chain { border-color: #1F5A4B; color: var(--flood); }
+.w-main { display: grid; gap: 2px; min-width: 0; }
+.w-addr { font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-note { font-size: 11px; color: var(--haze); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-note[data-tone="flood"] { color: var(--flood); }
+.w-note[data-tone="lamp"] { color: var(--lamp); }
+.w-note[data-tone="ebb"] { color: var(--ebb); }
+.w-bal { font: 12px var(--mono); text-align: right; white-space: nowrap; color: var(--haze); }
+.w-bal b { font-weight: 500; color: var(--foam); }
+.w-bal small { display: block; font-size: 10.5px; }
+
+/* Top of the rail, so it drops down rather than up like the rule menu. */
+.wallet-menu:not([hidden]) { top: calc(100% + 4px); bottom: auto; left: 0; right: 0; min-width: 0; max-height: 420px; overflow-y: auto; }
+.wallet-menu [role="option"] { padding: 8px 9px; border-left: 2px solid transparent; }
+.wallet-menu [role="option"][aria-selected="true"] { background: var(--hull); border-left-color: var(--flood); }
+.wallet-menu [role="option"]:disabled { opacity: .45; cursor: not-allowed; background: none; }
+.wallet-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 6px 4px 0 9px;
+  border-top: 1px solid var(--rule);
+  font: 10.5px var(--mono);
+  color: var(--haze);
+}
+.wallet-menu .wallet-foot button { padding: 3px 6px; font: 10.5px var(--mono); color: var(--haze); }
+.wallet-menu .wallet-foot button:hover { color: var(--foam); }
+
 .rail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--rule); }
 
 .save-state { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--rule-2); }

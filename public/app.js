@@ -158,7 +158,7 @@ function render(s) {
     banner.dataset.kind = "warn";
     banner.textContent = s.liveReady
       ? "Live mode — swaps are real and irreversible."
-      : "Live mode is selected but not armed. Set GMGN_ALLOW_AUTOMATED_TRADES=1 in the shell running this server and add a wallet address.";
+      : "Live mode is selected but not armed. Set GMGN_ALLOW_AUTOMATED_TRADES=1 in the shell running this server and pick a wallet.";
   } else {
     banner.hidden = true;
   }
@@ -188,8 +188,6 @@ function render(s) {
 }
 
 function fillForm(c, s) {
-  for (const b of document.querySelectorAll("#seg-chain button"))
-    b.setAttribute("aria-pressed", String(b.dataset.v === c.chain));
   for (const b of document.querySelectorAll("#seg-mode button"))
     b.setAttribute("aria-pressed", String(b.dataset.v === c.mode));
 
@@ -199,7 +197,7 @@ function fillForm(c, s) {
   $("in-prompt").value = c.prompt;
   $("mode-hint").textContent =
     c.mode === "live"
-      ? "Live mode places real swaps through gmgn-cli from the wallet below."
+      ? "Live mode places real swaps from the wallet above, on its chain."
       : "Paper trades against live prices. Nothing leaves your wallet.";
 
   const set = (id, v) => {
@@ -234,7 +232,7 @@ function fillForm(c, s) {
     }
   set("in-slip", c.slippagePct || "");
   set("in-bankroll", c.paperStartEquityUsd);
-  set("in-wallet", c.walletAddress);
+  fillWallets(c);
 
   // Make the floor visible before it silently eats every candidate.
   const sym = NATIVE_SYMBOL[c.chain] ?? "";
@@ -247,7 +245,7 @@ function fillForm(c, s) {
   $("lbl-ceiling").textContent = sizes[c.chain] ? `${sizes[c.chain]} ${sym}` : `— (no size set for ${sym})`;
   $("live-status").textContent = s.liveReady
     ? "Armed. Live swaps will execute without further confirmation."
-    : "Not armed. Live entries will be refused until GMGN_ALLOW_AUTOMATED_TRADES=1 is set and a wallet is saved.";
+    : "Not armed. Live entries will be refused until GMGN_ALLOW_AUTOMATED_TRADES=1 is set and a wallet is picked.";
 }
 
 /**
@@ -452,6 +450,111 @@ async function post(path, body) {
 let sizes = {};
 let sizeChain = "sol";
 
+// [{chain, address, native, tokens}] bound to the API key; null until /api/wallets answers
+let wallets = null;
+let walletNote = "";
+let walletAt = 0;
+let gasDefaults = {}; // GAS_RESERVE per chain, from the server rather than mirrored here
+let walletHtml = "";
+
+async function loadWallets(fresh = false) {
+  const r = await fetch(`/api/wallets${fresh ? "?fresh=1" : ""}`)
+    .then((x) => x.json())
+    .catch(() => ({ error: "server unreachable" }));
+  wallets = r.wallets ?? [];
+  walletNote = r.error ? `could not read wallets — ${r.error}` : "";
+  walletAt = r.at ?? 0;
+  gasDefaults = r.gasReserve ?? gasDefaults;
+  if (state) fillWallets(state.config);
+}
+
+const shortAddr = (a) => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
+const amt = (n) => (n === 0 ? "0" : n < 0.001 ? n.toPrecision(2) : String(+n.toFixed(4)));
+// The picker's order, and the chains that still get a row when no wallet is bound on them.
+const CHAIN_LABEL = { sol: "SOL", bsc: "BSC", base: "BASE", eth: "ETH", robinhood: "HOOD" };
+const chainLabel = (ch) => CHAIN_LABEL[ch] ?? String(ch).toUpperCase();
+
+/**
+ * What this wallet could do on its own chain with the settings as they stand — the same
+ * arithmetic `syncLiveBalance` sizes with: balance less the gas reserve, in whole buys.
+ */
+function walletStatus(w, c) {
+  if (wallets === null && w.native === undefined) return ["haze", "reading wallets…"];
+  if (!w.address) return ["haze", "no wallet on this chain — paper only"];
+  if (w.native === undefined) return ["ebb", "not bound to this API key"];
+  if (w.native === null) return ["haze", "GMGN reports no balance on this chain"];
+  const sym = NATIVE_SYMBOL[w.chain] ?? "";
+  if (!(w.native > 0)) return ["ebb", `empty — no ${sym} to trade or pay gas`];
+  const size = c.positionSizeNative?.[w.chain];
+  if (!size) return ["haze", `no size per trade set for ${sym}`];
+  const buys = Math.floor((w.native - (c.gasReserveNative || gasDefaults[w.chain] || 0)) / size);
+  return buys > 0
+    ? ["flood", `${buys} buy${buys > 1 ? "s" : ""} at ${size} ${sym}, gas held back`]
+    : ["lamp", `short of one ${size} ${sym} buy plus gas`];
+}
+
+function walletRow(w, c) {
+  const [tone, note] = walletStatus(w, c);
+  const others = (w.tokens ?? []).map((t) => `${t.symbol} ${amt(t.balance)}`).join(" · ");
+  const bal = typeof w.native === "number" ? `<b>${esc(amt(w.native))}</b> ${esc(NATIVE_SYMBOL[w.chain] ?? "")}` : "—";
+  return (
+    `<span class="w-chain">${esc(chainLabel(w.chain))}</span>` +
+    `<span class="w-main"><span class="w-addr">${esc(w.address ? shortAddr(w.address) : "no wallet")}</span><span class="w-note" data-tone="${tone}">${esc(note)}</span></span>` +
+    `<span class="w-bal">${bal}${others ? `<small>${esc(others)}</small>` : ""}</span>`
+  );
+}
+
+/**
+ * The chain picker: one row per (chain, address), value `chain|address`. A chain with no bound
+ * wallet still gets a wallet-less row so paper can trade it; live cannot, so that row is disabled
+ * there. The saved wallet stays listed even when GMGN does not return it, so a failed read never
+ * blanks it.
+ */
+function fillWallets(c) {
+  const order = Object.keys(CHAIN_LABEL);
+  const list =
+    wallets === null
+      ? []
+      : order.flatMap((ch) => {
+          const bound = wallets.filter((w) => w.chain === ch);
+          return bound.length ? bound : [{ chain: ch, address: "" }];
+        });
+  const same = (w) => w.address.toLowerCase() === c.walletAddress.toLowerCase();
+  let pick = list.find((w) => w.chain === c.chain && same(w));
+  if (!pick) {
+    pick = { chain: c.chain, address: c.walletAddress };
+    if (c.walletAddress && wallets !== null) list.unshift(pick);
+  }
+  const value = `${pick.chain}|${pick.address}`;
+  // Always, even when nothing below changed: a refused save has to put the old pick back.
+  $("in-wallet").value = value;
+
+  const trigger = walletRow(pick, c) + `<span class="wallet-caret" aria-hidden="true"></span>`;
+  const options = list
+    .map((w) => {
+      const v = `${w.chain}|${w.address}`;
+      const off = c.mode === "live" && !w.address ? " disabled" : "";
+      return `<button type="button" role="option" aria-selected="${v === value}" data-v="${esc(v)}" title="${esc(w.address)}"${off}>${walletRow(w, c)}</button>`;
+    })
+    .join("");
+  const asof = walletNote || (walletAt ? `balances as of ${clock(walletAt)}` : "—");
+
+  // Rebuilt only when something shows differently, or every state push would steal focus from an open list.
+  const html = trigger + options + asof;
+  if (html === walletHtml) return;
+  walletHtml = html;
+  $("in-wallet").innerHTML = trigger;
+  $("in-wallet").title = pick?.address ?? "";
+  $("wallet-options").innerHTML = options;
+  $("wallet-asof").textContent = asof;
+}
+
+function walletMenu(open) {
+  $("wallet-menu").hidden = !open;
+  $("in-wallet").setAttribute("aria-expanded", String(open));
+  if (open) ($("wallet-options").querySelector('[aria-selected="true"]') ?? $("wallet-options").querySelector("button"))?.focus();
+}
+
 /** The stored per-chain sizes with the box's current value written back onto its own chain. */
 function sizesWithInput() {
   const out = { ...sizes };
@@ -477,8 +580,10 @@ function collectConfig() {
       const v = Number(raw);
       if (raw !== "" && Number.isFinite(v)) refine[k + side] = REFINE_K.has(k) ? v * 1000 : v;
     }
+  // The wallet picker is the chain picker. Empty before its first render — sent as no chain, not a change.
+  const [chain, walletAddress = ""] = $("in-wallet").value.split("|");
   return {
-    chain: document.querySelector('#seg-chain button[aria-pressed="true"]')?.dataset.v ?? "sol",
+    chain: chain || undefined,
     mode: document.querySelector('#seg-mode button[aria-pressed="true"]')?.dataset.v ?? "paper",
     intervalMinutes: n("in-interval", 15),
     prompt: $("in-prompt").value,
@@ -493,7 +598,7 @@ function collectConfig() {
     refine,
     slippagePct: n("in-slip", 0),
     paperStartEquityUsd: n("in-bankroll", 1000),
-    walletAddress: $("in-wallet").value,
+    walletAddress,
   };
 }
 
@@ -516,7 +621,10 @@ async function save() {
     return;
   }
   if (!r.config) {
+    // Refused, not lost in transit: put the form back to what the server holds — the banner says why.
     saveState("not saved", true);
+    dirty = false;
+    if (state) fillForm(state.config, state);
     return;
   }
   dirty = false;
@@ -525,13 +633,6 @@ async function save() {
 }
 
 // ── wiring ────────────────────────────────────────────────────────────
-$("seg-chain").addEventListener("click", (e) => {
-  const b = e.target.closest("button");
-  if (!b) return;
-  for (const x of e.currentTarget.children) x.setAttribute("aria-pressed", String(x === b));
-  save();
-});
-
 $("seg-mode").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
@@ -678,6 +779,40 @@ for (const el of document.querySelectorAll('.fold input[type="number"], .fold in
   el.addEventListener("input", () => (dirty = true));
   el.addEventListener("change", save);
 }
+
+$("in-wallet").addEventListener("click", () => walletMenu($("wallet-menu").hidden));
+
+$("wallet-options").addEventListener("click", (e) => {
+  const b = e.target.closest('[role="option"]');
+  if (!b || b.disabled) return;
+  $("in-wallet").value = b.dataset.v;
+  walletMenu(false);
+  $("in-wallet").focus();
+  save();
+});
+
+$("wallet-menu").addEventListener("keydown", (e) => {
+  const items = [...$("wallet-menu").querySelectorAll("button:not(:disabled)")];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+  } else if (e.key === "Escape") {
+    walletMenu(false);
+    $("in-wallet").focus();
+  }
+});
+
+$("btn-wallet-refresh").addEventListener("click", () => {
+  $("wallet-asof").textContent = "refreshing…";
+  walletHtml = "";
+  loadWallets(true);
+});
+
+document.addEventListener("click", (e) => {
+  if (!$("wallet-menu").hidden && !e.target.closest(".wallet-wrap")) walletMenu(false);
+});
+loadWallets();
 
 $("presets").addEventListener("click", (e) => {
   const b = e.target.closest("button");
