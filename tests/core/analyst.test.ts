@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractJson } from "../../src/core/analyst.ts";
+import { extractJson, skillBlock } from "../../src/core/analyst.ts";
 
 // The model answers in prose around its JSON often enough that recovering the object is
 // part of the contract, not a nicety.
@@ -17,4 +17,11 @@ test("a decision is recovered from a fenced, chatty reply", () => {
 
 test("garbage in the model reply yields no decision rather than a bad one", () => {
   assert.equal(extractJson("no json here at all"), null);
+});
+
+test("skillBlock is empty without skills and names each layer with one", () => {
+  assert.equal(skillBlock([]), "");
+  const b = skillBlock([{ name: "standard", body: "read flow first" }]);
+  assert.match(b, /SKILLS/);
+  assert.match(b, /--- skill: standard ---\nread flow first/);
 });
