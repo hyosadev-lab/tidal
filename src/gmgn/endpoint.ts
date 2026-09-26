@@ -465,6 +465,10 @@ export class OpenApiClient {
     return this.authExistRequest("GET", "/v1/user/wallet_stats", { chain, wallet_address: walletAddresses, period });
   }
 
+  async getWalletProfits(chain: string, walletAddresses: string[], period = "7d"): Promise<unknown> {
+    return this.authExistRequest("POST", "/v1/user/wallet_profits", {}, { chain, period, wallet_addresses: walletAddresses });
+  }
+
   async getWalletTokenBalance(chain: string, walletAddress: string, tokenAddress: string): Promise<unknown> {
     return this.authExistRequest("GET", "/v1/user/wallet_token_balance", {
       chain,
@@ -496,6 +500,10 @@ export class OpenApiClient {
 
   async getHotSearches(params: HotSearchesParam[]): Promise<unknown> {
     return this.authExistRequest("POST", "/v1/market/hot_searches", {}, { params });
+  }
+
+  async searchMarket(query: string, extra: Record<string, string | number | string[]> = {}): Promise<unknown> {
+    return this.authExistRequest("GET", "/v1/market/search", { q: query, ...extra });
   }
 
   // ---- User endpoints (exist auth) ----
