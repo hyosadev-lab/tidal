@@ -46,7 +46,8 @@ export const tools: Record<string, Tool> = {
     description:
       "Full GMGN profile for one token — the deep-dive route. Most of what the cycle brief leaves blank is here.\n" +
       "Numbers usually arrive as STRINGS (\"0.6208\"); parse before comparing. A field that is empty or absent " +
-      "means not reported, not a measured zero. Rates are 0-1 ratios unless the name says percentage.\n" +
+      "means not reported, not a measured zero. Rates are 0-1 ratios — including the fields named *_percentage " +
+      "(top_bundler_trader_percentage \"0.34\" is 34%).\n" +
       "Returns:\n" +
       "• top level — symbol, name, decimals, holder_count, total/circulating/max_supply, liquidity (USD, now), " +
       "ath_price (compare against price.price to see how far off the high it is), locked_ratio, " +
