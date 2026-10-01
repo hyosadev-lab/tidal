@@ -15,6 +15,13 @@ import { clamp, num } from "./num.ts";
  */
 
 /**
+ * The conviction an entry has to beat, strictly: 60 is refused, 61 buys. A risk limit, so it
+ * lives here rather than in the prompt — the model is told the number, but `openEntries` is what
+ * enforces it, and a model that omits `conviction` falls back to the row's structural `score`.
+ */
+export const CONVICTION_FLOOR = 60;
+
+/**
  * USD to commit. A fixed amount of the native token, priced at `nativeUsd` — same size every
  * entry, whatever the conviction. Never commits the last of the cash: fees and the next
  * stop-loss need headroom, so a thin balance shrinks the buy (and the floor check skips it).

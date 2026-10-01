@@ -5,9 +5,7 @@
  * enough to have an answer, and reports three things:
  *
  *   1. score band → what those tokens actually did. If the bands are flat, the score is noise.
- *   2. the production cut: rows the sweep ranked top-18 in their cycle vs. everything else,
- *      since that slice is exactly what reaches the analyst.
- *   3. rank correlation per feature. A term whose ρ is ~0 is not earning its weight; a term
+ *   2. rank correlation per feature. A term whose ρ is ~0 is not earning its weight; a term
  *      whose ρ has the opposite sign to its weight is actively costing money.
  *
  * This does not tune anything. It hands you numbers; the weights stay hand-edited in plan.ts,
@@ -212,20 +210,6 @@ function report(minAgeH: number, maxAgeH: number): void {
         `${(b.winRate * 100).toFixed(0).padStart(8)}%${(b.bigWinRate * 100).toFixed(0).padStart(8)}%`,
     );
   }
-
-  // The cut the engine actually makes: top 18 by score within each cycle reaches the analyst.
-  const byCycle = new Map<number, typeof rows>();
-  for (const r of rows) byCycle.set(r.s.cycle, [...(byCycle.get(r.s.cycle) ?? []), r]);
-  const shown: number[] = [];
-  const rest: number[] = [];
-  for (const group of byCycle.values()) {
-    const ranked = [...group].sort((a, b) => b.s.c.score - a.s.c.score);
-    ranked.forEach((r, i) => (i < 18 ? shown : rest).push(r.ret));
-  }
-  console.log(
-    `\ntop-18 cut (what reaches the analyst): median ${pct(median(shown))} on ${shown.length}` +
-      ` · rest ${pct(median(rest))} on ${rest.length}`,
-  );
 
   const rets = rows.map((r) => r.ret);
   console.log(`\nrank correlation with forward return`);

@@ -1,7 +1,7 @@
 import { store } from "./data/store.ts";
 import { breakevenPct } from "./domain/chains.ts";
 import { tradeSize } from "./domain/config.ts";
-import { entryStrategy, pnlPct, positionSize } from "./domain/positions.ts";
+import { CONVICTION_FLOOR, entryStrategy, pnlPct, positionSize } from "./domain/positions.ts";
 import type { Candidate, Decision, StrategyRule, TradeConfig } from "./domain/types.ts";
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
@@ -150,10 +150,9 @@ THE MACHINE (facts, not advice)
 - You may buy only from the candidate list. An address that is not in it was never screened, priced or sized, so naming it in \`entries\` wastes a slot.
 - \`null\` on a candidate field means that row's feed did not report it — a blank, not a zero.
 - \`buys\`, \`sells\`, \`swaps_1h\` and \`volume_1h_usd\` cover the row's own longer window — an hour on the rank feed, 24h on a \`graduated\` row. The \`_5m\` fields cover the last five minutes.
-- \`seen_in\` names the feed. \`trending-1h\`, \`trending-5m\` and \`graduated\` are rankings and every row here came from one of them; the numbers on the row are theirs. The rest are alerts GMGN fired on the same token, and they are labels only, never a source — no volume, no trade counts, no price of their own: \`smart-money\` (a wallet GMGN tracks bought it), \`price-spike\` (the price jumped), and \`alert-3\` / \`alert-13\`, two alert types GMGN does not say what it fires on — measured, \`alert-13\` lands on large, established tokens that KOL-tagged wallets hold and \`alert-3\` on small ones often flagged as community takeovers. Treat all four as weak confirmation: two names in \`seen_in\` is one token found twice, nothing more.
-- \`alert_mcap_usd\` is the market cap at the moment that alert fired, and \`mcap_usd\` is now. The gap is the point: a token at half its alert cap means whoever the alert was reporting is already underwater, and one above it means you are paying more than they did. Null when no alert tagged the row.
+- \`seen_in\` names the feed the row came from — \`trending-1h\`, \`trending-5m\` or \`graduated\`, all three rankings, and the numbers on the row are theirs. Two names is one token found twice: mild confirmation, nothing more.
 - Gates already applied: no wash trading, no honeypot, a readable address and price. That is all — pool depth, rug_ratio, concentration, smart money and dev holdings are reported, not screened on, and \`structure_score\` grades them without stopping anything. Each pick still faces a security refusal on tax > 10% and, on Solana, live mint/freeze authority or an unburned pool.
-- Sizing: a fixed ${tradeSize(cfg)} ${gmgn.NATIVE_SYMBOL[cfg.chain]} per position — the same every entry, max ${cfg.maxOpenPositions} open at once. Conviction does not change the size, it only decides whether the entry happens at all: under 40 the engine drops it.
+- Sizing: a fixed ${tradeSize(cfg)} ${gmgn.NATIVE_SYMBOL[cfg.chain]} per position — the same every entry, max ${cfg.maxOpenPositions} open at once. Conviction does not change the size, it only decides whether the entry happens at all: the engine buys only above ${CONVICTION_FLOOR}, so ${CONVICTION_FLOOR} itself is a refusal and anything at or below it is the same as leaving the token out.
 - An empty \`entries\` array is a valid answer.
 
 TOOLS (${LOOKUP_BUDGET} lookups, this cycle only)
@@ -287,8 +286,6 @@ export async function askAnalyst(candidates: Candidate[], slots: number): Promis
       sells_5m: c.sells5m,
       volume_5m_usd: c.volume5mUsd === null ? null : Math.round(c.volume5mUsd),
       net_buy_usd: c.netBuyUsd,
-      // The market cap when the alert in `seen_in` fired. Null on a row no alert tagged.
-      alert_mcap_usd: c.triggerMcUsd === null ? null : Math.round(c.triggerMcUsd),
       holders: c.holderCount,
       smart_money: c.smartDegenCount,
       kols: c.renownedCount,

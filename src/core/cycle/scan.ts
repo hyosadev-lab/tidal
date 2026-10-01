@@ -11,16 +11,16 @@ import { applyExits } from "./exits.ts";
 import { gatherCandidates } from "./sweep.ts";
 
 /**
- * One cycle, in the order it happens: sweep → gate → rank → shortlist → ask the analyst →
- * its exits → its entries. Read `runScan` top to bottom and that is the whole flow; every
- * step it calls lives in a file of its own.
+ * One cycle, in the order it happens: sweep → gate → rank → ask the analyst → its exits →
+ * its entries. Read `runScan` top to bottom and that is the whole flow; every step it calls
+ * lives in a file of its own.
+ *
+ * There is no shortlist: every eligible row goes in the brief, so a cycle's prompt grows with
+ * the sweep (three feeds of 40, deduped) and the ranking only decides reading order.
  *
  * The model's exits run *before* the entries on purpose — closing a position frees a slot the
  * entries below may use, and puts that address straight onto cooldown.
  */
-
-/** How many of the eligible rows, best score first, are put in front of the analyst. */
-const ANALYST_SHORTLIST = 18;
 
 /** Only one scan runs at a time. */
 let scanning = false;
@@ -81,16 +81,10 @@ export async function runScan(): Promise<void> {
     const candidates = await gatherCandidates();
     const eligible = candidates.filter((c) => !c.gateFailures.length && !store.unavailable(c.address));
     // Why each row did or did not reach the model, decided here rather than in the dashboard.
-    // Written before the soundings so calibrate can tell the rows the model actually saw from
-    // the ones that merely scored well.
-    const shortlist = eligible.slice(0, ANALYST_SHORTLIST);
-    const shown = new Set(shortlist.map((c) => c.address));
+    // Every eligible row is sent now, so the only reason a gated-through row is missing is that
+    // it is held, on cooldown or blacklisted.
     for (const c of candidates)
-      c.analystNote = c.gateFailures.length
-        ? ""
-        : shown.has(c.address)
-          ? "sent"
-          : store.unavailable(c.address) || `ranked below the top ${ANALYST_SHORTLIST}`;
+      c.analystNote = c.gateFailures.length ? "" : store.unavailable(c.address) || "sent";
     store.lastCandidates = candidates.slice(0, 40);
     // The whole sweep, not just the shown 40: `calibrate.ts` needs the rows nobody looked at
     // as much as the ones that scored well, or it only measures what we already believed.
@@ -115,7 +109,7 @@ export async function runScan(): Promise<void> {
     store.phase = "analysing";
     store.push();
 
-    const decision = await askAnalyst(shortlist, cfg.maxOpenPositions - store.positions.length);
+    const decision = await askAnalyst(eligible, cfg.maxOpenPositions - store.positions.length);
     if (!decision) return;
     if (aborted(gen)) {
       store.log("info", "Cycle abandoned — stopped while the analyst was thinking.");

@@ -27,7 +27,6 @@ export function candidate(over: Partial<Candidate> = {}): Candidate {
     sells5m: 15,
     volume5mUsd: 18_000,
     netBuyUsd: 12_000,
-    triggerMcUsd: null,
     devHoldRate: 0.02,
     insiderRate: 0.03,
     bundlerRate: 0.1,

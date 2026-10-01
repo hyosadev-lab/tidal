@@ -108,7 +108,8 @@ token is too volatile for this envelope — skip it. Put the first take-profit a
 
 - Any hard flag, or a "do not enter" pattern → leave it out of `entries`.
 - 3 or more warnings → leave it out.
-- 1 – 2 warnings → conviction 40 – 60. Name the warnings in the thesis.
+- 1 – 2 warnings → conviction 40 – 60. Name the warnings in the thesis, and know that the
+  engine refuses anything at or below 60: that band is a pass, not a smaller buy.
 - 0 warnings with an uptrend → conviction above 60 is earned.
 - Unknown checks (empty `stat`, fewer than 8 candles) are not passes. Two or more unknowns cap
   conviction at 50.

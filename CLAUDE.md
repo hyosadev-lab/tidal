@@ -140,7 +140,7 @@ in, not imported).
 | `market/gmgn.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
 | `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
 | `cycle/control.ts` | the run's mutable state: the generation a Stop bumps (`generation`/`aborted`), the timer handles (`arm`/`disarm`), and `halt` |
-| `cycle/sweep.ts` | the whole search: `ALERTS`, `mergeFeeds`, `gatherCandidates` — feeds in, one gated and scored list out |
+| `cycle/sweep.ts` | the whole search: `mergeFeeds`, `gatherCandidates` — three feeds in, one gated and scored list out |
 | `cycle/scan.ts` | **one cycle, top to bottom** — read `runScan` and that is the flow. Also `syncLiveBalance` |
 | `cycle/entries.ts` | `openEntries` + `openPosition`: the only place that opens a position |
 | `cycle/exits.ts` | every path out: `applyExits`, `closePosition`, `bookSell`, `withdrawExitPlan`, the daily loss budget. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
@@ -149,8 +149,8 @@ in, not imported).
 | `runtime.ts` | lifecycle: `start`, `stop`, `reschedule`, `scanNow`, `manualClose`. The whole surface `src/index.ts` drives |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
 
-Data flow per cycle: `gatherCandidates` (4 GMGN feeds, deduped) → `runGates` + `score` →
-top 18 eligible → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) → `buyableSet` →
+Data flow per cycle: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
+every eligible row → `askAnalyst` (LLM returns JSON `{entries, exits, notes}`) → `buyableSet` →
 `broker.buy/sell` → `store` mutation → `store.emit` → SSE → `public/app.js`. The monitor loop runs
 independently and never touches the LLM.
 
@@ -251,30 +251,13 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   those as `—` and the brief passes the null through. Buy/sell *volume* is on neither feed;
   only the counts and the trenches net figure are. Windows differ too: `volume1hUsd`/`swaps1h`
   fall back to the 24h columns on trenches rows, so they are not comparable across sources.
-- **The `smart-money` feed (signal type 12) carries no flow at all.** Measured live: `volume_*`,
-  `swaps_*`, `buys_*`, `sells_*` and `net_buy_*` are 0 on every window, and `smart_degen_count`
-  is 0 even though the signal *is* a smart-money buy — structure, holders and `renowned_count`
-  are populated. Because a row it alone surfaced would carry no flow to judge, **it is a label,
-  not a source**: `mergeFeeds` runs it last and drops any address the rank feeds did not already
-  produce, so a `smart-money` tag always sits beside `trending-*` or `graduated` and the numbers
-  are that feed's. It is also the one feed Refine barely reaches — the route takes market-cap
-  bounds and nothing else the panel offers. And it returns **one row per alert**, so the same
-  token arrives several times: the merge collapses repeated source labels for that reason.
-- **Signal types are groups inside one request, so a second type is free.** `ALERTS` in
-  `cycle/sweep.ts` is the whole list — type number and the label it leaves — and it drives both the
-  request and `SIGNAL_LABELS`, so adding a type is one row there. All of them ride a single POST
-  (the route bills per call, not per group) and the rows are split back apart by `signal_type`.
-  Queryable types are 1–13 and 17–20; 14–16 the API refuses. What decides whether a type earns a
-  label is its overlap with the rank feeds, since nothing else survives the merge — one live
-  sweep: 3 → 20/50, 11 → 18/50, 12 → 17/41, 6 → 12/46, 13 → 9/28, 7 → 1/50 (which is why 7 is
-  out). GMGN publishes no number-to-event mapping, so only three are named from evidence:
-  12 is smart money (its own docs say so), 6 price spike, and 11 CTO (`cto_flag` true on 50/50
-  rows). 3 and 13 keep their numbers rather than a guessed name. No type carries flow — the one
-  number the merge keeps off an alert row before discarding it is `trigger_mc`, the market cap
-  when the alert fired, carried onto the ranked row as `Candidate.triggerMcUsd` and reaching the
-  analyst as `alert_mcap_usd`. First alert wins. Against `mcap_usd` it is the only thing an alert
-  says that a rank feed cannot; measured on one live sweep the median tagged row sits at 0.61x
-  its alert cap and only 11 of 46 are above it.
+- **The sweep is three ranking feeds, 40 rows each, and nothing else.** `trending-1h`,
+  `trending-5m` and `graduated` (trenches `completed`, Solana/BSC/Robinhood only). The signal
+  route is no longer called: every alert type carries zero flow (`volume_*`, `swaps_*`, `buys_*`,
+  `net_buy_*` are 0 on all of them, and `smart_degen_count` is 0 even on a smart-money buy), so a
+  row only an alert surfaced had nothing to judge and a row it tagged kept the rank feed's numbers
+  anyway — a label, not a source. `market/gmgn.ts` still wraps `signals`; `git log` this file for
+  the measured per-type overlap and the `trigger_mc` carry-across if it ever comes back.
 - **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
   wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes
   `input_amount_bps` (basis points: 50% → `"5000"`) and `input_amount` is a `"0"` placeholder.

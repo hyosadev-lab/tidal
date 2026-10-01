@@ -2,7 +2,7 @@ import { buyableSet } from "../domain/candidates.ts";
 import { liveReady, minPosition, tradeSize } from "../domain/config.ts";
 import { securityRisk } from "../domain/gates.ts";
 import { clamp, short } from "../domain/num.ts";
-import { entryStop, entryStrategy, positionSize } from "../domain/positions.ts";
+import { CONVICTION_FLOOR, entryStop, entryStrategy, positionSize } from "../domain/positions.ts";
 import { store } from "../data/store.ts";
 import * as broker from "../market/broker.ts";
 import * as gmgn from "../market/gmgn.ts";
@@ -60,8 +60,8 @@ export async function openEntries(
     if (store.position(c.address)) continue;
 
     const conviction = clamp(e.conviction, 0, 100, c.score);
-    if (conviction < 40) {
-      store.log("info", `${c.symbol} skipped — conviction ${conviction} below the 40 floor.`);
+    if (conviction <= CONVICTION_FLOOR) {
+      store.log("info", `${c.symbol} skipped — conviction ${conviction} is not above the ${CONVICTION_FLOOR} floor.`);
       continue;
     }
 
