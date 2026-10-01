@@ -94,7 +94,10 @@ function drawTide(points, stats) {
 
   // The stored series is throttled to one point a minute and stops entirely while nothing
   // is open, so the curve ends at a live reading — otherwise the dot lags the big number.
-  const series = [...points, { at: Date.now(), equity: stats.equity }];
+  // Not while stopped: nothing reprices then, and a live point at Date.now() only stretches
+  // the time axis until the real history is a sliver on the left.
+  const live = state?.runState === "running" || points.length < 2;
+  const series = live ? [...points, { at: Date.now(), equity: stats.equity }] : points;
   const vals = series.map((p) => p.equity);
   // Only what is plotted: peak/trough are all-time and survive the history trim, so drawing
   // the water lines from them floats them above a curve that never reached there.
@@ -106,10 +109,12 @@ function drawTide(points, stats) {
   const y = (v) => pad + (1 - (v - bottom) / (top - bottom)) * (H - pad * 2);
   const t0 = series[0].at;
   const span = series[series.length - 1].at - t0 || 1;
-  const x = (p) => ((p.at - t0) / span) * W;
+  // Ends short of W: the end dot sits on the last x, and the viewBox clips anything past W.
+  const R = W - 6;
+  const x = (p) => ((p.at - t0) / span) * R;
 
   const line = series.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p.equity).toFixed(1)}`).join("");
-  const area = `${line}L${W},${H}L0,${H}Z`;
+  const area = `${line}L${R},${H}L0,${H}Z`;
   const rising = vals[vals.length - 1] >= vals[0];
   const stroke = rising ? "var(--flood)" : "var(--ebb)";
 
@@ -124,12 +129,12 @@ function drawTide(points, stats) {
     <line x1="0" y1="${y(lo).toFixed(1)}" x2="${W}" y2="${y(lo).toFixed(1)}" stroke="var(--ebb)" stroke-width="1" stroke-dasharray="4 6" opacity=".45"/>
     <path d="${area}" fill="url(#water)"/>
     <path d="${line}" fill="none" stroke="${stroke}" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
-    <circle cx="${W}" cy="${y(vals[vals.length - 1]).toFixed(1)}" r="3.5" fill="${stroke}"/>
+    <path d="M${R},${y(vals[vals.length - 1]).toFixed(1)}h0" stroke="${stroke}" stroke-width="7" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
   `;
 
   $("mk-high").textContent = usd(hi);
   $("mk-low").textContent = usd(lo);
-  $("mk-span").textContent = `${points.length} soundings over ${dur(Date.now() - t0)}`;
+  $("mk-span").textContent = `${points.length} soundings over ${dur(span)}`;
 }
 
 // ── render ────────────────────────────────────────────────────────────
