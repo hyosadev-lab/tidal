@@ -21,7 +21,7 @@ test("garbage in the model reply yields no decision rather than a bad one", () =
 
 test("skillBlock is empty without skills and names each layer with one", () => {
   assert.equal(skillBlock([]), "");
-  const b = skillBlock([{ name: "standard", body: "read flow first" }]);
+  const b = skillBlock([{ name: "token-dd", body: "read flow first" }]);
   assert.match(b, /SKILLS/);
-  assert.match(b, /--- skill: standard ---\nread flow first/);
+  assert.match(b, /--- skill: token-dd ---\nread flow first/);
 });

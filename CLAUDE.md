@@ -275,14 +275,14 @@ candidate row: widening the analyst's view usually means adding a field in `askA
 
 ### Analyst skills (`skills/`, `src/agent/skills.ts`)
 
-Markdown method the analyst reads in its system prompt, loaded fresh every cycle by
-`loadSkills()` and framed by `skillBlock()` in `analyst.ts` — after THE MACHINE, before
-OPERATOR INSTRUCTIONS, so a skill ranks under both. Layers, in order: `standard`
-(`skills/standard/SKILL.md`, public, tracked) and `edge` (`skills/edge/SKILL.md`, the owner's
-private layer, **gitignored** — never commit it, never quote it into a tracked file). A missing
-layer is skipped silently; the cycle log line `Analyst: … · skills: …` says which loaded.
-`TTA_SKILLS=standard|none` overrides. A skill is method, not policy: a limit you would want a
-skill to enforce belongs in `domain/`, because nothing but the model reads a SKILL.md.
+The analyst's system prompt opens with a general memecoin-trader persona (`systemPrompt` in
+`analyst.ts`) — temperament only, no selection policy, so it never overrules the operator's box.
+Skills are upgrades on top of it: every `skills/<name>/SKILL.md` is loaded fresh each cycle by
+`loadSkills()` (alphabetical, empty or missing files skipped) and framed by `skillBlock()` —
+after THE MACHINE, before OPERATOR INSTRUCTIONS, so a skill ranks under both. Adding a skill is
+dropping a folder in; no code change. The cycle log line `Analyst: … · skills: …` says which
+loaded. A skill is method, not policy: a limit you would want a skill to enforce belongs in
+`domain/`, because nothing but the model reads a SKILL.md.
 
 ## Extending
 
