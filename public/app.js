@@ -346,7 +346,24 @@ const devHolds = (c) =>
 const flow5m = (c) =>
   c.buys5m === null || c.buys5m === undefined
     ? '<span class="kv-na">—</span>'
-    : `${c.buys5m}/${c.sells5m ?? "—"}`;
+    : `<span class="up">${c.buys5m}</span><span class="kv-sep">/</span><span class="down">${c.sells5m ?? "—"}</span>`;
+
+/** Which GMGN list surfaced the token, in words a non-trader can read; the detail is on hover. */
+const FEED_TAG = {
+  "trending-1h": ["trending 1h", "on GMGN's top-traded list for the last hour"],
+  "trending-5m": ["trending 5m", "on GMGN's top-traded list for the last five minutes — activity right now"],
+  graduated: ["graduated", "finished its launchpad bonding curve and moved to a real DEX pool"],
+};
+const feedTags = (source) => {
+  const tags = (source || "")
+    .split("+")
+    .filter(Boolean)
+    .map((f) => {
+      const [label, title] = FEED_TAG[f] ?? [f, f];
+      return `<span class="feed-tag" title="${esc(title)}">${esc(label)}</span>`;
+    });
+  return tags.length ? `<span class="sounding-k">found in</span>${tags.join("")}` : "";
+};
 
 // The card shows the five figures the old table did. The scan collects more — buys/sells,
 // net buy, dev hold rate, insider and bundler rates, fees, 1m change — and the analyst gets
@@ -361,35 +378,38 @@ function renderCandidates(s) {
     .map((c) => {
       const pass = !c.gateFailures.length;
       const verdict = !pass
-        ? '<span class="pill pill-fail">blocked</span>'
+        ? '<span class="status is-fail" title="failed a safety check (reason below) — never shown to the AI, cannot be bought">blocked</span>'
         : c.analystNote === "sent"
-          ? '<span class="pill pill-pass">sent</span>'
-          : '<span class="pill">eligible</span>';
-      const note = pass
-        ? c.analystNote === "sent"
-          ? "shown to the analyst"
-          : (c.analystNote ?? "")
-        : c.gateFailures.join(", ");
-      const meta = [c.source, c.launchpad].filter(Boolean).join(" · ");
-      // Age reads on its own rather than buried mid-sentence in the meta line: on a memecoin
-      // it is half the trade. One shade brighter than the meta beside it, nothing louder.
+          ? '<span class="status is-pass" title="passed the safety checks and was shown to the AI analyst this cycle. Reviewed is not bought — the analyst still has to back it">reviewed</span>'
+          : '<span class="status" title="passed the safety checks but was not shown to the AI this cycle — reason below">skipped</span>';
+      // "sent" already says it went to the analyst; the note only carries what the pill can't.
+      const note = pass ? (c.analystNote === "sent" ? "" : (c.analystNote ?? "")) : c.gateFailures.join(", ");
+      // Age reads on its own rather than buried in the meta line: on a memecoin it is half the trade.
       return `<article class="sounding${pass ? "" : " is-blocked"}">
         <header class="sounding-head">
-          <a class="sounding-sym linkish" href="${esc(tokenUrl(s.config.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
-          <span class="sounding-age" title="time since the token was created">${dur1(c.ageMinutes * 60000)}</span>
-          <span class="sounding-meta">${esc(meta)}</span>
-          <span class="sounding-score" title="structure score, 0-100 — ranking only, it disqualifies nothing">${pass ? c.score : "—"}</span>
-          ${verdict}<span class="sounding-note">${esc(note)}</span>
+          <div class="sounding-id">
+            <div class="sounding-title">
+              <a class="sounding-sym" href="${esc(tokenUrl(s.config.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
+              <span class="sounding-age" title="time since the token was created">${dur1(c.ageMinutes * 60000)}</span>
+              ${c.launchpad ? `<span class="sounding-pad" title="launchpad the token was created on">${esc(c.launchpad)}</span>` : ""}
+              ${verdict}
+            </div>
+            <div class="sounding-sub">${feedTags(c.source)}</div>
+          </div>
+          <span class="sounding-score" title="quality score, 0-100: smart-money buyers, momentum, liquidity, turnover, rug risk, age. Higher ranks first — it only orders the list, it blocks nothing"><span class="sounding-k">score</span>${
+            pass ? `<b>${c.score}</b><i style="--w:${c.score}%"></i>` : "<b>—</b>"
+          }</span>
         </header>
+        ${note ? `<p class="sounding-note${pass ? "" : " is-fail"}">${esc(note)}</p>` : ""}
         <div class="sounding-grid">
           ${kv("mcap", usd(c.marketCapUsd, 0), "market cap")}
           ${kv("liq", usd(c.liquidityUsd, 0), "pool liquidity — what you can actually exit into")}
           ${kv("volume", usd(c.volume1hUsd, 0), "trading volume over the row's own window: 1h on the rank feeds, 24h on graduated")}
-          ${kv("5m flow", flow5m(c), "buys/sells in the last five minutes, from the 5m feed. A token trading at a steady rate prints about a twelfth of its hourly count here — more is accelerating, less is a move already past. Blank means the 5m feed did not carry this row")}
+          ${kv("tx 5m", flow5m(c), "buy/sell transactions in the last five minutes (counts, not dollars), from the 5m feed. A token trading at a steady rate prints about a twelfth of its hourly count here — more is accelerating, less is a move already past. Blank means the 5m feed did not carry this row")}
           ${kv("1h", pct(c.change1hPct, 0), "price change over the last hour", tone(c.change1hPct))}
           ${kv("top 10", `${(c.top10HolderRate * 100).toFixed(0)}%`, "share of supply held by the ten largest wallets")}
           ${kv("dev holds", devHolds(c), "share of supply the deployer still holds. A blank means this row's feed does not report it — not that the dev is out")}
-          ${kv("rug", c.rugRatio.toFixed(2), "GMGN rug-pull risk score, 0-1")}
+          ${kv("rug", c.rugRatio.toFixed(2), "GMGN rug-pull risk score, 0-1. Amber from 0.3, GMGN's published Skip line", c.rugRatio >= 0.3 ? "warn" : "")}
         </div>
       </article>`;
     })
@@ -405,7 +425,7 @@ function renderTrades(s) {
       (t) => `<tr>
         <td class="muted">${clock(t.at)}</td>
         <td class="${t.side === "buy" ? "flat" : tone(t.pnlUsd ?? 0)}">${t.side.toUpperCase()}</td>
-        <td class="sym">${esc(t.symbol)}${t.mode === "live" ? "" : ' <span class="pill">paper</span>'}</td>
+        <td class="sym"><a class="linkish" href="${esc(tokenUrl(t.chain, t.address))}" target="_blank" rel="noopener">${esc(t.symbol)}</a>${t.mode === "live" ? "" : ' <span class="pill">paper</span>'}</td>
         <td class="r">${price(t.price)}</td>
         <td class="r">${usd(t.usd)}</td>
         <td class="r ${t.side === "sell" ? tone(t.pnlUsd) : "flat"}" title="${esc(peakNote(t))}">${t.side === "sell" ? `${usd(t.pnlUsd)} · ${pct(t.pnlPct)}` : "—"}</td>

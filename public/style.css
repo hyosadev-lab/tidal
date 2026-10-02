@@ -642,41 +642,76 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .sounding {
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  padding: 10px 12px 11px;
+  padding: 11px 14px 12px;
   background: var(--hull-2);
 }
 .sounding.is-blocked { opacity: .55; }
 .sounding:hover { border-color: var(--rule-2); }
 
+/* Two columns: who the token is on the left, its score alone on the right. */
 .sounding-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  margin-bottom: 9px;
+  display: flex; align-items: flex-start; gap: 12px;
+  padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--rule);
 }
-.sounding-sym { font-family: var(--mono); font-size: 13px; color: var(--foam); border-bottom-color: var(--rule); }
+.sounding-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.sounding-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sounding-sym {
+  font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: .02em;
+  color: var(--foam); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
 .sounding-sym:hover { color: var(--flood); }
-/* One step up from the meta line beside it, and nothing more — no box, no accent colour. */
-.sounding-age { font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--haze); }
-.sounding-meta { font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em; color: var(--rule-2); }
-/* Score sits hard right, the pill and its note after it — the eye scans scores down the list. */
-.sounding-score { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--foam); }
-.sounding-note { font-family: var(--mono); font-size: 10px; color: var(--haze); }
+.sounding-age {
+  font-family: var(--mono); font-size: 10px; color: var(--haze);
+  border: 1px solid var(--rule); border-radius: var(--radius); padding: 0 5px;
+}
+.sounding-pad { font-family: var(--mono); font-size: 10px; color: var(--haze); white-space: nowrap; }
+
+/* Verdict as a dot and a word — quieter than a pill, and it reads with the name. */
+.status {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--haze);
+}
+.status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status.is-pass { color: var(--flood); }
+.status.is-fail { color: var(--ebb); }
+
+.sounding-score { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.sounding-score .sounding-k { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; margin: 0; }
+.sounding-score b { font-family: var(--mono); font-size: 18px; font-weight: 500; color: var(--foam); line-height: 1; }
+.sounding-score i {
+  display: block; width: 44px; height: 2px; border-radius: 1px;
+  background: linear-gradient(90deg, var(--flood) var(--w), var(--rule) var(--w));
+}
+
+.sounding-sub {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px;
+  font-family: var(--mono); font-size: 10px; color: var(--haze);
+}
+.feed-tag {
+  padding: 0 5px; border-radius: var(--radius);
+  background: var(--rule); color: var(--foam); opacity: .8;
+}
+.sounding-k { color: var(--haze); margin-right: 2px; }
+.sounding-note { margin: -4px 0 10px; font-family: var(--mono); font-size: 10px; color: var(--haze); }
+.sounding-note.is-fail { color: var(--ebb); }
 
 .sounding-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: 8px 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 12px;
 }
-.kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.kv-k { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--haze); }
-.kv-v { font-family: var(--mono); font-size: 12px; color: var(--foam); overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 420px) { .sounding-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kv { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.kv-k { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--haze); }
+.kv-v { font-family: var(--mono); font-size: 13px; color: var(--foam); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* .up / .down are declared earlier in this file, so the bare `.kv-v` colour would win on
    source order alone and every change would read white. Restate them at this specificity. */
-.kv-v.up { color: var(--flood); }
-.kv-v.down { color: var(--ebb); }
+.kv-v.up, .kv-v .up { color: var(--flood); }
+.kv-v.down, .kv-v .down { color: var(--ebb); }
 .kv-v.flat { color: var(--haze); }
+.kv-v.warn { color: var(--lamp); }
+.kv-sep { color: var(--rule-2); margin: 0 2px; }
 .kv-na { color: var(--rule-2); }
 
 .linkish { color: var(--haze); text-decoration: none; border-bottom: 1px dotted var(--rule-2); }
