@@ -88,11 +88,3 @@ const MAX_LEG_FEE_PCT = 5;
  */
 export const minLegUsd = (chain: Chain, nativeUsd: number): number =>
   (TX_COST_NATIVE[chain] * nativeUsd) / (MAX_LEG_FEE_PCT / 100);
-
-/**
- * How far under water a buy may start before it is not worth opening. The round trip costs roughly
- * twice this, so 8% means asking for a token that has to move ~16% to be worth anything. Checked
- * against a real quote, so it is also the honest floor on position size: on SOL a $20 buy quotes
- * ~4.6% and passes, a $5 buy ~12% and does not.
- */
-export const MAX_ENTRY_COST_PCT = 8;

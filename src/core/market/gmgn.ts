@@ -165,41 +165,6 @@ export async function gasQuote(chain: Chain): Promise<GasQuote> {
 // engine trades, so a single slot is the whole cache.
 let gasCache: { at: number; chain: Chain; q: GasQuote } | null = null;
 
-export type RouteQuote = {
-  /** USD going in, and the USD the tokens coming back are worth. */
-  inUsd: number;
-  outUsd: number;
-  /** Native units that actually leave the wallet — input plus every fee. 0 when not quoted. */
-  costNative: number;
-};
-
-/**
- * What a swap would really cost, asked before anything is spent. Read-only (`exist` auth), so a
- * pre-trade refusal costs one weight-2 read and no money.
- *
- * The gap between `inUsd` and `outUsd` is the percentage half — GMGN's 1% routing fee, the pool's
- * own, and price impact — and `sol_cost` is the half no percentage models: priority fee, MEV tip
- * and account rent, flat whatever the trade is worth. Measured live on one pump_amm pool: a
- * 0.05 SOL buy quoted -2.2% on price and 0.0065 SOL of chain fees on top, which on a $3.78 buy
- * is another 13%. `sol_cost` is a slight overstatement — the ATA rent inside it comes back when
- * the account closes — and erring that way beats a paper record that flatters itself.
- */
-export async function routeQuote(
-  chain: Chain,
-  from: string,
-  inputToken: string,
-  outputToken: string,
-  amount: string,
-  slippage: number,
-): Promise<RouteQuote | null> {
-  const r = obj(await client().quoteOrder(chain, fromAddress(chain, from), inputToken, outputToken, amount, slippage));
-  const tx = obj(r["tx"]);
-  const inUsd = num(tx["amount_in_usd"]);
-  const outUsd = num(tx["amount_out_usd"]);
-  if (!(inUsd > 0) || !(outUsd > 0)) return null;
-  return { inUsd, outUsd, costNative: num(tx["sol_cost"]) / 10 ** NATIVE[chain].decimals };
-}
-
 export async function nativeUsdPrice(chain: Chain): Promise<number> {
   return (await gasQuote(chain)).nativeUsd;
 }

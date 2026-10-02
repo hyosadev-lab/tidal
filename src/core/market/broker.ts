@@ -1,4 +1,4 @@
-import { breakevenPct, MAX_ENTRY_COST_PCT, minLegUsd, NATIVE, netOfFees } from "../domain/chains.ts";
+import { breakevenPct, minLegUsd, NATIVE, netOfFees } from "../domain/chains.ts";
 import { slippage } from "../domain/config.ts";
 import { num } from "../domain/num.ts";
 import { peakPct, viableStrategy } from "../domain/positions.ts";
@@ -116,29 +116,16 @@ export async function buy(
   const nativeUsd = gas.nativeUsd;
   const amount = nativeUsd > 0 ? toSmallestUnit(usdAmount / nativeUsd, native.decimals) : "";
 
-  // What the route really costs, before anything is spent. Both modes ask: live to refuse a buy
-  // that starts too far under, paper to fill on a real number instead of a model of one. Needs a
-  // wallet address — GMGN quotes a route for someone — and falls back to the model without it.
-  const quote =
-    amount && cfg.walletAddress
-      ? await gmgn
-          .routeQuote(cfg.chain, cfg.walletAddress, native.address, c.address, amount, slippage(cfg))
-          .catch(() => null)
-      : null;
-  const quotedCost = quote ? (quote.costNative > 0 ? quote.costNative * nativeUsd : quote.inUsd) : 0;
-  if (quote && quotedCost > 0) {
-    const entryCostPct = ((quotedCost - quote.outUsd) / quotedCost) * 100;
-    if (entryCostPct > MAX_ENTRY_COST_PCT)
-      return {
-        error: `entry costs ${entryCostPct.toFixed(1)}% on a $${usdAmount.toFixed(0)} buy (fees + impact, ceiling ${MAX_ENTRY_COST_PCT}%) — too small for the round trip`,
-      };
-  }
+  // No pre-trade `/v1/trade/quote`: GMGN answers it with RATE_LIMIT_EXCEEDED even as the first
+  // request after 90s of silence, and that 429 shut the shared gate so the swap behind it went out
+  // at reset+1s and was refused too — every live buy this route was asked for failed that way.
+  // Fees and impact are the model's (`breakevenPct`, `paperSlip`) in both modes.
 
   // What this position has to gain before it is worth anything, and the plan the fees and the
   // token's own volatility allow of the one it was given: targets under the hurdle or inside the
   // stop distance lifted to it, rungs too small to pay for their own transaction folded together.
   // Priced before the branch, so live hands GMGN exactly the plan paper would have run.
-  const hurdle = breakevenPct(cfg.chain, quotedCost > 0 ? quote!.inUsd : usdAmount, nativeUsd, quotedCost);
+  const hurdle = breakevenPct(cfg.chain, usdAmount, nativeUsd);
   const plan = viableStrategy(strategy, hurdle, minLegUsd(cfg.chain, nativeUsd), usdAmount, cfg.stopLossPct);
   // Logged whenever the plan changed shape *or* a target moved: the floor rewrites rungs silently
   // otherwise, and the whole point of it is being able to see that it did.
@@ -150,7 +137,7 @@ export async function buy(
         `${strategy.map((r) => r.kind + (r.at ?? "")).join(" ")} → ${plan.map((r) => r.kind + (r.at ?? "")).join(" ")}.`,
     );
 
-  // Filled in by whichever branch runs — the initialisers are what paper's unquoted path keeps.
+  // Filled in by whichever branch runs.
   let fillPrice = c.priceUsd;
   let qty = 0;
   let spent = usdAmount;
@@ -159,19 +146,9 @@ export async function buy(
   let strategyOrderId: string | undefined;
 
   if (cfg.mode === "paper") {
-    if (quote && quotedCost > 0) {
-      // The quoted route, not a model of one. `outUsd` is what the tokens are worth on arrival,
-      // `quotedCost` everything that leaves the wallet to get them. Entry price stays a market
-      // price — live's convention — so the chain fees land in `costUsd` where they belong and
-      // the exit rules read the same percentages in either mode.
-      qty = quote.outUsd / c.priceUsd;
-      fillPrice = quote.inUsd / qty;
-      spent = quotedCost;
-    } else {
-      const slip = paperSlip(usdAmount, c.liquidityUsd, slippage(cfg));
-      fillPrice = c.priceUsd * (1 + slip / 100);
-      qty = netOfFees(cfg.chain, usdAmount, nativeUsd) / fillPrice;
-    }
+    const slip = paperSlip(usdAmount, c.liquidityUsd, slippage(cfg));
+    fillPrice = c.priceUsd * (1 + slip / 100);
+    qty = netOfFees(cfg.chain, usdAmount, nativeUsd) / fillPrice;
     if (store.cash < spent) return { error: "not enough paper cash" };
   } else {
     if (!(nativeUsd > 0)) return { error: "could not read native token price" };
@@ -203,11 +180,8 @@ export async function buy(
     const inDec = num(rep.input_token_decimals, NATIVE[cfg.chain].decimals);
     const inAmt = num(rep.input_amount) / 10 ** inDec;
     // The report accounts for the amount swapped, never the routing fee or the chain fees paid
-    // around it — real money that left the wallet, and the difference between a cost basis and a
-    // flattering one. The quote's `sol_cost` is the only number that carries them, so when it is
-    // there the gap rides along as an estimate; without it the basis stays understated.
-    const overhead = quote && quotedCost > quote.inUsd ? quotedCost - quote.inUsd : 0;
-    spent = (inAmt > 0 ? inAmt * nativeUsd : usdAmount) + overhead;
+    // around it, so this basis is understated by those — there is no quote left to estimate them.
+    spent = inAmt > 0 ? inAmt * nativeUsd : usdAmount;
     txHash = fill.hash;
   }
 
