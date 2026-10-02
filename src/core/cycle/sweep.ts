@@ -71,14 +71,20 @@ export async function gatherCandidates(): Promise<Candidate[]> {
     gmgn
       .trending(cfg.chain, { interval: "5m", limit: LIMIT, refine: refineQuery(cfg.refine) })
       .then((r): Feed => [r, "trending-5m"])
-      .catch((): Feed => [[], "trending-5m"]),
+      .catch((e): Feed => {
+        store.log("warn", `Trending 5m feed failed: ${short(e)}`);
+        return [[], "trending-5m"];
+      }),
   ];
   if (cfg.chain === "sol" || cfg.chain === "bsc" || cfg.chain === "robinhood")
     feeds.push(
       gmgn
         .trenches(cfg.chain, "completed", LIMIT, refineQuery(cfg.refine, "trenches"))
         .then((r): Feed => [r, "graduated"])
-        .catch((): Feed => [[], "graduated"]),
+        .catch((e): Feed => {
+          store.log("warn", `Graduated feed failed: ${short(e)}`);
+          return [[], "graduated"];
+        }),
     );
 
   // Fetched together, merged in a fixed order. `mergeFeeds` keeps the first row it sees for an

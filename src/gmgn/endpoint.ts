@@ -21,8 +21,13 @@ const DEFAULT_TIMEOUT_MS = 60_000;
  * Per-route bucket weight and timeout override. Unlisted routes weigh 1 and time out at
  * DEFAULT_TIMEOUT_MS. The numbers were tuned against the live API in the trading client
  * this was merged with — the expensive routes cost more than one token.
+ * `gapMs` is a minimum spacing between two calls to the same route. `/v1/market/rank` needs it:
+ * measured on a fresh process, the 5m rank call ~400ms behind the 1h one came back 429 with a
+ * 30s reset every time, while 3s apart both answered — and so did trenches right after.
  */
-const ROUTE: Record<string, { weight?: number; timeoutMs?: number }> = {
+const ROUTE: Record<string, { weight?: number; timeoutMs?: number; gapMs?: number }> = {
+  // ponytail: 3s is the one gap measured to pass, not the threshold; bisect it if the sweep's 3s matters.
+  "/v1/market/rank": { gapMs: 3_000 },
   "/v1/market/token_kline": { weight: 2 },
   "/v1/market/hot_searches": { weight: 2 },
   "/v1/market/token_signal": { weight: 3 },
@@ -103,12 +108,16 @@ function noteSucceeded(): void {
   gapMs = Math.max(GAP_FLOOR_MS, gapMs * 0.9);
 }
 
-function schedule<T>(weight: number, run: () => Promise<T>): Promise<T> {
+const routeLastAt = new Map<string, number>();
+
+function schedule<T>(weight: number, run: () => Promise<T>, route?: string): Promise<T> {
   const result = queue.then(async () => {
     await takeTokens(weight);
-    const wait = gateOpensAt - Date.now();
+    const routeGap = route ? (ROUTE[route]?.gapMs ?? 0) : 0;
+    const wait = Math.max(gateOpensAt, (route ? (routeLastAt.get(route) ?? 0) : 0) + routeGap) - Date.now();
     if (wait > 0) await sleep(wait);
     gateOpensAt = Date.now() + gapMs;
+    if (route) routeLastAt.set(route, Date.now());
     const out = await run();
     noteSucceeded();
     return out;
@@ -679,7 +688,7 @@ export class OpenApiClient {
           const request = prepare();
           const res = await this.doFetch(request.method, request.subPath, request.url, request.headers, request.body, request.curlStr);
           return this.parseResponse(request.method, request.subPath, res, request.curlStr);
-        });
+        }, subPath);
       } catch (err) {
         // Shut the shared gate before anything else: the requests already queued behind this one
         // are what turn a 30s cooldown into a ban.
