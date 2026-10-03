@@ -356,6 +356,7 @@ export class Store {
         lastCandidates: this.lastCandidates,
       },
       liveReady: live.ok,
+      liveReason: live.reason,
     };
   }
 }

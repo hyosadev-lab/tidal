@@ -2,6 +2,7 @@ import { minPosition, liveReady, tradeSize } from "./domain/config.ts";
 import { clamp } from "./domain/num.ts";
 import { store } from "./data/store.ts";
 import * as gmgn from "./market/gmgn.ts";
+import * as jupiter from "./market/jupiter.ts";
 import { arm, cancelInFlight, disarm, onResume } from "./cycle/control.ts";
 import { closePosition } from "./cycle/exits.ts";
 import { runMonitor } from "./cycle/monitor.ts";
@@ -88,8 +89,15 @@ let walletCache: { at: number; list: gmgn.BoundWallet[] } | null = null;
  * button. A failed read is not cached.
  */
 export async function wallets(fresh = false): Promise<{ at: number; list: gmgn.BoundWallet[] }> {
-  if (fresh || !walletCache || Date.now() - walletCache.at > 5 * 60_000)
-    walletCache = { at: Date.now(), list: await gmgn.boundWallets() };
+  if (fresh || !walletCache || Date.now() - walletCache.at > 5 * 60_000) {
+    const list = await gmgn.boundWallets();
+    // The wallet `SOLANA_PRIVATE_KEY` signs for is the one live Solana trades from, whether or
+    // not GMGN has it bound — so the picker has to offer it.
+    const mine = jupiter.address();
+    if (mine && !list.some((w) => w.chain === "sol" && w.address === mine))
+      list.unshift({ chain: "sol", address: mine, native: await jupiter.solBalance(mine).catch(() => null), tokens: [] });
+    walletCache = { at: Date.now(), list };
+  }
   return walletCache;
 }
 

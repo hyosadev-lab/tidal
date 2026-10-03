@@ -30,6 +30,13 @@ it signs `swap` and `query_order`, the two routes GMGN requires a signature on. 
 `gmgn-cli` dependency; `gmgn-skills/` is an untracked reference clone of its source, kept only
 to look up endpoint shapes and field semantics, and excluded from `tsconfig.json`.
 
+**Live Solana does not swap through GMGN.** It goes through Jupiter Swap V2
+(`src/core/market/jupiter.ts`: `/order` → sign → `/execute`), signed in-process with
+`SOLANA_PRIVATE_KEY` — a real wallet key, base58 or JSON array. `JUPITER_API_KEY` is optional
+(keyless is 30 requests/min), `SOLANA_RPC_URL` overrides the public RPC used for the wallet's
+SOL balance, a mint's decimals and a token balance. GMGN is still every market read, and still
+the swap route on the other chains.
+
 **One test file is not hermetic.** `tests/core/cycle/cycle.test.ts` calls `start()`, which
 schedules a real scan 1.5s later; that scan hits the live GMGN API and writes to `data/tta.db`.
 Expect network calls, a few seconds of runtime, and a mutated `data/` (gitignored). Point `TTA_DB`
@@ -107,6 +114,13 @@ two things GMGN was never told, the time stop and `healthExit`, and books everyt
 the balance. That is why an exit plan must survive translation — a rule `conditionOrders` drops
 is a rule that does not exist in live.
 
+**Except on Solana**, where the buy is a Jupiter swap and carries no condition orders: nothing is
+parked on anyone's server, so the monitor runs `evaluateExit` on those positions exactly as in
+paper, and a dead process means no stop. The monitor tells the two apart by
+`Position.strategyOrderId` — set only when GMGN is holding a plan. Moving that plan to Jupiter's
+Trigger API (OCO per rung, trailing via `trailingBps`, $10 minimum per order, tokens held in a
+custodial vault) is the planned next stage.
+
 ### `src/core/` layering
 
 Four folders and two root files, and **imports only ever point inward**:
@@ -138,7 +152,8 @@ in, not imported).
 | `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
 | `data/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `market/gmgn.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
-| `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps |
+| `market/jupiter.ts` | the Solana execution route: Jupiter Swap V2 order/sign/execute, base58 and ed25519 transaction signing on `node:crypto`, three Solana RPC reads. The cast boundary for Jupiter, as `gmgn.ts` is for GMGN |
+| `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps. Live branches by chain: Solana → `jupiter.swap`, the rest → `gmgn.swap` with condition orders |
 | `cycle/control.ts` | the run's mutable state: the generation a Stop bumps (`generation`/`aborted`), the timer handles (`arm`/`disarm`), and `halt` |
 | `cycle/sweep.ts` | the whole search: `mergeFeeds`, `gatherCandidates` — three feeds in, one gated and scored list out |
 | `cycle/scan.ts` | **one cycle, top to bottom** — read `runScan` and that is the flow. Also `syncLiveBalance` |
@@ -182,6 +197,9 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   the process is not entitled to grant it on their behalf. Same reasoning behind `liveReady()`.
   This process signs its own trade requests, so that check is now the *entire* barrier — there is
   no second process left to refuse on our behalf. Don't add a config knob that substitutes for it.
+  **The Jupiter path (live Solana) does not check it — the operator's decision.** There the
+  barrier is `SOLANA_PRIVATE_KEY` being present, plus `broker` refusing when that key's address
+  is not the wallet selected on the dashboard. Don't extend that exemption to any other route.
 - **The analyst's tools are three read routes and nothing else.** `askAnalyst` passes
   `budgetedTools(LOOKUP_BUDGET)` from `src/agent/tools.ts` — `gmgn_token_info`,
   `gmgn_token_kline` and `gmgn_token_traders` (the holder set wallet by wallet: cost basis,

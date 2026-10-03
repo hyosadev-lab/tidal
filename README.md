@@ -115,8 +115,10 @@ Dicek berurutan, yang pertama cocok yang jalan:
 4. **Time stop** — 180 menit masih di bawah +8% -> tutup, uangnya dipindah ke ide lain
 5. **Health check** — likuiditas anjlok >55% dari waktu masuk, atau token berubah honeypot
 
-Di live mode, take-profit dan stop-loss juga **ditempelkan ke transaksi beli** lewat
-`--condition-orders`, jadi posisinya tetap punya proteksi di sisi GMGN walaupun proses ini mati.
+Di live mode **selain Solana**, take-profit dan stop-loss juga ditempelkan ke transaksi beli
+lewat `condition_orders`, jadi posisinya tetap punya proteksi di sisi GMGN walaupun proses ini
+mati. **Di Solana, swap lewat Jupiter dan exit dijalankan proses ini sendiri** tiap 30 detik —
+kalau prosesnya mati, gak ada stop-loss yang jaga posisi.
 
 ### 7. Kill switch
 
@@ -165,7 +167,12 @@ Prompt kamu bisa **memperketat** seleksi, gak bisa melonggarkan batas risiko. Mi
 
 Live mode kirim swap on-chain beneran yang gak bisa dibatalin.
 
-`gmgn.swap()` nolak jalan kecuali `GMGN_ALLOW_AUTOMATED_TRADES=1` ada di environment.
+**Solana** swap lewat [Jupiter](https://developers.jup.ag) dan ditandatangani proses ini sendiri
+pakai `SOLANA_PRIVATE_KEY` di `.env` — private key wallet beneran, jadi pakai hot wallet khusus
+dengan saldo kecil. Ngisi variabel itu adalah persetujuannya; jalur ini gak ngecek
+`GMGN_ALLOW_AUTOMATED_TRADES`. Wallet yang dipilih di dashboard harus wallet dari key itu.
+
+**Chain lain** masih lewat GMGN: `gmgn.swap()` nolak jalan kecuali `GMGN_ALLOW_AUTOMATED_TRADES=1` ada di environment.
 **Kode ini sengaja gak pernah nge-set variabel itu sendiri** — itu bentuk persetujuan kamu
 buat eksekusi tanpa konfirmasi, dan bukan hak proses ini buat ngasih izin atas nama kamu.
 Proses ini nandatangani sendiri request trade-nya, jadi cek itu satu-satunya penghalang

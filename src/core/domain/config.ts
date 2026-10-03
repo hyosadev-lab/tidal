@@ -229,14 +229,21 @@ export function chainLock(cfg: TradeConfig, openPositions: number, input: Partia
  * consent to headless execution, so setting it from here would hollow out the barrier
  * it exists to provide. Since this process signs its own trade requests, this check is
  * the whole barrier; there is no second process left to refuse on our behalf.
+ *
+ * Solana is the exception, by the operator's decision: it swaps through Jupiter, signed with
+ * the wallet's own key, and putting `SOLANA_PRIVATE_KEY` in the environment is the consent.
  */
 export function liveReady(cfg: TradeConfig): { ok: boolean; reason: string } {
+  if (!process.env.GMGN_API_KEY?.trim()) return { ok: false, reason: "GMGN_API_KEY is not set" };
+  if (!cfg.walletAddress) return { ok: false, reason: "no wallet address configured" };
+  if (cfg.chain === "sol")
+    return process.env.SOLANA_PRIVATE_KEY?.trim()
+      ? { ok: true, reason: "" }
+      : { ok: false, reason: "SOLANA_PRIVATE_KEY is not set — Jupiter swaps cannot be signed" };
   if (process.env.GMGN_ALLOW_AUTOMATED_TRADES !== "1")
     return { ok: false, reason: "GMGN_ALLOW_AUTOMATED_TRADES=1 is not set in this shell" };
-  if (!process.env.GMGN_API_KEY?.trim()) return { ok: false, reason: "GMGN_API_KEY is not set" };
   if (!process.env.GMGN_PRIVATE_KEY?.trim())
     return { ok: false, reason: "GMGN_PRIVATE_KEY is not set — trade requests cannot be signed" };
-  if (!cfg.walletAddress) return { ok: false, reason: "no wallet address configured" };
   return { ok: true, reason: "" };
 }
 

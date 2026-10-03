@@ -163,7 +163,7 @@ function render(s) {
     banner.dataset.kind = "warn";
     banner.textContent = s.liveReady
       ? "Live mode — swaps are real and irreversible."
-      : "Live mode is selected but not armed. Set GMGN_ALLOW_AUTOMATED_TRADES=1 in the shell running this server and pick a wallet.";
+      : `Live mode is selected but not armed — ${s.liveReason}.`;
   } else {
     banner.hidden = true;
   }
@@ -250,7 +250,7 @@ function fillForm(c, s) {
   $("lbl-ceiling").textContent = sizes[c.chain] ? `${sizes[c.chain]} ${sym}` : `— (no size set for ${sym})`;
   $("live-status").textContent = s.liveReady
     ? "Armed. Live swaps will execute without further confirmation."
-    : "Not armed. Live entries will be refused until GMGN_ALLOW_AUTOMATED_TRADES=1 is set and a wallet is picked.";
+    : `Not armed. Live entries will be refused — ${s.liveReason}.`;
 }
 
 /**
@@ -653,7 +653,7 @@ async function save() {
     return;
   }
   dirty = false;
-  fillForm(r.config, state ?? { liveReady: false });
+  fillForm(r.config, state ?? { liveReady: false, liveReason: "state not loaded yet" });
   saveState(`saved ${clock(Date.now())}`);
 }
 

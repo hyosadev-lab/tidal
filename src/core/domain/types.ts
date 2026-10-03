@@ -234,6 +234,8 @@ export type Snapshot = {
     lastCandidates: Candidate[];
   };
   liveReady: boolean;
+  /** Why live mode is not armed; empty when it is. */
+  liveReason: string;
 };
 
 export type Stats = {

@@ -11,10 +11,11 @@ import type { Position, TradeConfig } from "../domain/types.ts";
  * The exit loop. Runs every `monitorSeconds` independently of the scan and never calls the
  * model — a position must never depend on an LLM call succeeding in order to be closed.
  *
- * In live mode the wallet is the book, not this ledger: the exit plan runs on GMGN's side, so
- * positions shrink and vanish without this process selling anything. One holdings read per
- * tick mirrors that, and the two things GMGN was never told — the time stop and `healthExit` —
- * are all this loop acts on itself.
+ * In live mode the wallet is the book, not this ledger: a GMGN-bought position has its exit
+ * plan on GMGN's side, and the operator can sell by hand, so positions shrink and vanish without
+ * this process selling anything. One holdings read per tick mirrors that. For those positions
+ * the two things GMGN was never told — the time stop and `healthExit` — are all this loop acts
+ * on itself; a Jupiter-bought one (Solana) has no plan anywhere else, so this loop is its exits.
  */
 
 async function readHoldings(cfg: TradeConfig): Promise<Map<string, number> | null> {
@@ -114,12 +115,13 @@ async function checkPosition(p: Position, cfg: TradeConfig, holdings: Map<string
 
   const exit = evaluateExit(p, cfg);
   if (!exit) return;
-  // Live positions carry their whole plan on GMGN's side, so acting on a price rule here
-  // would be a second sell for an exit that is already placed. What is left is the two
-  // things GMGN was never told: the time stop, and the health exit above it.
+  // A position bought through GMGN carries its whole plan on GMGN's side (`strategyOrderId`),
+  // so acting on a price rule here would be a second sell for an exit that is already placed.
+  // What is left is the two things GMGN was never told: the time stop, and the health exit
+  // above it. A Jupiter buy parks nothing anywhere, so its plan runs here like a paper one.
   // Same on a failed read, whatever the mode: `lastPrice` is stale, so only the clock is
   // still telling the truth.
-  if ((cfg.mode === "live" || !info) && exit.kind !== "time") return;
+  if ((p.strategyOrderId || !info) && exit.kind !== "time") return;
   const rung = /^(?:tp|rule)(\d+)$/.exec(exit.kind);
   if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
   await closePosition(p, exit.percent, exit.reason);

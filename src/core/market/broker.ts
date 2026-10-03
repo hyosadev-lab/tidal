@@ -1,11 +1,23 @@
 import { breakevenPct, minLegUsd, NATIVE, netOfFees } from "../domain/chains.ts";
 import { slippage } from "../domain/config.ts";
-import { num } from "../domain/num.ts";
+import { num, short } from "../domain/num.ts";
 import { peakPct, viableStrategy } from "../domain/positions.ts";
 import type { store as Store } from "../data/store.ts";
 import type { Candidate, Chain, Position, StrategyRule, Trade, TradeConfig } from "../domain/types.ts";
 import { randomUUID } from "node:crypto";
 import * as gmgn from "./gmgn.ts";
+import * as jupiter from "./jupiter.ts";
+
+/**
+ * Live Solana swaps go through Jupiter and are signed here, so the wallet that trades is
+ * whichever one `SOLANA_PRIVATE_KEY` belongs to — not the one picked on the dashboard. The two
+ * must agree, or balances and holdings would be read off one wallet and spent from another.
+ */
+function jupiterWalletError(cfg: TradeConfig): string | null {
+  const mine = jupiter.address();
+  if (!mine) return "SOLANA_PRIVATE_KEY is not set or not a valid Solana key";
+  return mine === cfg.walletAddress ? null : `SOLANA_PRIVATE_KEY signs for ${mine}, not the selected wallet ${cfg.walletAddress}`;
+}
 
 /** Price impact a paper fill should expect, given trade size against pool depth. */
 function paperSlip(usd: number, liquidityUsd: number, cap: number): number {
@@ -150,6 +162,29 @@ export async function buy(
     fillPrice = c.priceUsd * (1 + slip / 100);
     qty = netOfFees(cfg.chain, usdAmount, nativeUsd) / fillPrice;
     if (store.cash < spent) return { error: "not enough paper cash" };
+  } else if (cfg.chain === "sol") {
+    // Jupiter: no condition orders ride along, so `plan` stays on the position and the monitor
+    // runs it. The absent `strategyOrderId` is how the monitor knows the exits are its own.
+    if (!(nativeUsd > 0)) return { error: "could not read native token price" };
+    const bad = jupiterWalletError(cfg);
+    if (bad) return { error: bad };
+    // Before the swap, not after: a fill that cannot be converted to a quantity cannot be booked.
+    let dec: number;
+    try {
+      dec = await jupiter.decimals(c.address);
+    } catch (e) {
+      return { error: `could not read token decimals: ${short(e)}` };
+    }
+    const fill = await jupiter.swap({ inputMint: native.address, outputMint: c.address, amount, slippagePct: cfg.slippagePct });
+    if ("error" in fill) return fill;
+    qty = num(fill.outAmount) / 10 ** dec;
+    if (!(qty > 0)) return { error: "swap returned no output amount" };
+    const inAmt = num(fill.inAmount) / 10 ** native.decimals;
+    spent = inAmt > 0 ? inAmt * nativeUsd : usdAmount;
+    // What a token actually cost, Jupiter's fee and the slippage included — `/execute` reports
+    // amounts, not a price.
+    fillPrice = spent / qty;
+    txHash = fill.signature;
   } else {
     if (!(nativeUsd > 0)) return { error: "could not read native token price" };
 
@@ -272,6 +307,27 @@ export async function sell(
     // which nothing here carries — the model is close enough, and it is no longer zero.
     const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
     proceeds = netOfFees(cfg.chain, qtySold * fillPrice, nativeUsd);
+  } else if (cfg.chain === "sol") {
+    const bad = jupiterWalletError(cfg);
+    if (bad) return { error: bad };
+    // Sized off what the wallet holds right now, like GMGN's percent sell: the ledger's `qty`
+    // is a float, and asking for one unit more than the balance is a refused swap.
+    const pctOfBalance = Math.max(1, Math.min(100, Math.round((qtySold / p.qty) * 100)));
+    const held = await jupiter.tokenBalance(cfg.walletAddress, p.address);
+    const raw = (held * BigInt(pctOfBalance)) / 100n;
+    if (raw <= 0n) return { error: "the wallet holds none of this token" };
+    const fill = await jupiter.swap({
+      inputMint: p.address,
+      outputMint: NATIVE[cfg.chain].address,
+      amount: raw.toString(),
+      slippagePct: cfg.slippagePct,
+    });
+    if ("error" in fill) return fill;
+    const outAmt = num(fill.outAmount) / 10 ** NATIVE[cfg.chain].decimals;
+    const nativeUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => 0);
+    proceeds = outAmt > 0 && nativeUsd > 0 ? outAmt * nativeUsd : qtySold * p.lastPrice;
+    fillPrice = proceeds / qtySold;
+    txHash = fill.signature;
   } else {
     // `--percent` is a share of the wallet's current balance, not of the original buy.
     const pctOfBalance = Math.max(1, Math.min(100, Math.round((qtySold / p.qty) * 100)));

@@ -5,6 +5,7 @@ import { short } from "../domain/num.ts";
 import { store } from "../data/store.ts";
 import { recordSoundings } from "../data/soundings.ts";
 import * as gmgn from "../market/gmgn.ts";
+import * as jupiter from "../market/jupiter.ts";
 import { aborted, generation } from "./control.ts";
 import { openEntries } from "./entries.ts";
 import { applyExits } from "./exits.ts";
@@ -39,11 +40,12 @@ export async function syncLiveBalance(): Promise<boolean> {
   if (cfg.mode !== "live") return true;
   try {
     const [bal, px] = await Promise.all([
-      gmgn.nativeBalance(cfg.chain, cfg.walletAddress),
+      // Solana trades from the operator's own key, which need not be a wallet GMGN knows.
+      cfg.chain === "sol" ? jupiter.solBalance(cfg.walletAddress) : gmgn.nativeBalance(cfg.chain, cfg.walletAddress),
       gmgn.nativeUsdPrice(cfg.chain),
     ]);
     if (bal === null) {
-      store.log("warn", "Could not read the wallet balance from the GMGN API — skipping entries this cycle.");
+      store.log("warn", "Could not read the wallet balance — skipping entries this cycle.");
       return false;
     }
     if (!(px > 0)) {

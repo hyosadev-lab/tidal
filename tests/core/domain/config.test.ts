@@ -71,14 +71,28 @@ test("an unknown chain falls back instead of reaching the CLI", () => {
 });
 
 test("live mode stays disarmed without the operator's opt-in", () => {
-  const saved = process.env.GMGN_ALLOW_AUTOMATED_TRADES;
-  delete process.env.GMGN_ALLOW_AUTOMATED_TRADES;
-  assert.equal(liveReady({ ...cfg, walletAddress: "abc" }).ok, false);
+  const names = ["GMGN_ALLOW_AUTOMATED_TRADES", "GMGN_API_KEY", "GMGN_PRIVATE_KEY", "SOLANA_PRIVATE_KEY"] as const;
+  const saved = names.map((n) => process.env[n]);
+  for (const n of names) delete process.env[n];
+  process.env.GMGN_API_KEY = "k";
+  process.env.GMGN_PRIVATE_KEY = "k";
+  const bsc: TradeConfig = { ...cfg, chain: "bsc", walletAddress: "abc" };
+  const sol: TradeConfig = { ...cfg, chain: "sol", walletAddress: "abc" };
+
+  // GMGN chains: the consent variable is the barrier.
+  assert.equal(liveReady(bsc).ok, false);
   process.env.GMGN_ALLOW_AUTOMATED_TRADES = "1";
-  assert.equal(liveReady({ ...cfg, walletAddress: "" }).ok, false, "wallet is still required");
-  assert.equal(liveReady({ ...cfg, walletAddress: "abc" }).ok, true);
-  if (saved === undefined) delete process.env.GMGN_ALLOW_AUTOMATED_TRADES;
-  else process.env.GMGN_ALLOW_AUTOMATED_TRADES = saved;
+  assert.equal(liveReady({ ...bsc, walletAddress: "" }).ok, false, "wallet is still required");
+  assert.equal(liveReady(bsc).ok, true);
+
+  // Solana swaps through Jupiter: the wallet key is the barrier, and GMGN's consent is not asked.
+  assert.match(liveReady(sol).reason, /SOLANA_PRIVATE_KEY/);
+  delete process.env.GMGN_ALLOW_AUTOMATED_TRADES;
+  process.env.SOLANA_PRIVATE_KEY = "k";
+  assert.equal(liveReady(sol).ok, true);
+  assert.equal(liveReady({ ...sol, walletAddress: "" }).ok, false, "wallet is still required");
+
+  names.forEach((n, i) => (saved[i] === undefined ? delete process.env[n] : (process.env[n] = saved[i])));
 });
 
 test("chainLock: chain and wallet stay put while a position is open", () => {
