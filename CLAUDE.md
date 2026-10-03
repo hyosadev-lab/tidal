@@ -76,14 +76,21 @@ leaky bucket, since GMGN adds 5s to the cooldown per 429 and retry spam makes it
 `signer.ts`, and `client.ts` (the env-configured singleton). Two auth modes: *exist* (API key)
 for reads, *signed* (API key + `X-Signature`) for the swap and order routes.
 
-**Two limiters, and only one of them is documented.** The bucket's published numbers (rate 20,
-capacity 20) describe the per-key limit; the 429s this project actually gets say *IP rate limit*
-and are far stricter — measured twice on live cycles, ~18-20 weight inside one 30s window is the
-wall, which is also the cooldown the 429 returns. So the bucket refills 20 tokens over 30s, not
-over 1s (`GMGN_RATE_PER_SEC` overrides). Alongside it there is one process-wide gate: any 429
-with a reset time closes it for *every* route until then and doubles the pacing gap, which
-successes decay back. That gate is the fix for the real failure mode — a 429 is survivable, but
-the two requests already queued behind it are what turn a 30s cooldown into `RATE_LIMIT_BANNED`.
+**The bucket charges GMGN's published weights against the free plan.** Plans are Free 5/5,
+Plus 20/20, Pro 50/50 (rate/capacity), and each route has a weight — rank 3, trenches 2, kline 2,
+`user/info` 2, top holders/traders 5, swap and quote 10, most token reads 1; the `ROUTE` table in
+`endpoint.ts` is the full list, copied from the "Rate Limits" section of each gmgn-skills SKILL.md.
+Capacity defaults to 5. The refill does not: measured on a free key it sits between 0.67 and 1.18
+weight/s, not the 5/s "rate 5" suggests, so the bucket refills 20 per 30s (`GMGN_RATE_PER_SEC` /
+`GMGN_RATE_BURST` override, and are the two knobs to turn on a paid plan). At those numbers the
+sweep is rank, 3s, rank, 3s, trenches, and a whole cycle of reads (~25 weight) takes ~30s — measured
+clean. Keep the weights honest when adding a route: the old table booked the sweep as 5 while the
+server counted 8, which is what 429'd the graduated feed on every fresh start. Alongside the bucket
+there is one process-wide gate: any 429 with a reset time closes it for *every* route until then
+and doubles the pacing gap, which successes decay back. That gate is for what the bucket cannot
+see (a second process, a restart) — a 429 is survivable, but the two requests already queued
+behind it are what turn a 30s cooldown into `RATE_LIMIT_BANNED`. Reads retry once after waiting
+out a reset of up to 35s; swaps never retry.
 
 `src/agent/llm.ts` is a ~80-line OpenRouter loop (`runAgent`). It still supports tools (`{description, parameters (JSON Schema), run}`) and loops
 until the model replies without tool calls; the analyst passes two read-only ones, so a cycle is
@@ -246,7 +253,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   enforced in `budgetedTools`, not in the prompt: calls past it return a refusal string, so the
   model answers from the brief instead of erroring. `maxSteps` is `LOOKUP_BUDGET + 2`, and going
   over it throws — a cycle that no-ops. Raising the budget takes tokens straight out of the
-  sweep's share of the same process-wide bucket (20 per 30s, IP-scoped), which is what starves
+  sweep's share of the same process-wide bucket (capacity 5, refilling 20 per 30s), which is what starves
   the candidate list; measure before you raise it.
 - **In live mode the wallet, not the ledger, says what is still held.** The whole exit plan runs
   on GMGN's side, so positions shrink and disappear without this process selling anything — and

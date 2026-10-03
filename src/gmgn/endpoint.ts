@@ -13,30 +13,40 @@ import { buildAuthQuery, buildMessage, detectAlgorithm, sign } from "./signer.ts
  */
 
 const RATE_LIMIT_RETRY_BUFFER_MS = 1000;
-const DEFAULT_RATE_LIMIT_AUTO_RETRY_MAX_WAIT_MS = 5000;
+// The limiter's cooldown is 30s, so a 5s ceiling never retried it: a feed that drew the 429
+// was simply dropped for the whole cycle. The shared gate holds every other request until the
+// reset anyway, so waiting it out costs nothing extra. A ban's reset is minutes — still refused.
+const DEFAULT_RATE_LIMIT_AUTO_RETRY_MAX_WAIT_MS = 35_000;
 const USER_AGENT = "tta-0-gmgn-client";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
  * Per-route bucket weight and timeout override. Unlisted routes weigh 1 and time out at
- * DEFAULT_TIMEOUT_MS. The numbers were tuned against the live API in the trading client
- * this was merged with — the expensive routes cost more than one token.
- * `gapMs` is a minimum spacing between two calls to the same route. `/v1/market/rank` needs it:
- * measured on a fresh process, the 5m rank call ~400ms behind the 1h one came back 429 with a
- * 30s reset every time, while 3s apart both answered — and so did trenches right after.
+ * DEFAULT_TIMEOUT_MS. The weights are GMGN's published ones (the "Rate Limits" table in each
+ * gmgn-skills SKILL.md), not tuned guesses: the bucket only paces correctly if it charges what
+ * the server charges. The table this replaced had rank at 1 and trenches at 3, so the sweep was
+ * booked as 5 while the server counted 8 — against a capacity of 5.
  */
-const ROUTE: Record<string, { weight?: number; timeoutMs?: number; gapMs?: number }> = {
-  // ponytail: 3s is the one gap measured to pass, not the threshold; bisect it if the sweep's 3s matters.
-  "/v1/market/rank": { gapMs: 3_000 },
+const ROUTE: Record<string, { weight?: number; timeoutMs?: number }> = {
+  "/v1/market/rank": { weight: 3 },
+  "/v1/trenches": { weight: 2 },
   "/v1/market/token_kline": { weight: 2 },
-  "/v1/market/hot_searches": { weight: 2 },
-  "/v1/market/token_signal": { weight: 3 },
+  "/v1/market/hot_searches": { weight: 3 },
   "/v1/market/token_top_holders": { weight: 5 },
   "/v1/market/token_top_traders": { weight: 5 },
-  "/v1/trenches": { weight: 3 },
-  "/v1/trade/quote": { weight: 2 },
-  "/v1/trade/swap": { weight: 5, timeoutMs: 120_000 },
-  "/v1/trade/multi_swap": { weight: 5, timeoutMs: 120_000 },
+  "/v1/user/info": { weight: 2 },
+  "/v1/user/wallet_holdings": { weight: 2 },
+  "/v1/user/wallet_token_balance": { weight: 2 },
+  "/v1/user/created_tokens": { weight: 2 },
+  "/v1/user/wallet_activity": { weight: 3 },
+  "/v1/user/wallet_stats": { weight: 3 },
+  "/v1/user/wallet_profits": { weight: 3 },
+  "/v1/trade/quote": { weight: 10 },
+  "/v1/trade/swap": { weight: 10, timeoutMs: 120_000 },
+  "/v1/trade/multi_swap": { weight: 10, timeoutMs: 120_000 },
+  "/v1/trade/query_order": { weight: 5 },
+  "/v1/trade/strategy/create": { weight: 5 },
+  "/v1/trade/strategy/cancel": { weight: 2 },
 };
 
 /**
@@ -49,24 +59,23 @@ const ROUTE: Record<string, { weight?: number; timeoutMs?: number; gapMs?: numbe
  * honest under concurrency, and so the timestamp (validated within ±5s) and client_id
  * are built after the wait, not before it.
  */
-// GMGN documents this bucket as rate=20, capacity=20 — 20 tokens per *second*. Measured against
-// the live API that is far too generous, because the documented figure is the per-key limiter and
-// the one that actually answers 429 is per IP. Two cycles, both banned: 15 weight over 7s, then
-// 13 weight over 10s with the next weight-5 route refused. Both land at ~18-20 weight inside one
-// 30s window, which is also the cooldown the 429 hands back. So refill the same 20-token bucket
-// over 30s instead of over 1s. Raise GMGN_RATE_PER_SEC if your key is on a different tier — the
-// number is measured, not published, and it is the one knob worth turning here.
-// Capacity is the burst allowance, and it is not 20 either: a bucket that starts full let the
-// sweep (5) plus the analyst's first six calls (18) out inside 15s and earned another 429. Half
-// the sustained budget is enough headroom for one weight-5 route without handing a fresh process
-// a burst the IP limiter will not forgive.
+// GMGN's plans are Free 5/5, Plus 20/20, Pro 50/50 (rate/capacity). The defaults are the free
+// plan's. Capacity is as published. The refill is not: "rate 5" reads as 5 weight per second, but
+// measured on a free key, trenches (2) sent 0.4s behind a rank (3) that had itself waited 3s for
+// room came back 429, which a 5/s refill would have waved through — the measurements bracket the
+// real refill between 0.67 and 1.18 weight/s. 20/30 is the low end of that, and the spacing it
+// produces (rank, 3s, rank, 3s, trenches) is the one run measured to pass.
+// On a paid plan set GMGN_RATE_BURST to the plan's capacity and raise GMGN_RATE_PER_SEC with it.
 const RATE = Number(process.env.GMGN_RATE_PER_SEC) || 20 / 30;
-const CAPACITY = Number(process.env.GMGN_RATE_BURST) || 10;
+const CAPACITY = Number(process.env.GMGN_RATE_BURST) || 5;
 let tokens = CAPACITY;
 let lastRefill = Date.now();
 let queue: Promise<unknown> = Promise.resolve();
 
 async function takeTokens(weight: number): Promise<void> {
+  // A route heavier than the bucket (swap is 10, the free plan holds 5) could never be paid for
+  // and would wait forever; charge it the whole bucket instead and let the server decide.
+  weight = Math.min(weight, CAPACITY);
   for (;;) {
     const now = Date.now();
     tokens = Math.min(CAPACITY, tokens + ((now - lastRefill) / 1000) * RATE);
@@ -80,17 +89,14 @@ async function takeTokens(weight: number): Promise<void> {
 }
 
 /**
- * The bucket above models the documented per-API-key limiter. GMGN enforces a second, stricter
- * one per IP, and that is the one this loop actually trips: measured on a live cycle, ~15 weight
- * spread over 7 seconds — which the bucket waves through, since it refills 20/s — came back
- * `RATE_LIMIT_EXCEEDED`, and the two requests already queued behind it turned that into
+ * The bucket above is the plan; this gate is for when the plan is wrong — a second process on
+ * the same key, a restart that hands a fresh bucket to a server that remembers the old one. A
+ * `RATE_LIMIT_EXCEEDED` is survivable, but the requests already queued behind it turn it into
  * `RATE_LIMIT_BANNED`. A per-request retry cannot fix that: the damage is done by the *next*
  * request, not the one that failed.
  *
  * So the whole process holds one gate. Any 429 that names a reset time closes it for everyone
- * until then, and the pacing gap doubles; clean requests decay it back toward the floor. The gap
- * self-tunes because the real IP limit is undocumented — a fixed number would either crawl or
- * get banned, and which one is not knowable from here.
+ * until then, and the pacing gap doubles; clean requests decay it back toward the floor.
  */
 const GAP_FLOOR_MS = Number(process.env.GMGN_MIN_REQUEST_GAP_MS) || 400;
 const GAP_CEILING_MS = 10_000;
@@ -108,16 +114,12 @@ function noteSucceeded(): void {
   gapMs = Math.max(GAP_FLOOR_MS, gapMs * 0.9);
 }
 
-const routeLastAt = new Map<string, number>();
-
-function schedule<T>(weight: number, run: () => Promise<T>, route?: string): Promise<T> {
+function schedule<T>(weight: number, run: () => Promise<T>): Promise<T> {
   const result = queue.then(async () => {
     await takeTokens(weight);
-    const routeGap = route ? (ROUTE[route]?.gapMs ?? 0) : 0;
-    const wait = Math.max(gateOpensAt, (route ? (routeLastAt.get(route) ?? 0) : 0) + routeGap) - Date.now();
+    const wait = gateOpensAt - Date.now();
     if (wait > 0) await sleep(wait);
     gateOpensAt = Date.now() + gapMs;
-    if (route) routeLastAt.set(route, Date.now());
     const out = await run();
     noteSucceeded();
     return out;
@@ -688,7 +690,7 @@ export class OpenApiClient {
           const request = prepare();
           const res = await this.doFetch(request.method, request.subPath, request.url, request.headers, request.body, request.curlStr);
           return this.parseResponse(request.method, request.subPath, res, request.curlStr);
-        }, subPath);
+        });
       } catch (err) {
         // Shut the shared gate before anything else: the requests already queued behind this one
         // are what turn a 30s cooldown into a ban.

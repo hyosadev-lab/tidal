@@ -26,6 +26,9 @@ import { gatherCandidates } from "./sweep.ts";
 /** Only one scan runs at a time. */
 let scanning = false;
 
+/** The last successful `syncLiveBalance`, and the wallet it was for. */
+let synced = { key: "", at: 0 };
+
 /**
  * In live mode the ledger must reflect the actual wallet, not the paper bankroll.
  * Without this, sizing is computed against an invented balance and GMGN rejects the
@@ -38,6 +41,10 @@ let scanning = false;
 export async function syncLiveBalance(): Promise<boolean> {
   const cfg = store.config;
   if (cfg.mode !== "live") return true;
+  // Start reads the wallet, and the first scan fires 1.5s later and read it again: two RPC
+  // calls and two identical log lines. A read this fresh for the same wallet is still the answer.
+  const key = `${cfg.chain}:${cfg.walletAddress}`;
+  if (synced.key === key && Date.now() - synced.at < 10_000) return true;
   try {
     const [bal, px] = await Promise.all([
       // Solana trades from the operator's own key, which need not be a wallet GMGN knows.
@@ -54,6 +61,7 @@ export async function syncLiveBalance(): Promise<boolean> {
     }
     const spendable = Math.max(0, bal - gasReserve(cfg));
     store.cash = spendable * px;
+    synced = { key, at: Date.now() };
     store.log(
       "info",
       `Wallet: ${bal.toFixed(4)} ${gmgn.NATIVE_SYMBOL[cfg.chain]} · $${store.cash.toFixed(2)} spendable (${gasReserve(cfg)} held back for gas).`,
