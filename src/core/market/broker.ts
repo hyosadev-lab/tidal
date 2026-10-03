@@ -105,6 +105,121 @@ export function conditionOrders(cfg: TradeConfig, strategy: StrategyRule[], stop
   return out;
 }
 
+/**
+ * Jupiter refuses an order worth under $10, priced when the deposit is crafted — after the fees
+ * and the slippage of the buy. The margin is for those, and for a price that slipped meanwhile.
+ */
+export const TRIGGER_MIN_USD = 12;
+
+/** One slice of a position and the two prices it leaves at: `tpAt` % up (null = stop only), `slAt` % down. */
+export type TriggerSlice = { pct: number; tpAt: number | null; slAt: number };
+
+/**
+ * The exit plan as Jupiter trigger orders — the Solana counterpart of `conditionOrders`.
+ *
+ * A vault deposit belongs to exactly one order, so the plan becomes slices that add up to the
+ * whole position: one OCO pair per take-profit rung, each carrying the stop, and a lone stop over
+ * whatever the rungs leave. A rung too small for Jupiter's minimum is carried into the next one,
+ * the same way `viableStrategy` folds a rung too small for its fee.
+ *
+ * Trailing rules (`ttp`, `tsl`, the legacy trail) are not translated and so do not exist on a
+ * position whose exits are parked: only `tp` and `sl` make the trip. One stop price serves every
+ * slice — the plan's first `sl`, else the position's own.
+ *
+ * Empty when the whole position is under the minimum: nothing can be parked, and the monitor
+ * runs the plan itself.
+ */
+export function triggerSlices(cfg: TradeConfig, strategy: StrategyRule[], stopLossPct: number, usd: number): TriggerSlice[] {
+  const slAt = Math.abs(strategy.find((r) => r.kind === "sl")?.at ?? stopLossPct);
+  const rungs = strategy.length ? strategy.filter((r) => r.kind === "tp" && r.at != null) : cfg.takeProfit;
+  const out: TriggerSlice[] = [];
+  let left = 100;
+  let carry = 0;
+  for (const r of rungs) {
+    carry += Math.min(left - carry, r.sell);
+    if ((usd * carry) / 100 < TRIGGER_MIN_USD) continue;
+    out.push({ pct: carry, tpAt: r.at ?? null, slAt });
+    left -= carry;
+    carry = 0;
+  }
+  // What no rung claimed, plus any rungs that never grew big enough: a stop-only slice if it can
+  // stand alone, otherwise it rides with the last rung rather than sit in the wallet unguarded.
+  const last = out[out.length - 1];
+  if ((usd * left) / 100 >= TRIGGER_MIN_USD) out.push({ pct: left, tpAt: null, slAt });
+  else if (last) last.pct += left;
+  return out;
+}
+
+/**
+ * Hands a fresh Solana position's exits to Jupiter. Never fails the buy: the tokens are already
+ * bought, so whatever cannot be parked is logged and left to the monitor.
+ */
+async function parkExits(store: typeof Store, cfg: TradeConfig, p: Position, plan: StrategyRule[]): Promise<void> {
+  const slices = triggerSlices(cfg, plan, p.stopLossPct, p.costUsd);
+  if (!slices.length) {
+    store.log("info", `${p.symbol}: under Jupiter's $10 order minimum — its exits run in this process only.`);
+    return;
+  }
+  try {
+    let total = await jupiter.tokenBalance(cfg.walletAddress, p.address);
+    if (total === 0n) {
+      // The RPC can trail the swap by a moment.
+      await new Promise((r) => setTimeout(r, 2500));
+      total = await jupiter.tokenBalance(cfg.walletAddress, p.address);
+    }
+    let left = total;
+    for (const [i, s] of slices.entries()) {
+      // The last slice takes what is left, so integer division strands nothing in the wallet.
+      const amount = i === slices.length - 1 ? left : (total * BigInt(Math.round(s.pct * 100))) / 10000n;
+      await jupiter.placeExit({
+        mint: p.address,
+        amount: amount.toString(),
+        tpPriceUsd: s.tpAt == null ? null : p.entryPrice * (1 + s.tpAt / 100),
+        slPriceUsd: p.entryPrice * (1 - s.slAt / 100),
+      });
+      p.jupiterExits = true;
+      left -= amount;
+    }
+    store.log(
+      "info",
+      `${p.symbol}: exits parked on Jupiter — ${slices.map((s) => `${s.pct.toFixed(0)}% ${s.tpAt == null ? "" : `+${s.tpAt}% / `}-${s.slAt}%`).join(", ")}.`,
+    );
+  } catch (e) {
+    store.log(
+      p.jupiterExits ? "error" : "warn",
+      p.jupiterExits
+        ? `${p.symbol}: only part of the exit plan reached Jupiter — ${short(e)}. The rest of the position is in the wallet with NO stop-loss; only the time stop and a manual close cover it.`
+        : `${p.symbol}: exits could not be parked on Jupiter — ${short(e)}. They run in this process instead.`,
+    );
+  }
+}
+
+/**
+ * Cancels every order still holding this position's tokens and brings them back to the wallet —
+ * what has to happen before this process can sell any of it. False when something could not be
+ * cancelled yet (an order mid-fill, an unreadable history): the caller must not sell, because a
+ * sale sized off a wallet that is missing tokens books more than it sold.
+ *
+ * `jupiterExits` is not cleared here. The monitor clears it once the history shows nothing live,
+ * which is also what makes an interrupted withdrawal retry itself.
+ */
+export async function withdrawExits(store: typeof Store, p: Position): Promise<boolean> {
+  try {
+    const rows = (await jupiter.orders()).filter((r) => r.inputMint === p.address && r.createdAt >= p.openedAt);
+    if (rows.some((r) => r.orderState === "pending" || r.orderState === "executing")) {
+      store.log("warn", `${p.symbol}: a Jupiter order is mid-flight — it cannot be cancelled this tick.`);
+      return false;
+    }
+    // An expired order still holds its deposit, and the same cancel is what returns it.
+    const ids = rows.filter((r) => ["open", "pending_withdraw", "expired"].includes(r.orderState)).map((r) => r.id);
+    for (const id of new Set(ids)) await jupiter.cancelOrder(id);
+    return true;
+  } catch (e) {
+    store.log("warn", `${p.symbol}: could not withdraw its Jupiter orders — ${short(e)}`);
+    return false;
+  }
+}
+
 export type BuyResult = { position: Position; trade: Trade } | { error: string };
 
 export async function buy(
@@ -156,6 +271,7 @@ export async function buy(
   let txHash: string | undefined;
   let orderId: string | undefined;
   let strategyOrderId: string | undefined;
+  let decimals: number | undefined;
 
   if (cfg.mode === "paper") {
     const slip = paperSlip(usdAmount, c.liquidityUsd, slippage(cfg));
@@ -163,15 +279,15 @@ export async function buy(
     qty = netOfFees(cfg.chain, usdAmount, nativeUsd) / fillPrice;
     if (store.cash < spent) return { error: "not enough paper cash" };
   } else if (cfg.chain === "sol") {
-    // Jupiter: no condition orders ride along, so `plan` stays on the position and the monitor
-    // runs it. The absent `strategyOrderId` is how the monitor knows the exits are its own.
+    // Jupiter: no condition orders ride along with the swap. The exits are separate trigger
+    // orders, parked by `parkExits` once the position exists.
     if (!(nativeUsd > 0)) return { error: "could not read native token price" };
     const bad = jupiterWalletError(cfg);
     if (bad) return { error: bad };
     // Before the swap, not after: a fill that cannot be converted to a quantity cannot be booked.
     let dec: number;
     try {
-      dec = await jupiter.decimals(c.address);
+      dec = decimals = await jupiter.decimals(c.address);
     } catch (e) {
       return { error: `could not read token decimals: ${short(e)}` };
     }
@@ -257,7 +373,9 @@ export async function buy(
       : {}),
     ...(orderId ? { orderId } : {}),
     ...(strategyOrderId ? { strategyOrderId } : {}),
+    ...(decimals != null ? { decimals } : {}),
   };
+  if (cfg.mode === "live" && cfg.chain === "sol") await parkExits(store, cfg, position, plan);
 
   const trade: Trade = {
     id: randomUUID(),
@@ -391,12 +509,18 @@ function sellTrade(
 }
 
 /**
- * Books an exit that already happened somewhere else — the stop/take-profit orders GMGN runs
- * on its own side, or a manual sale from the GMGN UI. Submits nothing; the tokens are gone.
- * The fill price is unknown here, so the last seen price stands in and the PnL on this trade
- * is an estimate — the alternative is a position the dashboard shows forever.
+ * Books an exit that already happened somewhere else — the stop/take-profit orders GMGN or
+ * Jupiter run on their own side, or a manual sale. Submits nothing; the tokens are gone.
+ * A Jupiter fill reports what it fetched, so `proceeds` is real there. Without it the fill
+ * price is unknown, the last seen price stands in and the PnL on this trade is an estimate —
+ * the alternative is a position the dashboard shows forever.
  */
-export function recordExternalSell(cfg: TradeConfig, p: Position, qtySold: number, reason: string): SellResult {
-  const proceeds = qtySold * p.lastPrice;
-  return { trade: sellTrade(cfg, p, qtySold, p.lastPrice, proceeds, reason), qtySold, proceeds };
+export function recordExternalSell(
+  cfg: TradeConfig,
+  p: Position,
+  qtySold: number,
+  reason: string,
+  proceeds = qtySold * p.lastPrice,
+): SellResult {
+  return { trade: sellTrade(cfg, p, qtySold, proceeds / qtySold, proceeds, reason), qtySold, proceeds };
 }

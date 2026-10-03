@@ -9,14 +9,20 @@ import { short } from "../domain/num.ts";
  * Unlike a GMGN swap, nothing here is custodial. `/order` hands back an unsigned transaction,
  * this process signs it with the wallet's own key (`SOLANA_PRIVATE_KEY`) and `/execute` lands
  * it. So that key in the environment is the whole barrier between this process and the wallet:
- * there is no `GMGN_ALLOW_AUTOMATED_TRADES` check on this path — the operator's decision — and
- * no exit plan parked on anyone's server. `evaluateExit` in the monitor is what closes these.
+ * there is no `GMGN_ALLOW_AUTOMATED_TRADES` check on this path — the operator's decision.
+ *
+ * The second half of the file is Trigger V2: the take-profit and stop-loss orders a position's
+ * tokens are parked under after the buy, so the exits survive this process dying. Those tokens
+ * leave the wallet for a custodial vault Jupiter runs — the wallet's own balance says nothing
+ * about a position while its orders are open; `orders()` does.
  *
  * `JUPITER_API_KEY` is optional: without it requests go out keyless (30/min, and `/execute` has
  * its own bucket). `SOLANA_RPC_URL` overrides the public RPC the three wallet reads use.
  */
 
 const API = "https://api.jup.ag/swap/v2";
+const TRIGGER = "https://api.jup.ag/trigger/v2";
+const WSOL = "So11111111111111111111111111111111111111112";
 const RPC = "https://api.mainnet-beta.solana.com";
 
 // ── base58 + key ──────────────────────────────────────────────────────
@@ -114,15 +120,19 @@ export function signTransaction(txBase64: string, w: { key: KeyObject; pub: Buff
 
 // ── swap ──────────────────────────────────────────────────────────────
 
-async function api(path: string, body?: string): Promise<Record<string, any>> {
+async function http(url: string, o: { body?: string; method?: string; token?: string } = {}): Promise<Record<string, any>> {
   const key = process.env.JUPITER_API_KEY?.trim();
-  const res = await fetch(API + path, {
-    method: body ? "POST" : "GET",
-    headers: { ...(body ? { "content-type": "application/json" } : {}), ...(key ? { "x-api-key": key } : {}) },
-    ...(body ? { body } : {}),
+  const res = await fetch(url, {
+    method: o.method ?? (o.body ? "POST" : "GET"),
+    headers: {
+      ...(o.body ? { "content-type": "application/json" } : {}),
+      ...(key ? { "x-api-key": key } : {}),
+      ...(o.token ? { authorization: `Bearer ${o.token}` } : {}),
+    },
+    ...(o.body ? { body: o.body } : {}),
     signal: AbortSignal.timeout(60_000),
   });
-  if (!res.ok) throw new Error(`jupiter ${path.split("?")[0]} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`jupiter ${new URL(url).pathname} ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return (await res.json()) as Record<string, any>;
 }
 
@@ -141,7 +151,7 @@ export async function swap(a: { inputMint: string; outputMint: string; amount: s
     const w = wallet();
     const q = new URLSearchParams({ inputMint: a.inputMint, outputMint: a.outputMint, amount: a.amount, taker: w.address });
     if (a.slippagePct > 0) q.set("slippageBps", String(Math.round(a.slippagePct * 100)));
-    const order = await api(`/order?${q}`);
+    const order = await http(`${API}/order?${q}`);
     // An empty transaction is a quote Jupiter could price but not build — no funds, no gas, no route.
     if (!order["transaction"])
       return { error: `jupiter built no transaction: ${order["errorMessage"] ?? order["error"] ?? "no reason given"}` };
@@ -156,7 +166,7 @@ export async function swap(a: { inputMint: string; outputMint: string; amount: s
   // in the wallet unbooked. Read the signature's status off the RPC if that ever happens.
   for (let i = 0; ; i++) {
     try {
-      const r = await api("/execute", body);
+      const r = await http(`${API}/execute`, { body });
       if (r["status"] !== "Success") return { error: `jupiter swap failed (${r["code"]}): ${r["error"] ?? "unknown"}` };
       return {
         signature: String(r["signature"] ?? ""),
@@ -168,6 +178,115 @@ export async function swap(a: { inputMint: string; outputMint: string; amount: s
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
+}
+
+// ── trigger orders (take-profit / stop-loss held by Jupiter) ──────────
+
+let session: { token: string; until: number } | null = null;
+
+/** Trigger routes want a JWT, earned by signing a challenge. 15 minutes; simply re-earned when stale. */
+async function login(): Promise<string> {
+  if (session && Date.now() < session.until - 60_000) return session.token;
+  const w = wallet();
+  const ch = await http(`${TRIGGER}/auth/challenge`, { body: JSON.stringify({ walletPubkey: w.address, type: "message" }) });
+  const signature = b58encode(sign(null, Buffer.from(String(ch["challenge"])), w.key));
+  const v = await http(`${TRIGGER}/auth/verify`, {
+    body: JSON.stringify({ type: "message", walletPubkey: w.address, signature, authMode: "access_refresh" }),
+  });
+  const token = String(v["accessToken"] ?? "");
+  if (!token) throw new Error("jupiter auth returned no access token");
+  session = { token, until: Date.parse(v["expiresAt"]) || Date.now() + 14 * 60_000 };
+  return token;
+}
+
+async function trigger(path: string, body?: unknown, method?: string): Promise<Record<string, any>> {
+  const go = async () =>
+    http(TRIGGER + path, { ...(body ? { body: JSON.stringify(body) } : {}), ...(method ? { method } : {}), token: await login() });
+  try {
+    return await go();
+  } catch (e) {
+    if (!/ 401:/.test(String(e))) throw e;
+    session = null; // revoked or expired early: one fresh login, then the error is real
+    return go();
+  }
+}
+
+let vaultReady = false;
+
+/** Every order is funded out of one per-wallet vault, which has to exist before the first deposit. */
+async function ensureVault(): Promise<void> {
+  if (vaultReady) return;
+  await trigger("/vault").catch(() => trigger("/vault/register"));
+  vaultReady = true;
+}
+
+/**
+ * Parks `amount` of a token under an exit order and returns the order id. With a take-profit
+ * price it is an OCO pair — whichever of the two prices is reached sells the slice and cancels
+ * the other; without one it is a lone stop. Prices are absolute USD per token.
+ *
+ * Moves the tokens out of the wallet: the signed deposit lands as part of the create call.
+ * Slippage is left to Jupiter's defaults — estimated on the way up, 20% on a stop, where getting
+ * out matters more than the price. Jupiter refuses a slice worth under $10.
+ */
+export async function placeExit(a: { mint: string; amount: string; tpPriceUsd: number | null; slPriceUsd: number }): Promise<string> {
+  const w = wallet();
+  await ensureVault();
+  const sub = a.tpPriceUsd == null ? "single" : "oco";
+  const dep = await trigger("/deposit/craft", {
+    inputMint: a.mint,
+    outputMint: WSOL,
+    userAddress: w.address,
+    amount: a.amount,
+    orderType: "price",
+    orderSubType: sub,
+  });
+  const order = await trigger("/orders/price", {
+    orderType: sub,
+    depositRequestId: dep["requestId"],
+    depositSignedTx: signTransaction(dep["transaction"], w),
+    userPubkey: w.address,
+    inputMint: a.mint,
+    inputAmount: a.amount,
+    outputMint: WSOL,
+    triggerMint: a.mint,
+    // Mandatory, and never meant to be reached: the time stop closes a position long before.
+    expiresAt: Date.now() + 30 * 24 * 3600_000,
+    ...(a.tpPriceUsd == null
+      ? { triggerCondition: "below", triggerPriceUsd: a.slPriceUsd }
+      : { tpPriceUsd: a.tpPriceUsd, slPriceUsd: a.slPriceUsd }),
+  });
+  if (!order["id"]) throw new Error("jupiter created no order");
+  return String(order["id"]);
+}
+
+/** Stops an order from filling and brings its unsold tokens back to the wallet. Safe to repeat. */
+export async function cancelOrder(id: string): Promise<void> {
+  const c = await trigger(`/orders/price/cancel/${id}`, undefined, "POST");
+  await trigger(`/orders/price/confirm-cancel/${id}`, {
+    signedTransaction: signTransaction(c["transaction"], wallet()),
+    cancelRequestId: c["requestId"],
+  });
+}
+
+/** One row of `/orders/history` — the fields the monitor reads; everything else is ignored. */
+export type OrderRow = {
+  id: string;
+  orderState: string;
+  inputMint: string;
+  createdAt: number;
+  /** Smallest units actually sold, and what they fetched. Null until something filled. */
+  inputUsed: string | null;
+  outputAmount: string | null;
+};
+
+/** States in which an order still holds tokens and can still sell them. */
+export const ORDER_LIVE = ["pending", "open", "executing", "pending_withdraw"];
+
+/** The wallet's 100 most recently touched orders, open and finished alike. */
+export async function orders(): Promise<OrderRow[]> {
+  const r = await trigger("/orders/history?limit=100");
+  return Array.isArray(r["orders"]) ? (r["orders"] as OrderRow[]) : [];
 }
 
 // ── wallet reads (Solana RPC) ─────────────────────────────────────────

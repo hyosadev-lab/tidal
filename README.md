@@ -117,8 +117,10 @@ Dicek berurutan, yang pertama cocok yang jalan:
 
 Di live mode **selain Solana**, take-profit dan stop-loss juga ditempelkan ke transaksi beli
 lewat `condition_orders`, jadi posisinya tetap punya proteksi di sisi GMGN walaupun proses ini
-mati. **Di Solana, swap lewat Jupiter dan exit dijalankan proses ini sendiri** tiap 30 detik —
-kalau prosesnya mati, gak ada stop-loss yang jaga posisi.
+mati. **Di Solana, swap lewat Jupiter**, dan take-profit + stop-loss dipasang sebagai order Trigger di
+sisi Jupiter setelah beli, jadi tetap jalan walau proses ini mati. Trailing **tidak** ikut
+dipasang. Tiap order minimal $10: posisi di bawah itu gak bisa dipasangi order, dan exit-nya
+dijalankan proses ini sendiri tiap 30 detik (tanpa proteksi kalau prosesnya mati).
 
 ### 7. Kill switch
 

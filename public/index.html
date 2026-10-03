@@ -236,7 +236,7 @@
   <div class="dialog">
     <h3>Switch to live trading</h3>
     <p>Live mode sends real, irreversible swaps from your wallet — through Jupiter on Solana, the GMGN API elsewhere. Positions can go to zero. Only trade funds you can afford to lose entirely.</p>
-    <p class="fine">Solana needs <code>SOLANA_PRIVATE_KEY</code> in <code>.env</code>, and its exits run in this process: if it stops, nothing guards the position. Other chains need <code>GMGN_ALLOW_AUTOMATED_TRADES=1</code> in the shell you started this server from. Either one is your consent to headless execution — set it yourself, deliberately.</p>
+    <p class="fine">Solana needs <code>SOLANA_PRIVATE_KEY</code> in <code>.env</code>; its take-profit and stop-loss are parked on Jupiter ($10 minimum per order — a smaller position is guarded only while this process runs). Other chains need <code>GMGN_ALLOW_AUTOMATED_TRADES=1</code> in the shell you started this server from. Either one is your consent to headless execution — set it yourself, deliberately.</p>
     <label class="mini"><span>Type <b>LIVE</b> to confirm</span><input type="text" id="in-confirm" autocomplete="off" spellcheck="false" /></label>
     <div class="dialog-actions">
       <button class="btn btn-quiet" id="btn-cancel-live">Stay on paper</button>

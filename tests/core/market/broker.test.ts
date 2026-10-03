@@ -4,7 +4,7 @@ import { breakevenPct, minLegUsd, netOfFees } from "../../../src/core/domain/cha
 import { DEFAULT_CONFIG, slippage } from "../../../src/core/domain/config.ts";
 import { position } from "../domain/fixtures.ts";
 import { evaluateExit, isDust, viableStrategy } from "../../../src/core/domain/positions.ts";
-import { conditionOrders, recordExternalSell, settle } from "../../../src/core/market/broker.ts";
+import { conditionOrders, recordExternalSell, settle, triggerSlices } from "../../../src/core/market/broker.ts";
 import type { StrategyRule } from "../../../src/core/domain/types.ts";
 
 // Order translation and the sell paths. `settle` and `recordExternalSell` are pure enough
@@ -189,4 +189,49 @@ test("dust: a remainder under $1 or under 2% of the buy closes the position", ()
   // 10% of the quantity left, but the price collapsed: under $1 is not worth another sell.
   assert.equal(isDust(position({ qty: 10_000, lastPrice: 0.00005 })), true);
   assert.equal(isDust(position({ qty: 10_000 })), false, "a real partial exit stays open");
+});
+
+// ── Jupiter trigger orders ────────────────────────────────────────────
+
+test("a Jupiter fill is booked at what it fetched, not at the last seen price", () => {
+  const p = position({ qty: 100_000, originalQty: 100_000, costUsd: 100, lastPrice: 0.0008 });
+  const r = recordExternalSell(DEFAULT_CONFIG, p, 40_000, "jupiter tp", 60);
+  assert.ok(!("error" in r));
+  if ("error" in r) return;
+  assert.equal(r.proceeds, 60);
+  assert.equal(r.trade.price, 0.0015, "the price is derived from the proceeds");
+  assert.equal(r.trade.pnlUsd, 20, "cost basis of the slice is $40");
+});
+
+test("an exit plan becomes slices that cover the whole position, each carrying the stop", () => {
+  const plan: StrategyRule[] = [
+    { kind: "tp", at: 60, sell: 40 },
+    { kind: "tp", at: 150, sell: 30 },
+    { kind: "ttp", at: 45, dd: 25, sell: 100 },
+    { kind: "sl", at: -18, sell: 100 },
+  ];
+  const big = triggerSlices(DEFAULT_CONFIG, plan, 25, 200);
+  assert.deepEqual(big, [
+    { pct: 40, tpAt: 60, slAt: 18 },
+    { pct: 30, tpAt: 150, slAt: 18 },
+    { pct: 30, tpAt: null, slAt: 18 },
+  ]);
+  assert.equal(big.reduce((a, s) => a + s.pct, 0), 100, "nothing is left in the wallet unguarded");
+  assert.ok(!JSON.stringify(big).includes("45"), "trailing rules are not translated");
+
+  // $20: no rung is worth an order alone. 40% + 30% makes one at the higher target, and the $6
+  // the rungs leave cannot stand as its own stop, so it rides with that slice.
+  assert.deepEqual(triggerSlices(DEFAULT_CONFIG, plan, 25, 20), [{ pct: 100, tpAt: 150, slAt: 18 }]);
+
+  // No take-profit at all: the whole position sits under one stop, at the position's own distance.
+  assert.deepEqual(triggerSlices(DEFAULT_CONFIG, [{ kind: "tsl", dd: 12, sell: 100 }], 25, 50), [{ pct: 100, tpAt: null, slAt: 25 }]);
+
+  // Under Jupiter's minimum nothing can be parked, and the monitor keeps the plan.
+  assert.deepEqual(triggerSlices(DEFAULT_CONFIG, plan, 25, 8), []);
+
+  // The legacy path: no rule set means the config's ladder.
+  const legacy = triggerSlices(DEFAULT_CONFIG, [], 25, 1000);
+  assert.equal(legacy.length, DEFAULT_CONFIG.takeProfit.length + 1);
+  assert.equal(legacy.reduce((a, s) => a + s.pct, 0), 100);
+  assert.ok(legacy.every((s) => s.slAt === 25));
 });
