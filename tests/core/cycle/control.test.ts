@@ -15,11 +15,13 @@ test("halt stops the scan but keeps the monitor watching open positions", () => 
   mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: Date.UTC(2026, 8, 13, 12, 0, 0) });
   let monitored = 0;
   let scanned = 0;
-  arm(30, 1, null, () => monitored++, () => scanned++);
+  let watched = 0;
+  arm(30, 1, null, () => monitored++, () => scanned++, () => watched++);
 
   halt("test halt");
   mock.timers.tick(10 * 60_000);
   assert.equal(scanned, 0);
+  assert.equal(watched, 0);
   assert.equal(monitored, 20);
 
   disarm();

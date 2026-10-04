@@ -187,6 +187,7 @@ function render(s) {
 
   if (!dirty) fillForm(c, s);
   renderPositions(s);
+  renderWatchlist(s);
   renderCandidates(s);
   renderTrades(s);
   renderLogs(s.logs);
@@ -313,6 +314,37 @@ function renderPositions(s) {
     .join("");
 }
 
+/** What the analyst is watching before it buys: its note, and the price since it was added. */
+function renderWatchlist(s) {
+  const rows = s.watchlist || [];
+  const r = s.watchRules;
+  const now = Date.now();
+  $("c-watch").textContent = `${rows.length}/${r.max}`;
+  $("watch-rules").textContent = `checked every ${r.everyMinutes}m · buyable after ${r.minMinutes}m · dropped after ${r.ttlMinutes}m`;
+  $("e-watch").hidden = rows.length > 0;
+  $("tbl-watch").querySelector("tbody").innerHTML = rows
+    .map((w) => {
+      const c = w.c;
+      const first = w.prices[0]?.price || 0;
+      const chg = first > 0 ? (c.priceUsd / first - 1) * 100 : 0;
+      // Supply is fixed, so the market cap at the add is the current one scaled back by price.
+      const mcThen = first > 0 && c.priceUsd > 0 ? usd((c.marketCapUsd / c.priceUsd) * first, 0) : "—";
+      const ripe = now - w.addedAt >= r.minMinutes * 60000;
+      const trail = w.prices.map((p) => `${clock(p.at)}  ${price(p.price)}`).join("\n");
+      return `<tr>
+        <td class="sym"><a class="linkish" href="${esc(tokenUrl(w.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
+          <small title="${esc(w.note)}">${esc(w.note)}</small></td>
+        <td class="r muted">${mcThen}</td>
+        <td class="r">${usd(c.marketCapUsd, 0)}</td>
+        <td class="r ${tone(chg)}" title="${esc(trail)}">${pct(chg)}</td>
+        <td class="r muted">${dur(now - w.addedAt)}</td>
+        <td class="r muted">${dur(w.addedAt + r.ttlMinutes * 60000 - now)}</td>
+        <td><span class="pill${ripe ? " pill-pass" : ""}" title="${ripe ? "watched long enough — the analyst may buy it at the next check" : `not buyable until it has been watched ${r.minMinutes}m`}">${ripe ? "buyable" : "watching"}</span></td>
+      </tr>`;
+    })
+    .join("");
+}
+
 const ruleLabel = (r) =>
   ({
     tp: `TP +${r.at}% · ${r.sell}%`,
@@ -380,8 +412,10 @@ function renderCandidates(s) {
       const verdict = !pass
         ? '<span class="status is-fail" title="failed a safety check (reason below) — never shown to the AI, cannot be bought">blocked</span>'
         : c.analystNote === "sent"
-          ? '<span class="status is-pass" title="passed the safety checks and was shown to the AI analyst this cycle. Reviewed is not bought — the analyst still has to back it">reviewed</span>'
-          : '<span class="status" title="passed the safety checks but was not shown to the AI this cycle — reason below">skipped</span>';
+          ? '<span class="status is-pass" title="passed the safety checks and was shown to the AI analyst this cycle. Reviewed is not bought — the analyst first has to put it on the watchlist">reviewed</span>'
+          : c.analystNote === "on the watchlist"
+            ? '<span class="status is-pass" title="already on the watchlist — the analyst follows it there instead of re-reading it here">watched</span>'
+            : '<span class="status" title="passed the safety checks but was not shown to the AI this cycle — reason below">skipped</span>';
       // "sent" already says it went to the analyst; the note only carries what the pill can't.
       const note = pass ? (c.analystNote === "sent" ? "" : (c.analystNote ?? "")) : c.gateFailures.join(", ");
       // Age reads on its own rather than buried in the meta line: on a memecoin it is half the trade.

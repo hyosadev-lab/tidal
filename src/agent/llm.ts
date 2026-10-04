@@ -24,6 +24,10 @@ export type AgentOptions = {
 };
 
 async function complete(messages: Message[], o: AgentOptions) {
+  const tools = Object.entries(o.tools ?? {}).map(([name, t]) => ({
+    type: "function",
+    function: { name, description: t.description, parameters: t.parameters },
+  }));
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -33,10 +37,8 @@ async function complete(messages: Message[], o: AgentOptions) {
     body: JSON.stringify({
       model: o.model ?? process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5",
       messages,
-      tools: Object.entries(o.tools ?? {}).map(([name, t]) => ({
-        type: "function",
-        function: { name, description: t.description, parameters: t.parameters },
-      })),
+      // Omitted when empty: some providers reject `tools: []`.
+      ...(tools.length ? { tools } : {}),
     }),
   });
   if (!res.ok) throw new Error(`openrouter ${res.status}: ${await res.text()}`);

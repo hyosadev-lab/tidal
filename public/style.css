@@ -601,6 +601,8 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 
 .sym { color: var(--foam); }
 .sym small { display: block; color: var(--rule-2); font-size: 9.5px; letter-spacing: .04em; }
+/* The watchlist sits in the narrow column and its note is a sentence: let it wrap, not scroll. */
+#tbl-watch .sym small { white-space: normal; min-width: 14ch; }
 
 .up { color: var(--flood); }
 .down { color: var(--ebb); }

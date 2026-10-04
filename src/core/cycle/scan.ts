@@ -2,29 +2,26 @@ import { askAnalyst } from "../analyst.ts";
 import { gasReserve } from "../domain/config.ts";
 import { gateTally } from "../domain/gates.ts";
 import { short } from "../domain/num.ts";
+import { observe, pruneWatchlist, reviseWatchlist } from "../domain/watchlist.ts";
 import { store } from "../data/store.ts";
 import { recordSoundings } from "../data/soundings.ts";
 import * as gmgn from "../market/gmgn.ts";
 import * as jupiter from "../market/jupiter.ts";
-import { aborted, generation } from "./control.ts";
-import { openEntries } from "./entries.ts";
+import { aborted, claim, generation, release } from "./control.ts";
 import { applyExits } from "./exits.ts";
 import { gatherCandidates } from "./sweep.ts";
 
 /**
- * One cycle, in the order it happens: sweep → gate → rank → ask the analyst → its exits →
- * its entries. Read `runScan` top to bottom and that is the whole flow; every step it calls
- * lives in a file of its own.
+ * The sweep stage, in the order it happens: sweep → gate → rank → ask the analyst → its exits →
+ * its watchlist edits. Read `runScan` top to bottom and that is the whole stage; every step it
+ * calls lives in a file of its own.
+ *
+ * **Nothing is bought here.** The analyst picks what goes on the watchlist; `watch.ts` is the
+ * second stage, and the only one that opens a position.
  *
  * There is no shortlist: every eligible row goes in the brief, so a cycle's prompt grows with
  * the sweep (three feeds of 40, deduped) and the ranking only decides reading order.
- *
- * The model's exits run *before* the entries on purpose — closing a position frees a slot the
- * entries below may use, and puts that address straight onto cooldown.
  */
-
-/** Only one scan runs at a time. */
-let scanning = false;
 
 /** The last successful `syncLiveBalance`, and the wallet it was for. */
 let synced = { key: "", at: 0 };
@@ -74,27 +71,42 @@ export async function syncLiveBalance(): Promise<boolean> {
 }
 
 export async function runScan(): Promise<void> {
-  if (scanning) return;
-  scanning = true;
+  if (!claim()) return;
   const gen = generation();
   store.busy = true;
   const cfg = store.config;
 
   try {
     store.rollDay();
-    const balanceOk = await syncLiveBalance();
+    // Nothing is sized here, but the brief quotes cash and the round trip off it.
+    await syncLiveBalance();
     const cycle = store.bumpCycle();
     store.lastRunAt = Date.now();
     store.phase = "scanning";
     store.push();
 
     const candidates = await gatherCandidates();
-    const eligible = candidates.filter((c) => !c.gateFailures.length && !store.unavailable(c.address));
+    // A watched token the sweep carries again gets this sweep's row — fresher than the one it
+    // was added with, and free. One that now fails a gate is pruned right below.
+    const now = Date.now();
+    for (const w of store.watchlist) {
+      const fresh = candidates.find((c) => c.address.toLowerCase() === w.c.address.toLowerCase());
+      if (!fresh) continue;
+      w.c = fresh;
+      observe(w, fresh.priceUsd, now);
+    }
+    store.setWatchlist(pruneWatchlist(store.watchlist, now, cfg.chain, (a) => store.unavailable(a)));
+
+    // Watched rows are left out of the candidates: the analyst sees them in `watchlist`, and
+    // listing them twice only invites it to add what is already there.
+    const eligible = candidates.filter((c) => !c.gateFailures.length && !store.unavailable(c.address) && !store.watching(c.address));
     // Why each row did or did not reach the model, decided here rather than in the dashboard.
     // Every eligible row is sent now, so the only reason a gated-through row is missing is that
-    // it is held, on cooldown or blacklisted.
+    // it is held, on cooldown, blacklisted or already watched.
     for (const c of candidates)
-      c.analystNote = c.gateFailures.length ? "" : store.unavailable(c.address) || "sent";
+      c.analystNote = c.gateFailures.length
+        ? ""
+        : store.unavailable(c.address) || (store.watching(c.address) ? "on the watchlist" : "sent");
     store.lastCandidates = candidates.slice(0, 40);
     // The whole sweep, not just the shown 40: `calibrate.ts` needs the rows nobody looked at
     // as much as the ones that scored well, or it only measures what we already believed.
@@ -119,7 +131,7 @@ export async function runScan(): Promise<void> {
     store.phase = "analysing";
     store.push();
 
-    const decision = await askAnalyst(eligible, cfg.maxOpenPositions - store.positions.length);
+    const decision = await askAnalyst("sweep", eligible, cfg.maxOpenPositions - store.positions.length);
     if (!decision) return;
     if (aborted(gen)) {
       store.log("info", "Cycle abandoned — stopped while the analyst was thinking.");
@@ -127,27 +139,14 @@ export async function runScan(): Promise<void> {
     }
     if (decision.notes) store.log("model", decision.notes);
 
-    // Model-requested exits first — freeing a slot may enable an entry below.
-    await applyExits(decision.exits ?? []);
-
-    const slots = cfg.maxOpenPositions - store.positions.length;
-    if (slots <= 0) {
-      if (decision.entries?.length) store.log("info", "Entries skipped — position limit reached.");
-      return;
-    }
-
-    if (!balanceOk) {
-      store.log("warn", "No entries this cycle — the wallet balance is unknown, so sizing cannot be trusted.");
-      return;
-    }
-
-    store.phase = "entering";
-    const opened = await openEntries(decision.entries ?? [], eligible, cfg, slots, gen);
-    if (!opened && decision.entries?.length === 0) store.log("info", "No entry this cycle.");
+    // Exits first: a position the model closes goes onto cooldown, and must not be watched.
+    await applyExits(decision.exits);
+    store.setWatchlist(reviseWatchlist(store.watchlist, decision.watch, decision.unwatch, eligible, cfg.chain, Date.now()));
+    if (!decision.watch.length) store.log("info", "Nothing added to the watchlist this cycle.");
   } catch (e) {
     store.log("error", `Scan failed: ${short(e)}`);
   } finally {
-    scanning = false;
+    release();
     store.busy = false;
     store.phase = "idle";
     store.nextRunAt = Date.now() + store.config.intervalMinutes * 60_000;

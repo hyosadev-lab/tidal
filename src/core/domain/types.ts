@@ -126,6 +126,21 @@ export type Candidate = {
   analystNote?: string;
 };
 
+/**
+ * A token the analyst is watching before it decides whether to buy. The sweep puts it here, the
+ * watch tick is the only place it can be bought from — see `domain/watchlist.ts` for the limits.
+ */
+export type Watch = {
+  chain: Chain;
+  /** The row as a sweep last saw it, with price, market cap and liquidity kept fresh by the watch tick. */
+  c: Candidate;
+  addedAt: number;
+  /** What the analyst said it is waiting for — the only memory one call hands the next. */
+  note: string;
+  /** Price at each look, oldest first: the sweep that added it, then every tick since. */
+  prices: { at: number; price: number }[];
+};
+
 export type Position = {
   id: string;
   chain: Chain;
@@ -231,6 +246,9 @@ export type Snapshot = {
   haltReason: string;
   config: TradeConfig;
   positions: Position[];
+  watchlist: Watch[];
+  /** The limits in `domain/watchlist.ts`, so the dashboard does not keep its own copy. */
+  watchRules: { max: number; minMinutes: number; ttlMinutes: number; everyMinutes: number };
   trades: Trade[];
   logs: LogEntry[];
   equity: EquityPoint[];
@@ -264,7 +282,7 @@ export type Stats = {
   dayPnlPct: number;
 };
 
-/** What the analyst model must return each cycle. */
+/** What the analyst model returns. The sweep stage fills `watch`, the watch stage `entries`. */
 export type Decision = {
   entries: {
     address: string;
@@ -276,5 +294,9 @@ export type Decision = {
     thesis: string;
   }[];
   exits: { address: string; percent: number; reason: string }[];
+  /** Sweep stage: tokens to put on the watchlist, with what the analyst is waiting to see. */
+  watch: { address: string; symbol?: string; note: string }[];
+  /** Either stage: tokens to take off it. */
+  unwatch: { address: string; reason: string }[];
   notes: string;
 };

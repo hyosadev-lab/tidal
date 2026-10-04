@@ -53,7 +53,7 @@ export async function openEntries(
         "warn",
         // The address is what the lookup actually used, so log it: a mistyped or omitted
         // one looks identical to a gate failure without it.
-        `Analyst picked ${String(e.symbol ?? "?").slice(0, 20)} (${String(e.address ?? "no address").slice(0, 24)}), which is not eligible — it failed a gate, is on cooldown, or was never scanned. Skipped.`,
+        `Analyst picked ${String(e.symbol ?? "?").slice(0, 20)} (${String(e.address ?? "no address").slice(0, 24)}), which is not eligible — it failed a gate, is on cooldown, or has not been on the watchlist long enough. Skipped.`,
       );
       continue;
     }

@@ -1,6 +1,7 @@
 import { db, insertEquity, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
 import { DEFAULT_CONFIG, liveReady, sanitizeConfig } from "../domain/config.ts";
-import type { Candidate, EquityPoint, LogEntry, LogLevel, Position, RunState, Snapshot, Stats, Trade, TradeConfig } from "../domain/types.ts";
+import { WATCH_MAX, WATCH_MIN_MINUTES, WATCH_MINUTES, WATCH_TTL_MINUTES } from "../domain/watchlist.ts";
+import type { Candidate, EquityPoint, LogEntry, LogLevel, Position, RunState, Snapshot, Stats, Trade, TradeConfig, Watch } from "../domain/types.ts";
 
 const MAX_LOGS = 400;
 /** Only what the tide strip draws — the table keeps the rest. */
@@ -10,6 +11,7 @@ const MAX_EQUITY = 2000;
 type Persisted = {
   cash: number;
   positions: Position[];
+  watchlist: Watch[];
   dayStartEquity: number;
   dayStamp: string;
   peakEquity: number;
@@ -37,6 +39,7 @@ function emptyState(cfg: TradeConfig): Persisted {
   return {
     cash: cfg.paperStartEquityUsd,
     positions: [],
+    watchlist: [],
     dayStartEquity: cfg.paperStartEquityUsd,
     dayStamp: today(),
     peakEquity: cfg.paperStartEquityUsd,
@@ -78,6 +81,7 @@ export class Store {
       ...base,
       ...raw,
       positions: Array.isArray(raw.positions) ? raw.positions : [],
+      watchlist: Array.isArray(raw.watchlist) ? raw.watchlist : [],
       cooldowns: raw.cooldowns && typeof raw.cooldowns === "object" ? raw.cooldowns : {},
       blacklist: Array.isArray(raw.blacklist) ? raw.blacklist : [],
     };
@@ -172,6 +176,22 @@ export class Store {
   addTrade(t: Trade): void {
     insertTrade(t);
     this.emit("trade", t);
+  }
+
+  // ── watchlist ─────────────────────────────────────────────────────
+  get watchlist(): Watch[] {
+    return this.s.watchlist;
+  }
+
+  watching(address: string): boolean {
+    return this.s.watchlist.some((w) => w.c.address.toLowerCase() === address.toLowerCase());
+  }
+
+  /** Takes what a `domain/watchlist.ts` rule returned: the new list, and why it changed. */
+  setWatchlist(r: { list: Watch[]; notes: string[] }): void {
+    this.s.watchlist = r.list;
+    for (const n of r.notes) this.log("info", `Watchlist: ${n}`);
+    this.save();
   }
 
   // ── cooldown / blacklist ──────────────────────────────────────────
@@ -343,6 +363,8 @@ export class Store {
       haltReason: this.haltReason,
       config: this.config,
       positions: this.s.positions,
+      watchlist: this.s.watchlist,
+      watchRules: { max: WATCH_MAX, minMinutes: WATCH_MIN_MINUTES, ttlMinutes: WATCH_TTL_MINUTES, everyMinutes: WATCH_MINUTES },
       trades: this.trades(120),
       logs: this.logs.slice(-160),
       equity: this.equitySeries(),

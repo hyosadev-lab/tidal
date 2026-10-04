@@ -1,5 +1,6 @@
 import { minPosition, liveReady, tradeSize } from "./domain/config.ts";
 import { clamp } from "./domain/num.ts";
+import { WATCH_MINUTES } from "./domain/watchlist.ts";
 import { store } from "./data/store.ts";
 import * as gmgn from "./market/gmgn.ts";
 import * as jupiter from "./market/jupiter.ts";
@@ -7,6 +8,13 @@ import { arm, cancelInFlight, disarm, onResume } from "./cycle/control.ts";
 import { closePosition } from "./cycle/exits.ts";
 import { runMonitor } from "./cycle/monitor.ts";
 import { runScan, syncLiveBalance } from "./cycle/scan.ts";
+import { runWatch } from "./cycle/watch.ts";
+
+/**
+ * A sweep is followed straight away by a watch tick. They share one lock, so the tick the timer
+ * fired while the sweep was running was dropped — this is that tick, run late instead of lost.
+ */
+const scanThenWatch = (): Promise<void> => runScan().then(runWatch);
 
 /**
  * The lifecycle, and the whole surface `src/index.ts` drives. Everything below assembles the
@@ -61,10 +69,10 @@ export async function start(): Promise<{ ok: boolean; error?: string }> {
   store.haltReason = "";
   store.log(
     "info",
-    `Started on ${cfg.chain.toUpperCase()} in ${cfg.mode} mode — scanning every ${cfg.intervalMinutes}m, checking exits every ${cfg.monitorSeconds}s.`,
+    `Started on ${cfg.chain.toUpperCase()} in ${cfg.mode} mode — scanning every ${cfg.intervalMinutes}m, watchlist every ${WATCH_MINUTES}m, checking exits every ${cfg.monitorSeconds}s.`,
   );
 
-  arm(cfg.monitorSeconds, cfg.intervalMinutes, 1500, () => void runMonitor(), () => void runScan());
+  arm(cfg.monitorSeconds, cfg.intervalMinutes, 1500, () => void runMonitor(), () => void scanThenWatch(), () => void runWatch());
   store.nextRunAt = Date.now() + 1500;
   store.push();
   return { ok: true };
@@ -104,13 +112,13 @@ export async function wallets(fresh = false): Promise<{ at: number; list: gmgn.B
 /** Restart the timers so a changed interval takes effect immediately. */
 export function reschedule(): void {
   if (store.runState !== "running") return;
-  arm(store.config.monitorSeconds, store.config.intervalMinutes, null, () => void runMonitor(), () => void runScan());
+  arm(store.config.monitorSeconds, store.config.intervalMinutes, null, () => void runMonitor(), () => void scanThenWatch(), () => void runWatch());
   store.nextRunAt = Date.now() + store.config.intervalMinutes * 60_000;
   store.push();
 }
 
 export async function scanNow(): Promise<void> {
-  await runScan();
+  await scanThenWatch();
 }
 
 export async function manualClose(positionId: string, percent = 100): Promise<{ ok: boolean; error?: string }> {
