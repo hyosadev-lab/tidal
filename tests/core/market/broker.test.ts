@@ -39,29 +39,29 @@ test("a sell records how far the position ever got, gross, beside what it booked
   assert.equal("error" in f ? null : f.trade.peakPct, 0);
 });
 
-test("the whole exit plan travels to GMGN, trailing rules included", () => {
+test("the whole exit plan travels to GMGN, every rung and every stage of the stop", () => {
   const rules: StrategyRule[] = [
     { kind: "tp", at: 35, sell: 40 },
-    { kind: "ttp", at: 20, dd: 15, sell: 60 },
+    { kind: "tp", at: 90, sell: 60 },
+    { kind: "sl", at: -10, sell: 50 },
     { kind: "sl", at: -18, sell: 100 },
   ];
   const orders = conditionOrders(DEFAULT_CONFIG, rules, 25);
   assert.deepEqual(orders, [
     { order_type: "profit_stop", side: "sell", price_scale: "35", sell_ratio: "40" },
-    { order_type: "profit_stop_trace", side: "sell", price_scale: "20", drawdown_rate: "15", sell_ratio: "60" },
+    { order_type: "profit_stop", side: "sell", price_scale: "90", sell_ratio: "60" },
+    { order_type: "loss_stop", side: "sell", price_scale: "10", sell_ratio: "50" },
     { order_type: "loss_stop", side: "sell", price_scale: "18", sell_ratio: "100" },
   ]);
 });
 
 test("a plan without a stop gets one, and no rules falls back to the config ladder", () => {
-  const noStop = conditionOrders(DEFAULT_CONFIG, [{ kind: "tsl", dd: 12, sell: 100 }], 25);
-  assert.deepEqual(noStop.at(0), { order_type: "loss_stop_trace", side: "sell", drawdown_rate: "12", sell_ratio: "100" });
+  const noStop = conditionOrders(DEFAULT_CONFIG, [{ kind: "tp", at: 40, sell: 100 }], 25);
   assert.equal(noStop.at(-1)?.order_type, "loss_stop", "the floor is appended when the plan omits it");
   assert.equal(noStop.at(-1)?.price_scale, "25");
 
   const legacy = conditionOrders(DEFAULT_CONFIG, [], 25);
   assert.equal(legacy.filter((o) => o.order_type === "profit_stop").length, DEFAULT_CONFIG.takeProfit.length);
-  assert.equal(legacy.filter((o) => o.order_type === "profit_stop_trace").length, 1, "the config trail travels too");
   assert.equal(legacy.filter((o) => o.order_type === "loss_stop").length, 1);
 });
 
@@ -109,12 +109,9 @@ test("break-even is the round trip, and the flat fee makes it worse the smaller 
 // stop it failing for the reason it is named after. The noise half is the test below it.
 test("the exit plan is repriced to what the fees allow", () => {
   const minLeg = minLegUsd("sol", 75); // $9
-  // A target under the hurdle is lifted to it; a ttp's arm is lifted by its own giveback, since
-  // peak × (1 - dd) is where it actually sells.
+  // A target under the hurdle is lifted to it.
   const lifted = viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 9, minLeg, 500, 0);
   assert.deepEqual(lifted, [{ kind: "tp", at: 9, sell: 100 }]);
-  const [ttp] = viableStrategy([{ kind: "ttp", at: 20, dd: 12, sell: 100 }], 9, minLeg, 500, 0);
-  assert.equal(ttp?.at, 23.9, "arming at +20 and giving back 12 would have sold at +5.6");
 
   // A $20 position cannot afford a rung that nets $6.40 — it folds into the one above it.
   const merged = viableStrategy(
@@ -148,18 +145,13 @@ test("a profit target inside the stop distance is lifted out of the noise", () =
     "risking 25% to make 20.5% is inverted before fees",
   );
 
-  // A ttp sells a giveback below its arm, so clearing a 25% floor takes an arm well above 25.
-  const [ttp] = plan([{ kind: "ttp", at: 27, dd: 25, sell: 100 }]);
-  assert.equal(ttp?.at, 66.7, "arm 27 with dd 25 would have sold at -4.8%");
-  assert.ok((1 + (ttp?.at ?? 0) / 100) * 0.75 - 1 >= 0.25 - 1e-9, "and the lifted arm does clear the floor");
-
   // The floor lifts, it never lowers: a target already above it is left exactly as written.
   assert.deepEqual(plan([{ kind: "tp", at: 150, sell: 30 }]), [{ kind: "tp", at: 150, sell: 30 }]);
 
-  // Neither stop kind is touched — raising those would deepen a loss, not protect a gain.
+  // Stops are never touched — raising one would deepen a loss, not protect a gain.
   assert.deepEqual(
-    plan([{ kind: "sl", at: -12, sell: 100 }, { kind: "tsl", dd: 30, sell: 100 }]),
-    [{ kind: "sl", at: -12, sell: 100 }, { kind: "tsl", dd: 30, sell: 100 }],
+    plan([{ kind: "sl", at: -12, sell: 50 }, { kind: "sl", at: -20, sell: 100 }]),
+    [{ kind: "sl", at: -12, sell: 50 }, { kind: "sl", at: -20, sell: 100 }],
   );
 
   // The higher floor binds, whichever it is: on a position small enough that the round trip costs
@@ -167,18 +159,6 @@ test("a profit target inside the stop distance is lifted out of the noise", () =
   assert.deepEqual(
     viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 30, minLeg, 500, 25),
     [{ kind: "tp", at: 30, sell: 100 }],
-  );
-});
-
-test("a trailing rule cannot fire below break-even, where it would book a loss", () => {
-  const rules: StrategyRule[] = [{ kind: "tsl", dd: 10, sell: 100 }];
-  // +5% on the price, 12.5% off the peak — the giveback is reached, the round trip is not.
-  const p = position({ strategy: rules, peakPrice: 0.0012, lastPrice: 0.00105, breakevenPct: 9 });
-  assert.equal(evaluateExit(p, DEFAULT_CONFIG), null);
-  assert.match(
-    evaluateExit(position({ ...p, breakevenPct: 0 }), DEFAULT_CONFIG)?.reason ?? "",
-    /trailing stop loss/,
-    "the same tick on a position with no fees to clear is a real trail",
   );
 });
 
@@ -207,7 +187,6 @@ test("an exit plan becomes slices that cover the whole position, each carrying t
   const plan: StrategyRule[] = [
     { kind: "tp", at: 60, sell: 40 },
     { kind: "tp", at: 150, sell: 30 },
-    { kind: "ttp", at: 45, dd: 25, sell: 100 },
     { kind: "sl", at: -18, sell: 100 },
   ];
   const big = triggerSlices(DEFAULT_CONFIG, plan, 25, 200);
@@ -217,14 +196,13 @@ test("an exit plan becomes slices that cover the whole position, each carrying t
     { pct: 30, tpAt: null, slAt: 18 },
   ]);
   assert.equal(big.reduce((a, s) => a + s.pct, 0), 100, "nothing is left in the wallet unguarded");
-  assert.ok(!JSON.stringify(big).includes("45"), "trailing rules are not translated");
 
   // $20: no rung is worth an order alone. 40% + 30% makes one at the higher target, and the $6
   // the rungs leave cannot stand as its own stop, so it rides with that slice.
   assert.deepEqual(triggerSlices(DEFAULT_CONFIG, plan, 25, 20), [{ pct: 100, tpAt: 150, slAt: 18 }]);
 
-  // No take-profit at all: the whole position sits under one stop, at the position's own distance.
-  assert.deepEqual(triggerSlices(DEFAULT_CONFIG, [{ kind: "tsl", dd: 12, sell: 100 }], 25, 50), [{ pct: 100, tpAt: null, slAt: 25 }]);
+  // No take-profit at all: the whole position sits under one stop.
+  assert.deepEqual(triggerSlices(DEFAULT_CONFIG, [{ kind: "sl", at: -12, sell: 100 }], 25, 50), [{ pct: 100, tpAt: null, slAt: 12 }]);
 
   // Under Jupiter's minimum nothing can be parked, and the monitor keeps the plan.
   assert.deepEqual(triggerSlices(DEFAULT_CONFIG, plan, 25, 8), []);

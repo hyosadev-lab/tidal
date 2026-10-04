@@ -99,8 +99,6 @@ export const DEFAULT_CONFIG: TradeConfig = {
     { at: 150, sell: 30 },
     { at: 400, sell: 20 },
   ],
-  trailArmPct: 45,
-  trailGivebackPct: 25,
   timeStopMinutes: 180,
   cooldownMinutes: 120,
 
@@ -157,9 +155,6 @@ export function sanitizeStrategy(input: unknown, base: StrategyRule[]): Strategy
     const sell = clamp(r?.sell, 1, 100, 50);
     if (r?.kind === "tp") out.push({ kind: "tp", at: clamp(r.at, 5, 5000, 100), sell });
     else if (r?.kind === "sl") out.push({ kind: "sl", at: clamp(r.at, -95, -1, -50), sell });
-    else if (r?.kind === "ttp")
-      out.push({ kind: "ttp", at: clamp(r.at, 5, 5000, 100), dd: clamp(r.dd, 1, 90, 10), sell });
-    else if (r?.kind === "tsl") out.push({ kind: "tsl", dd: clamp(r.dd, 1, 90, 20), sell });
   }
   return out;
 }
@@ -193,8 +188,6 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     strategy: sanitizeStrategy(input.strategy, base.strategy),
     stopLossPct: clamp(input.stopLossPct, 5, 90, base.stopLossPct),
     takeProfit: ladder,
-    trailArmPct: clamp(input.trailArmPct, 5, 1000, base.trailArmPct),
-    trailGivebackPct: clamp(input.trailGivebackPct, 5, 80, base.trailGivebackPct),
     timeStopMinutes: clamp(input.timeStopMinutes, 5, 10080, base.timeStopMinutes),
     cooldownMinutes: clamp(input.cooldownMinutes, 0, 10080, base.cooldownMinutes),
 

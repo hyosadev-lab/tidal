@@ -618,9 +618,8 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
   color: var(--haze);
 }
 
-.pill-armed { border-color: var(--flood); color: var(--flood); }
 .pill-done  { opacity: .4; text-decoration: line-through; }
-/* The config's stop/ladder/trail, shown when a position carries no plan of its own — same
+/* The config's stop and ladder, shown when a position carries no plan of its own — same
    rules, but they belong to the config and change with it, so they read one step quieter. */
 .pill-default { border-style: dashed; opacity: .72; }
 

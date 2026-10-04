@@ -209,8 +209,7 @@ async function checkPosition(
   // so acting on a price rule here would be a second sell for an exit that is already placed.
   // What is left is the two things GMGN was never told: the time stop, and the health exit
   // above it. The same goes for a Jupiter position while its take-profit and stop-loss are
-  // parked there (`jupiterExits`) — which also means its trailing rules, never parked, do not
-  // run at all. With nothing parked, the plan runs here like a paper one.
+  // parked there (`jupiterExits`). With nothing parked, the plan runs here like a paper one.
   // Same on a failed read, whatever the mode: `lastPrice` is stale, so only the clock is
   // still telling the truth.
   if ((p.strategyOrderId || p.jupiterExits || !info) && exit.kind !== "time") return;

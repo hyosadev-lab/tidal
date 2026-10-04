@@ -109,17 +109,15 @@ lantai SOL, jadi butuh minimal 7%.
 
 Dicek berurutan, yang pertama cocok yang jalan:
 
-1. **Stop loss** -25%
-2. **Trailing stop** — aktif setelah +45%, keluar kalau turun 25% dari puncak
-3. **Take-profit bertingkat** — jual 40% di +60%, 30% di +150%, 20% di +400%
-4. **Time stop** — 180 menit masih di bawah +8% -> tutup, uangnya dipindah ke ide lain
-5. **Health check** — likuiditas anjlok >55% dari waktu masuk, atau token berubah honeypot
+1. **Stop loss** -25% (bisa bertingkat: beberapa aturan `sl`, masing-masing menjual sebagian)
+2. **Take-profit bertingkat** — jual 40% di +60%, 30% di +150%, 20% di +400%
+3. **Time stop** — 180 menit masih di bawah +8% -> tutup, uangnya dipindah ke ide lain
+4. **Health check** — likuiditas anjlok >55% dari waktu masuk, atau token berubah honeypot
 
 Di live mode **selain Solana**, take-profit dan stop-loss juga ditempelkan ke transaksi beli
 lewat `condition_orders`, jadi posisinya tetap punya proteksi di sisi GMGN walaupun proses ini
 mati. **Di Solana, swap lewat Jupiter**, dan take-profit + stop-loss dipasang sebagai order Trigger di
-sisi Jupiter setelah beli, jadi tetap jalan walau proses ini mati. Trailing **tidak** ikut
-dipasang. Tiap order minimal $10: posisi di bawah itu gak bisa dipasangi order, dan exit-nya
+sisi Jupiter setelah beli, jadi tetap jalan walau proses ini mati. Tiap order minimal $10: posisi di bawah itu gak bisa dipasangi order, dan exit-nya
 dijalankan proses ini sendiri tiap 30 detik (tanpa proteksi kalau prosesnya mati).
 
 ### 7. Kill switch

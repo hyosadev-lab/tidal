@@ -53,7 +53,6 @@ export type ConditionOrder = {
   order_type: string;
   side: "sell";
   price_scale?: string;
-  drawdown_rate?: string;
   sell_ratio: string;
 };
 
@@ -63,10 +62,9 @@ const pctStr = (n: number) => String(Math.max(1, Math.round(Math.abs(n))));
  * The position's exit plan in GMGN's vocabulary, attached to the buy itself.
  *
  * In live mode these are the exits: GMGN runs them on its own side and the monitor loop mirrors
- * the result instead of racing it, so every rule the plan can express has to make the trip —
- * including the trailing ones, which is what the `*_trace` order types are for. Everything is a
- * percentage: `price_scale` is the move from entry (unsigned on the loss side — "18" means 18%
- * down), `drawdown_rate` the callback from the peak, `sell_ratio` the slice to sell.
+ * the result instead of racing it, so every rule the plan can express has to make the trip.
+ * Everything is a percentage: `price_scale` is the move from entry (unsigned on the loss side —
+ * "18" means 18% down), `sell_ratio` the slice to sell.
  *
  * The slice is a share of the *bought* amount (`sell_ratio_type: buy_amount` at the call site),
  * which is what `StrategyRule.sell` has always meant — under `hold_amount` a two-rung ladder
@@ -81,24 +79,12 @@ export function conditionOrders(cfg: TradeConfig, strategy: StrategyRule[], stop
     const sell_ratio = pctStr(r.sell);
     if (r.kind === "tp" && r.at != null) out.push({ order_type: "profit_stop", side: "sell", price_scale: pctStr(r.at), sell_ratio });
     else if (r.kind === "sl" && r.at != null) out.push({ order_type: "loss_stop", side: "sell", price_scale: pctStr(r.at), sell_ratio });
-    else if (r.kind === "ttp" && r.at != null && r.dd != null)
-      out.push({ order_type: "profit_stop_trace", side: "sell", price_scale: pctStr(r.at), drawdown_rate: pctStr(r.dd), sell_ratio });
-    else if (r.kind === "tsl" && r.dd != null)
-      out.push({ order_type: "loss_stop_trace", side: "sell", drawdown_rate: pctStr(r.dd), sell_ratio });
   }
 
-  // The legacy path: a position with no rule set runs on the config's ladder and trail.
-  if (!strategy.length) {
+  // The legacy path: a position with no rule set runs on the config's ladder.
+  if (!strategy.length)
     for (const r of cfg.takeProfit)
       out.push({ order_type: "profit_stop", side: "sell", price_scale: pctStr(r.at), sell_ratio: pctStr(r.sell) });
-    out.push({
-      order_type: "profit_stop_trace",
-      side: "sell",
-      price_scale: pctStr(cfg.trailArmPct),
-      drawdown_rate: pctStr(cfg.trailGivebackPct),
-      sell_ratio: "100",
-    });
-  }
 
   if (!out.some((o) => o.order_type === "loss_stop"))
     out.push({ order_type: "loss_stop", side: "sell", price_scale: pctStr(stopLossPct), sell_ratio: "100" });
@@ -122,9 +108,8 @@ export type TriggerSlice = { pct: number; tpAt: number | null; slAt: number };
  * whatever the rungs leave. A rung too small for Jupiter's minimum is carried into the next one,
  * the same way `viableStrategy` folds a rung too small for its fee.
  *
- * Trailing rules (`ttp`, `tsl`, the legacy trail) are not translated and so do not exist on a
- * position whose exits are parked: only `tp` and `sl` make the trip. One stop price serves every
- * slice — the plan's first `sl`, else the position's own.
+ * One stop price serves every slice — the plan's first `sl`, else the position's own. A staged
+ * stop (several `sl` rules) therefore parks as its first stage alone.
  *
  * Empty when the whole position is under the minimum: nothing can be parked, and the monitor
  * runs the plan itself.
@@ -357,7 +342,6 @@ export async function buy(
     realisedUsd: 0,
     ...(plan.length ? { strategy: plan } : {}),
     filledRungs: [],
-    trailArmed: false,
     thesis,
     conviction,
     stopLossPct,

@@ -108,13 +108,21 @@ risk logic in `domain/` — not in prompts.
 builder (`cfg.strategy`). Off: the analyst returns a `strategy` array per entry. Either way the
 rules are snapshotted onto `Position.strategy` at entry by `entryStrategy` and run by
 `evaluateExit` every monitor tick with no further model involvement — a proposal is clamped by
-`sanitizeStrategy`, can't put a stop deeper than `cfg.stopLossPct`, gets a stop appended if it
-omits one, and falls back to the config's stop/trail/ladder if it is unusable. An empty
-`Position.strategy` is that legacy path.
+`sanitizeStrategy`, can't put a stop deeper than `cfg.stopLossPct`, gets a stop appended if its
+stops do not cover the whole position, and falls back to the config's stop/ladder if it is
+unusable. An empty `Position.strategy` is that legacy path.
+
+**There are two rule kinds, `tp` and `sl`, and a plan may hold several of each** — a ladder of
+take-profits, a staged stop. Each fires once and sells its `sell`% of the original size. When
+one tick reaches more than one, the furthest wins on both sides (deepest stop, highest rung).
+Trailing rules (`ttp` / `tsl`, and the config's `trailArmPct`) were removed on the operator's
+decision: nothing follows the price up, so a gain is only locked in by a `tp` that fills. Don't
+bring one back without asking. A position opened before the removal may still carry a trailing
+rule in the ledger; `ruleExit` ignores a kind it does not know, so it simply never fires.
 
 **Who runs the plan depends on the mode.** In paper, `evaluateExit` does, every monitor tick.
 In live, the same snapshot is translated by `broker.conditionOrders` and attached to the buy, so
-*GMGN* runs it — all four rule kinds, trailing included (`profit_stop_trace` / `loss_stop_trace`),
+*GMGN* runs it — every `tp` as a `profit_stop` and every `sl` as a `loss_stop`,
 sized off `sell_ratio_type: buy_amount` because `StrategyRule.sell` has always meant a share of
 the original buy. The monitor then mirrors the wallet instead of racing it: it acts only on the
 two things GMGN was never told, the time stop and `healthExit`, and books everything else from
@@ -124,14 +132,13 @@ is a rule that does not exist in live.
 **On Solana the plan goes to Jupiter instead**, as Trigger V2 orders placed right after the buy
 (`broker.parkExits`). `broker.triggerSlices` is the translation: a vault deposit belongs to one
 order, so the plan becomes slices that add up to the whole position — one OCO pair per `tp` rung
-(take-profit + the stop), a lone stop over the rest. **Only `tp` and `sl` make the trip.**
-Trailing rules are not translated and, while the position is parked (`Position.jupiterExits`),
-are not run by the monitor either — they simply do not exist for that position. Three things to
-keep in mind:
+(take-profit + the stop), a lone stop over the rest. **One stop price serves every slice** — the
+plan's first `sl` — so a staged stop parks as its first stage alone. Three things to keep in
+mind:
 
 - **$10 minimum per order** (`TRIGGER_MIN_USD` is 12, for margin). Rungs too small are folded
-  together; a position under it parks nothing and the monitor runs its whole plan, trailing
-  included, exactly as in paper — with no protection if the process dies.
+  together; a position under it parks nothing and the monitor runs its whole plan, exactly as
+  in paper — with no protection if the process dies.
 - **Parked tokens are not in the wallet.** They sit in a custodial vault, so the wallet balance
   says nothing about the position; the monitor mirrors `jupiter.orders()` instead
   (`reconcileOrders`), booking each fill at what it actually fetched. Rows are matched by mint and

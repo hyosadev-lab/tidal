@@ -57,7 +57,6 @@ export function position(over: Partial<Position> = {}): Position {
     peakPrice: 0.001,
     realisedUsd: 0,
     filledRungs: [],
-    trailArmed: false,
     thesis: "test",
     conviction: 70,
     stopLossPct: 25,

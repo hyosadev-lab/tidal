@@ -8,10 +8,9 @@ export type RunState = "stopped" | "running" | "halted";
  * One row of the dashboard's exit builder.
  *   tp  — sell `sell`% once PnL reaches `at`%
  *   sl  — sell `sell`% once PnL falls to `at`% (negative)
- *   ttp — arm at `at`% PnL, then sell `sell`% on a `dd`% giveback from peak
- *   tsl — sell `sell`% on a `dd`% giveback from peak, armed from entry
+ * A plan may hold several of each: a ladder of take-profits, a staged stop.
  */
-export type StrategyRule = { kind: "tp" | "sl" | "ttp" | "tsl"; at?: number; dd?: number; sell: number };
+export type StrategyRule = { kind: "tp" | "sl"; at?: number; sell: number };
 
 /** Everything the dashboard can change. Persisted to the `kv` table in data/tta.db. */
 export type TradeConfig = {
@@ -38,10 +37,6 @@ export type TradeConfig = {
   stopLossPct: number;
   /** Ladder: sell `sell`% of the original size once PnL reaches `at`%. */
   takeProfit: { at: number; sell: number }[];
-  /** Arm a trailing stop once PnL exceeds this %. */
-  trailArmPct: number;
-  /** Trailing stop distance from peak, %. */
-  trailGivebackPct: number;
   /** Maximum holding time, minutes. A position older than this is closed whatever its PnL. */
   timeStopMinutes: number;
   /** Don't re-enter a token for this long after exiting it. */
@@ -161,12 +156,11 @@ export type Position = {
   /**
    * The exit plan this position runs on, snapshotted at entry — the operator's rows in
    * fixed mode, the analyst's in dynamic mode. Empty falls back to the config's
-   * stop / trail / ladder. Indexes into it are what `filledRungs` holds.
+   * stop / ladder. Indexes into it are what `filledRungs` holds.
    */
   strategy?: StrategyRule[];
   /** Take-profit rungs already filled, by index. */
   filledRungs: number[];
-  trailArmed: boolean;
   thesis: string;
   /** Model conviction 0–100 at entry. */
   conviction: number;

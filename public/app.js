@@ -282,20 +282,13 @@ function renderPositions(s) {
       const pill = (r, done, cls = "") =>
         `<span class="pill${done ? " pill-done" : ""}${cls}" title="${esc(ruleTitle(r))}">${esc(ruleLabel(r))}</span>`;
       const plan = (p.strategy ?? []).map((r, i) => pill(r, p.filledRungs.includes(i))).join("");
-      // A position opened with no rule set still has exits — it runs the config's stop, ladder
-      // and trail (`evaluateExit`'s legacy branch). Show those too, dimmed, rather than the
+      // A position opened with no rule set still has exits — it runs the config's stop and
+      // ladder (`evaluateExit`'s legacy branch). Show those too, dimmed, rather than the
       // bare "holding" that made a live plan look like no plan at all. That happens whenever
       // Fixed strategy is on with an empty rule list, or the analyst omitted `strategy`.
       const fallback = [
         pill({ kind: "sl", at: -(p.stopLossPct || s.config.stopLossPct), sell: 100 }, false, " pill-default"),
         ...(s.config.takeProfit ?? []).map((r, i) => pill({ kind: "tp", ...r }, p.filledRungs.includes(i), " pill-default")),
-        s.config.trailArmPct
-          ? pill(
-              { kind: "ttp", at: s.config.trailArmPct, dd: s.config.trailGivebackPct, sell: 100 },
-              false,
-              p.trailArmed ? " pill-armed" : " pill-default",
-            )
-          : "",
       ].join("");
       const state = plan || fallback || `<span class="pill">holding</span>`;
       return `<tr>
@@ -349,16 +342,12 @@ const ruleLabel = (r) =>
   ({
     tp: `TP +${r.at}% · ${r.sell}%`,
     sl: `SL ${r.at}% · ${r.sell}%`,
-    ttp: `TTP +${r.at}% ↘${r.dd}% · ${r.sell}%`,
-    tsl: `TSL ↘${r.dd}% · ${r.sell}%`,
   })[r.kind] ?? r.kind;
 
 const ruleTitle = (r) =>
   ({
     tp: `take profit — sell ${r.sell}% of the original size at +${r.at}%`,
     sl: `stop loss — sell ${r.sell}% at ${r.at}%`,
-    ttp: `trailing take profit — arms at +${r.at}%, sells ${r.sell}% on a ${r.dd}% giveback from peak`,
-    tsl: `trailing stop loss — once in profit, sells ${r.sell}% on a ${r.dd}% giveback from peak. Below break-even the stop loss owns the position`,
   })[r.kind] ?? "";
 
 /** One labelled figure inside a sounding card. `title` is the long form, on hover. */
@@ -745,18 +734,14 @@ $("in-interval").addEventListener("change", save);
 
 // ── exit builder ──────────────────────────────────────────────────────
 // These rows are the exit plan every new position is opened with. Leave the list
-// empty and the engine falls back to the stop / trail / ladder in data/config.json.
+// empty and the engine falls back to the stop and ladder in the config.
 const RULE_FIELDS = {
   tp: [["at", "TP"], ["sell", "Sell"]],
   sl: [["at", "SL"], ["sell", "Sell"]],
-  ttp: [["at", "TP"], ["dd", "DD"], ["sell", "Sell"]],
-  tsl: [["dd", "SL DD"], ["sell", "Sell"]],
 };
 const RULE_DEFAULTS = {
   tp: { kind: "tp", at: 100, sell: 50 },
   sl: { kind: "sl", at: -50, sell: 100 },
-  ttp: { kind: "ttp", at: 100, dd: 10, sell: 50 },
-  tsl: { kind: "tsl", dd: 20, sell: 100 },
 };
 let rules = [];
 
@@ -796,11 +781,11 @@ function renderRules() {
 
   // A ladder that never adds up to 100% leaves a stub of every position running forever.
   const sum = (kinds) => rules.filter((r) => kinds.includes(r.kind)).reduce((t, r) => t + (r.sell || 0), 0);
-  const tp = sum(["tp", "ttp"]);
-  const sl = sum(["sl", "tsl"]);
+  const tp = sum(["tp"]);
+  const sl = sum(["sl"]);
   $("rules-total").textContent = rules.length
     ? `Sells ${tp}% on the way up, ${sl}% on the way down. 100% each side exits fully.`
-    : "No rules yet — every position opens on the stop, trail and ladder in data/config.json.";
+    : "No rules yet — every position opens on the default stop and take-profit ladder.";
   $("rules-total").classList.toggle("warn", rules.length > 0 && (tp < 100 || sl < 100));
 }
 

@@ -107,7 +107,7 @@
       <label class="toggle"><input type="checkbox" id="in-fixed" /><span>Fixed trading strategy</span></label>
       <p class="hint" id="hint-dynamic" hidden>The analyst writes one per token instead — same
         rules, chosen per entry, then run mechanically. It cannot set a stop deeper than
-        <code>stopLossPct</code>, and a plan without one gets it appended.</p>
+        <code>stopLossPct</code>, and stops that do not cover the whole position get one appended.</p>
       <div id="strategy" hidden>
         <div class="rules" id="rules"></div>
         <p class="hint" id="rules-total">—</p>
@@ -116,8 +116,6 @@
           <div class="menu" id="rule-menu" hidden>
             <button type="button" data-kind="tp">↑ Take Profit</button>
             <button type="button" data-kind="sl">↓ Stop Loss</button>
-            <button type="button" data-kind="ttp">↗ Trailing Take Profit</button>
-            <button type="button" data-kind="tsl">↘ Trailing Stop Loss</button>
           </div>
         </div>
       </div>

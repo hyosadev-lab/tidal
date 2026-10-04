@@ -50,16 +50,6 @@ test("a filled rung is not sold twice", () => {
   assert.equal(evaluateExit(p, cfg), null);
 });
 
-test("the trailing stop arms above the threshold and fires on giveback", () => {
-  const p = position({ lastPrice: 0.00146, peakPrice: 0.00146, filledRungs: [0] }); // +46%, arms
-  assert.equal(evaluateExit(p, cfg), null);
-  assert.equal(p.trailArmed, true);
-  p.lastPrice = 0.00105; // ~28% off the peak, still green
-  const e = evaluateExit(p, cfg);
-  assert.equal(e?.kind, "trail");
-  assert.equal(e?.percent, 100);
-});
-
 test("the time stop is a hard cap — it closes a winner too", () => {
   const old = Date.now() - (cfg.timeStopMinutes + 10) * 60_000;
   assert.equal(evaluateExit(position({ openedAt: old, lastPrice: 0.00101 }), cfg)?.kind, "time");
@@ -77,7 +67,6 @@ const RULES: StrategyRule[] = [
   { kind: "sl", at: -30, sell: 100 },
   { kind: "tp", at: 60, sell: 40 },
   { kind: "tp", at: 400, sell: 20 },
-  { kind: "ttp", at: 100, dd: 25, sell: 50 },
 ];
 
 test("a position with rules ignores the config stop and ladder", () => {
@@ -94,56 +83,30 @@ test("the highest take-profit rule a spike reaches wins", () => {
   assert.equal(e?.percent, 20);
 });
 
-test("a trailing take-profit rule needs both the arm and the giveback", () => {
-  // Peak +150% so the ttp is armed, but only 10% off it. The +60% rung is already filled.
-  const held = { strategy: RULES, peakPrice: 0.0025, filledRungs: [1] };
-  assert.equal(evaluateExit(position({ ...held, lastPrice: 0.00225 }), cfg), null);
-  const e = evaluateExit(position({ ...held, lastPrice: 0.0018 }), cfg);
-  assert.equal(e?.kind, "rule3");
-  assert.equal(e?.percent, 50);
+test("a staged stop sells in stages, and a gap through all of them fires the deepest", () => {
+  const rules: StrategyRule[] = [
+    { kind: "sl", at: -10, sell: 50 },
+    { kind: "tp", at: 60, sell: 100 },
+    { kind: "sl", at: -25, sell: 100 },
+  ];
+  // -12%: only the first stage is reached, and it sells its own half.
+  const first = evaluateExit(position({ strategy: rules, lastPrice: 0.00088 }), cfg);
+  assert.equal(first?.kind, "rule0");
+  assert.equal(first?.percent, 50);
+  // Spent, and still above the second stage: nothing more to do.
+  assert.equal(evaluateExit(position({ strategy: rules, lastPrice: 0.00088, filledRungs: [0] }), cfg), null);
+  // Memecoins gap between two 30s polls. Straight to -40% takes the last stage, the one sized
+  // to close the position — not the first stage's half with the rest left for a tick later.
+  const gapped = evaluateExit(position({ strategy: rules, lastPrice: 0.0006 }), cfg);
+  assert.equal(gapped?.kind, "rule2");
+  assert.equal(gapped?.percent, 100);
 });
 
-test("a trailing stop tighter than the stop loss does not shadow it on the way down", () => {
-  // The shape the analyst keeps writing: a -30% stop plus a 15% trail. Live from entry the
-  // trail would fire first on any drop and the stop could never be reached.
-  const rules: StrategyRule[] = [
-    { kind: "sl", at: -30, sell: 100 },
-    { kind: "tsl", dd: 15, sell: 100 },
-  ];
-  // -15%: a full 15% off the peak, but underwater — the stop owns this half of the range.
-  assert.equal(evaluateExit(position({ strategy: rules, lastPrice: 0.00085 }), cfg), null);
-  assert.equal(evaluateExit(position({ strategy: rules, lastPrice: 0.00069 }), cfg)?.kind, "rule0");
-  // +100% then 15% back off the peak: in profit, so the trail is the one that fires.
-  const won = position({ strategy: rules, peakPrice: 0.002, lastPrice: 0.0017 });
-  assert.equal(evaluateExit(won, cfg)?.kind, "rule1");
-});
-
-test("the stop loss wins a tick a trailing rule listed above it also triggers on", () => {
-  // Memecoins gap between two 30s polls, so one tick can satisfy both rules. Order in the
-  // list must not decide it: a `ttp` first would sell its own 50% down here and leave the
-  // other half to the stop a tick later, which is how a stop stops mattering.
-  const rules: StrategyRule[] = [
-    { kind: "ttp", at: 20, dd: 60, sell: 50 },
-    { kind: "sl", at: -30, sell: 100 },
-  ];
-  // Peaked at +30% (arming the ttp), now -50%: past the stop, and 62% off the peak.
-  const gapped = position({ strategy: rules, peakPrice: 0.0013, lastPrice: 0.0005 });
-  const e = evaluateExit(gapped, cfg);
-  assert.equal(e?.kind, "rule1", "the stop, not the ttp written above it");
-  assert.equal(e?.percent, 100);
-});
-
-test("a trailing take-profit does not fire underwater either", () => {
-  // Same guard the tsl has: armed at +140%, 60% off the peak, but the position is at -5%.
-  // Above the stop, so the answer is to wait for the stop — not to book a loss as a "profit".
-  const rules: StrategyRule[] = [
-    { kind: "ttp", at: 20, dd: 60, sell: 50 },
-    { kind: "sl", at: -30, sell: 100 },
-  ];
-  assert.equal(evaluateExit(position({ strategy: rules, peakPrice: 0.0024, lastPrice: 0.00095 }), cfg), null);
-  // Still in profit at +8% after the same giveback: now it is genuinely profit protection.
-  const inProfit = position({ strategy: rules, peakPrice: 0.0027, lastPrice: 0.00108 });
-  assert.equal(evaluateExit(inProfit, cfg)?.kind, "rule0");
+test("a rule kind the engine no longer runs never fires", () => {
+  // Positions opened before trailing rules were removed still carry them in the ledger.
+  const stale = [{ kind: "tsl", dd: 10, sell: 100 }, { kind: "sl", at: -30, sell: 100 }] as unknown as StrategyRule[];
+  assert.equal(evaluateExit(position({ strategy: stale, peakPrice: 0.002, lastPrice: 0.0015 }), cfg), null);
+  assert.equal(evaluateExit(position({ strategy: stale, lastPrice: 0.0006 }), cfg)?.kind, "rule1");
 });
 
 test("a filled rule is not sold twice", () => {
@@ -174,12 +137,19 @@ test("the model's per-entry stop may tighten the operator's, never deepen it", (
   assert.equal(entryStop({ ...cfg, stopLossPct: 5 }, 10), 5);
 });
 
-test("a plan with no stop gets one, and an unusable plan falls back to the config", () => {
+test("stops that do not cover the position get one more, and an unusable plan falls back to the config", () => {
   const dyn = { ...cfg, fixedStrategy: false };
   const added = entryStrategy(dyn, [{ kind: "tp", at: 90, sell: 100 }]);
   assert.equal(added.length, 2);
   assert.deepEqual(added[1], { kind: "sl", at: -cfg.stopLossPct, sell: 100 });
-  // Nothing salvageable → no rules → evaluateExit uses the config stop/ladder/trail.
+  // A staged stop that only ever sells 40% leaves the other 60% with no floor.
+  const partial = entryStrategy(dyn, [{ kind: "sl", at: -10, sell: 40 }]);
+  assert.deepEqual(partial.at(-1), { kind: "sl", at: -cfg.stopLossPct, sell: 100 });
+  // Two stages adding up to the whole position are left exactly as written.
+  assert.equal(entryStrategy(dyn, [{ kind: "sl", at: -10, sell: 50 }, { kind: "sl", at: -20, sell: 50 }]).length, 2);
+  // Trailing kinds are gone: a proposal made only of them is no plan at all.
+  assert.deepEqual(entryStrategy(dyn, [{ kind: "ttp", at: 50, dd: 20, sell: 100 }, { kind: "tsl", dd: 15, sell: 100 }]), []);
+  // Nothing salvageable → no rules → evaluateExit uses the config stop and ladder.
   assert.deepEqual(entryStrategy(dyn, [{ kind: "please sell", at: 5 }]), []);
   assert.deepEqual(entryStrategy(dyn, "sell everything"), []);
 });

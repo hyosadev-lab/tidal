@@ -34,10 +34,7 @@ const LOOKUP_BUDGET = 6;
 
 /** One rule as a line of the brief. Same wording the dashboard builder uses. */
 function describeRule(r: StrategyRule): string {
-  if (r.kind === "tp") return `take profit: sell ${r.sell}% at +${r.at}%`;
-  if (r.kind === "sl") return `stop loss: sell ${r.sell}% at ${r.at}%`;
-  if (r.kind === "ttp") return `trailing take profit: arm at +${r.at}%, then sell ${r.sell}% on a ${r.dd}% giveback from peak`;
-  return `trailing stop loss: once in profit, sell ${r.sell}% on a ${r.dd}% giveback from peak`;
+  return r.kind === "tp" ? `take profit: sell ${r.sell}% at +${r.at}%` : `stop loss: sell ${r.sell}% at ${r.at}%`;
 }
 
 /** The exit half of the brief — it changes shape with `fixedStrategy`. */
@@ -48,16 +45,11 @@ function exitPlan(cfg: TradeConfig, hurdle: number): string {
   // exactly this, so the number quoted here is the one the position will actually run on.
   const floor = Math.max(hurdle, cfg.stopLossPct);
 
-  // A giveback exits at peak × (1 - dd), so a trail needs a peak that much *above* the level it
-  // must still clear on the way down. `ruleExit` guards the trails at the round trip, and
-  // `viableStrategy` lifts a `ttp` arm off `floor` — same formula, two different bases.
-  const peakFor = (base: number, dd: number) => (((1 + base / 100) / (1 - dd / 100) - 1) * 100).toFixed(0);
-
   const cost = `
 WHAT A PROFIT TARGET HAS TO CLEAR: +${floor.toFixed(1)}%
 
-Two separate floors sit under every \`tp\` and every \`ttp\` arm, and the engine lifts any target
-below the higher of them before the position opens. Neither is a target — both are zero.
+Two separate floors sit under every \`tp\`, and the engine lifts any target below the higher of
+them before the position opens. Neither is a target — both are zero.
 
 1. The round trip: +${hurdle.toFixed(1)}%. What a position of the size you are sizing has to gain, from the
    price it entered at, before selling it returns what it cost — routing fee, pool fee, price
@@ -85,37 +77,28 @@ of the stop. If you do not believe it will, the honest plan is no entry, not a n
     return `Exits (you design them per entry, then they are mechanical — the engine runs them every
 ${cfg.monitorSeconds}s with no further model involvement, so a plan cannot be revised once written):
 
-Give every entry a \`strategy\`: an ordered list of rules, each selling a % of the ORIGINAL size.
-  {"kind":"tp","at":<pnl % ≥5>,"sell":<1-100>}         sell when PnL reaches +at%
-  {"kind":"sl","at":<pnl % -95..-1>,"sell":<1-100>}     sell when PnL falls to at%
-  {"kind":"ttp","at":<arm % ≥5>,"dd":<1-90>,"sell":<1-100>}  arm at +at%, sell on a dd% giveback from peak
-  {"kind":"tsl","dd":<1-90>,"sell":<1-100>}             sell on a dd% giveback from peak, in profit only
+Give every entry a \`strategy\`: a list of rules, each selling a % of the ORIGINAL size.
+  {"kind":"tp","at":<pnl % ≥5>,"sell":<1-100>}        sell when PnL reaches +at%
+  {"kind":"sl","at":<pnl % -95..-1>,"sell":<1-100>}    sell when PnL falls to at%
 
-Every rule fires AT MOST ONCE and sells its \`sell\`% of the original size, then it is spent. A
-rule that fired protects nothing afterwards: an \`sl\` selling 40% leaves the other 60% with no
-stop under it at all, and a \`tsl\` selling 50% stops trailing what is left. Whatever you intend
-as the last line of defence sells 100.
+That is the whole toolkit — there are no trailing rules — and you may write several of each: a
+ladder of take-profits, a staged stop. Every rule fires AT MOST ONCE and sells its \`sell\`% of the
+original size, then it is spent. So the \`sell\` of your \`tp\` rules should add up to 100, and so
+should the \`sell\` of your \`sl\` rules: take-profits totalling 60 leave 40% riding with no target
+at all, and it leaves only by the stop or the time stop.
 
 How they run, in the order the engine checks them:
-1. \`sl\` — the only rule that acts below break-even, and it is checked first wherever you put it
-   in the list, so it cannot be pre-empted by a trailing rule written above it. The whole
-   downside is its job. If you want to lose less than -${cfg.stopLossPct}%, write a shallower \`sl\`; nothing else
-   in the list will do it for you.
-2. \`tsl\` / \`ttp\` — profit protection only, so they never cap a loss. "In profit" means past the
-   round trip, not past zero: both are inert until PnL clears +${hurdle.toFixed(1)}%. A dd% giveback therefore
-   needs a peak above (1 + ${hurdle.toFixed(1)}%) / (1 - dd%) — dd 15 needs +${peakFor(hurdle, 15)}%, dd 20 needs +${peakFor(hurdle, 20)}%, dd 50
-   needs +${peakFor(hurdle, 50)}%, dd 80 needs +${peakFor(hurdle, 80)}%. A wide dd is not a loose stop — it is a rule that may
-   never fire at all.
-3. \`tp\` — checked last, highest rung reached wins. A rung never reached sells nothing.
+1. \`sl\` — checked first wherever you put it in the list. When one tick falls through several
+   stops, the deepest one reached is the one that fires.
+2. \`tp\` — the highest rung reached wins. A rung never reached sells nothing.
 
-So the two are not alternatives: size \`dd\` to how much noise the token makes on the way up, and
-set \`sl\` from how much of the position you are willing to lose if it simply never works.
+Nothing follows the price up. A position that runs far past your last rung and comes back gives
+all of that back and exits at the stop or the time stop — so put rungs where you would actually
+want to be paid, including one far enough out to matter if the token really does run.
 
-Clamps: a stop deeper than -${cfg.stopLossPct}% becomes -${cfg.stopLossPct}%, a plan with no stop gets one at -${cfg.stopLossPct}%, any \`tp\`
-or \`ttp\` target under +${floor.toFixed(1)}% is lifted to it, and an omitted or unusable \`strategy\` falls back to
-the operator's default plan. A \`ttp\` is lifted much further than a \`tp\`, because it exits a \`dd\`%
-giveback below its arm rather than at it: the arm becomes (1 + ${floor.toFixed(1)}%) / (1 - dd%), so dd 20 arms no
-lower than +${peakFor(floor, 20)}% and dd 50 no lower than +${peakFor(floor, 50)}%. Write the arm you mean, or the engine will.
+Clamps: a stop deeper than -${cfg.stopLossPct}% becomes -${cfg.stopLossPct}%, stops that do not cover the whole position get
+one more at -${cfg.stopLossPct}% for the rest, any \`tp\` target under +${floor.toFixed(1)}% is lifted to it, and an omitted or
+unusable \`strategy\` falls back to the operator's default plan.
 ${time}
 ${cost}`;
 
@@ -126,7 +109,6 @@ ${cost}`;
     : [
         `  hard stop-loss at -${cfg.stopLossPct}%`,
         ...cfg.takeProfit.map((r, i) => `  rung ${i + 1}: sell ${r.sell}% of the original size at +${r.at}%`),
-        `  trailing stop arms at +${cfg.trailArmPct}%, then exits on a ${cfg.trailGivebackPct}% giveback from peak`,
       ].join("\n");
 
   return `Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement):
@@ -190,7 +172,7 @@ How you spend the rest is your call, and spending it well is part of the job. ${
 
 One call per token per route. Rows are free inside a request — \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does and \`gmgn_token_traders\` five times, so raise \`limit\` rather than calling again at a second resolution or for more wallets. Every request here shares one limiter with the sweep and with the buys that follow, and it makes callers wait rather than fail — a redundant lookup is paid in the next sweep's candidate list, not in an error you would see.`;
 
-  const entry = `{"address":"...","symbol":"...","conviction":0-100,"stopLossPct":${Math.min(10, cfg.stopLossPct)}-${cfg.stopLossPct},${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl|ttp|tsl","at":<%>,"dd":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}`;
+  const entry = `{"address":"...","symbol":"...","conviction":0-100,"stopLossPct":${Math.min(10, cfg.stopLossPct)}-${cfg.stopLossPct},${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl","at":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}`;
 
   if (stage === "sweep")
     return `${head}

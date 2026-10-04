@@ -207,7 +207,7 @@ export interface SwapParams {
 }
 
 export interface StrategyConditionOrder {
-  order_type: string; // "profit_stop" | "loss_stop" | "profit_stop_trace" | "loss_stop_trace"
+  order_type: string; // "profit_stop" | "loss_stop" (GMGN also has `*_trace` trailing types; unused)
   side: string; // "sell"
   price_scale?: string;
   sell_ratio: string;
