@@ -8,16 +8,20 @@ import { recordSoundings } from "../data/soundings.ts";
 import * as gmgn from "../market/gmgn.ts";
 import * as jupiter from "../market/jupiter.ts";
 import { aborted, claim, generation, release } from "./control.ts";
+import { openEntries } from "./entries.ts";
 import { applyExits } from "./exits.ts";
 import { gatherCandidates } from "./sweep.ts";
 
 /**
  * The sweep stage, in the order it happens: sweep → gate → rank → ask the analyst → its exits →
- * its watchlist edits. Read `runScan` top to bottom and that is the whole stage; every step it
- * calls lives in a file of its own.
+ * its watchlist edits → its entries. Read `runScan` top to bottom and that is the whole stage;
+ * every step it calls lives in a file of its own.
  *
- * **Nothing is bought here.** The analyst picks what goes on the watchlist; `watch.ts` is the
- * second stage, and the only one that opens a position.
+ * The analyst has two answers for a candidate it likes: buy it now, or put it on the watchlist
+ * and let `watch.ts`, the second stage, decide once it has been seen for a while.
+ *
+ * The model's exits run *before* the entries on purpose — closing a position frees a slot the
+ * entries below may use, and puts that address straight onto cooldown.
  *
  * There is no shortlist: every eligible row goes in the brief, so a cycle's prompt grows with
  * the sweep (three feeds of 40, deduped) and the ranking only decides reading order.
@@ -78,8 +82,7 @@ export async function runScan(): Promise<void> {
 
   try {
     store.rollDay();
-    // Nothing is sized here, but the brief quotes cash and the round trip off it.
-    await syncLiveBalance();
+    const balanceOk = await syncLiveBalance();
     const cycle = store.bumpCycle();
     store.lastRunAt = Date.now();
     store.phase = "scanning";
@@ -142,7 +145,22 @@ export async function runScan(): Promise<void> {
     // Exits first: a position the model closes goes onto cooldown, and must not be watched.
     await applyExits(decision.exits);
     store.setWatchlist(reviseWatchlist(store.watchlist, decision.watch, decision.unwatch, eligible, cfg.chain, Date.now()));
-    if (!decision.watch.length) store.log("info", "Nothing added to the watchlist this cycle.");
+
+    const slots = cfg.maxOpenPositions - store.positions.length;
+    if (slots <= 0) {
+      if (decision.entries.length) store.log("info", "Entries skipped — position limit reached.");
+      return;
+    }
+    if (!balanceOk) {
+      store.log("warn", "No entries this cycle — the wallet balance is unknown, so sizing cannot be trusted.");
+      return;
+    }
+
+    store.phase = "entering";
+    await openEntries(decision.entries, eligible, cfg, slots, gen, "sweep");
+    // A token named in both `entries` and `watch` was bought: held is not watched.
+    store.setWatchlist({ list: store.watchlist.filter((w) => !store.position(w.c.address)), notes: [] });
+    if (!decision.entries.length && !decision.watch.length) store.log("info", "No entry and nothing new to watch this cycle.");
   } catch (e) {
     store.log("error", `Scan failed: ${short(e)}`);
   } finally {

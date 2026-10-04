@@ -24,6 +24,12 @@ export async function openEntries(
   cfg: TradeConfig,
   slots: number,
   gen: number,
+  /**
+   * Which stage is buying. Prefixed onto the thesis, which is the trade's `reason` — so the
+   * ledger says how many buys came straight off a sweep and how many through the watchlist.
+   * ponytail: a text prefix, not a column. Give `Trade` a field if this ever needs querying.
+   */
+  via: "sweep" | "watchlist",
 ): Promise<number> {
   // The daily loss halt is enforced here, the one place that buys: a manual scan still runs
   // while halted, and its exits are welcome — its entries are not.
@@ -79,7 +85,7 @@ export async function openEntries(
       gen,
       c,
       size,
-      String(e.thesis ?? "").slice(0, 400),
+      `[${via}] ${String(e.thesis ?? "").slice(0, 400)}`,
       conviction,
       entryStop(cfg, e.stopLossPct),
       entryStrategy(cfg, e.strategy),

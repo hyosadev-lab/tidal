@@ -44,7 +44,12 @@ async function complete(messages: Message[], o: AgentOptions) {
   if (!res.ok) throw new Error(`openrouter ${res.status}: ${await res.text()}`);
   const json = await res.json();
   if (json.error) throw new Error(`openrouter: ${json.error.message}`);
-  return json.choices[0].message as Message;
+  const choice = json.choices[0];
+  // An empty answer with no tool call is a failure with a cause — usually the output limit,
+  // spent on reasoning. Say which, instead of handing back "" to be reported as bad JSON.
+  if (!choice.message.content && !choice.message.tool_calls?.length)
+    throw new Error(`openrouter: empty reply (finish_reason: ${choice.finish_reason ?? "none"}, output tokens: ${json.usage?.completion_tokens ?? "?"})`);
+  return choice.message as Message;
 }
 
 /** Runs the tool-calling loop until the model answers without tool calls. */

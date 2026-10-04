@@ -190,7 +190,7 @@
           <tbody></tbody>
         </table>
       </div>
-      <p class="empty" id="e-pos">Nothing open. The agent buys only from the watchlist, when the analyst backs a token it has watched.</p>
+      <p class="empty" id="e-pos">Nothing open. The agent buys when the analyst backs a candidate — straight from a scan, or after watching it.</p>
     </section>
 
     <div class="split">
@@ -200,8 +200,8 @@
       <p class="empty" id="e-cand">No scan yet. Start the agent, or run one scan by hand.</p>
       <p class="fine">Top 40 of the sweep, best score first, showing the five figures worth scanning — the analyst
         is given far more per row (buys and sells, net buy, dev hold rate, insider and bundler rates, fees, 1m change).
-        <b>Reviewed</b> marks the rows that actually reached it: every eligible one. Nothing is bought from here —
-        the analyst moves the few it likes to the Watchlist and decides there. <b>Eligible</b> rows passed the
+        <b>Reviewed</b> marks the rows that actually reached it: every eligible one. The analyst buys what it is sure of
+        and moves what it wants confirmed to the Watchlist. <b>Eligible</b> rows passed the
         gates but were skipped, and say why (already held, on cooldown); <b>blocked</b> rows failed
         a gate. Only wash trading, honeypots and unreadable rows are gates: everything else is reported and judged,
         never screened. Use Refine to change what the sweep fetches, and the instruction box to change what gets
@@ -219,7 +219,7 @@
           <tbody></tbody>
         </table>
       </div>
-      <p class="empty" id="e-watch">Nothing watched. Each scan the analyst may put a few candidates here; a buy can only come from this list.</p>
+      <p class="empty" id="e-watch">Nothing watched. A candidate the analyst likes but wants to see confirmed waits here, and is bought or dropped from this list.</p>
     </section>
 
     <section class="panel">

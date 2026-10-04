@@ -9,9 +9,9 @@ import { applyExits } from "./exits.ts";
 import { syncLiveBalance } from "./scan.ts";
 
 /**
- * The watch tick: the second stage of the flow, and the only one that buys.
+ * The watch tick: the second stage of the flow, for the tokens the sweep chose to wait on.
  *
- * The sweep (`scan.ts`) puts tokens on the watchlist; every `WATCH_MINUTES` this re-prices them,
+ * The sweep (`scan.ts`) buys what it is sure of and puts the rest of its picks on the watchlist; every `WATCH_MINUTES` this re-prices them,
  * shows the analyst each one with its price trail and the note it left itself, and lets it buy,
  * keep watching or drop. What the model sees is therefore a token over time rather than one
  * snapshot — which is the whole point of the list.
@@ -75,7 +75,7 @@ export async function runWatch(): Promise<void> {
     }
 
     store.phase = "entering";
-    await openEntries(decision.entries, seen, cfg, slots, gen);
+    await openEntries(decision.entries, seen, cfg, slots, gen, "watchlist");
     // Bought is no longer watched.
     store.setWatchlist({ list: store.watchlist.filter((w) => !store.position(w.c.address)), notes: [] });
   } catch (e) {

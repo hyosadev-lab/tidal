@@ -412,7 +412,7 @@ function renderCandidates(s) {
       const verdict = !pass
         ? '<span class="status is-fail" title="failed a safety check (reason below) — never shown to the AI, cannot be bought">blocked</span>'
         : c.analystNote === "sent"
-          ? '<span class="status is-pass" title="passed the safety checks and was shown to the AI analyst this cycle. Reviewed is not bought — the analyst first has to put it on the watchlist">reviewed</span>'
+          ? '<span class="status is-pass" title="passed the safety checks and was shown to the AI analyst this cycle. Reviewed is not bought — the analyst still has to back it, now or after watching it">reviewed</span>'
           : c.analystNote === "on the watchlist"
             ? '<span class="status is-pass" title="already on the watchlist — the analyst follows it there instead of re-reading it here">watched</span>'
             : '<span class="status" title="passed the safety checks but was not shown to the AI this cycle — reason below">skipped</span>';
