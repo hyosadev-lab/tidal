@@ -2,35 +2,25 @@ import type { Candidate, Chain, Decision, Watch } from "./types.ts";
 
 /**
  * The watchlist's limits. The analyst decides what goes on it and what comes off; how many it
- * holds, how long a token may sit there and how long it must be watched before it can be bought
- * are decided here, in code — a prompt cannot hold a slot open forever or buy on first sight.
+ * holds and how long a token may sit there are decided here, in code — a prompt cannot hold a
+ * slot open forever.
  */
 
 /** Most tokens watched at once. */
 export const WATCH_MAX = 3;
 /** Minutes between watch ticks. */
 export const WATCH_MINUTES = 5;
-/**
- * Minutes a token must have been watched before it can be bought. Shorter than a tick on
- * purpose: a token is added partway through a sweep, so the first tick after it finds it a few
- * seconds short of a full interval — that tick must count, the one fired right behind the sweep
- * that added it must not.
- */
-export const WATCH_MIN_MINUTES = 3;
 /** Minutes after which an unbought token is dropped, so a dead watch cannot hold a slot. */
 export const WATCH_TTL_MINUTES = 45;
 
 const MAX_POINTS = 24;
 
-/** Watched long enough to be bought. */
-export const ripe = (w: Watch, now: number): boolean => now - w.addedAt >= WATCH_MIN_MINUTES * 60_000;
-
 const same = (a: string, b: unknown): boolean => a.toLowerCase() === String(b ?? "").toLowerCase();
 
 /**
  * A fresh price for a watched token. Market cap moves with it — supply is fixed, and
- * `broker.buy` derives the entry market cap from the pair. Looks under a minute apart (a sweep
- * and the tick behind it) share one point on the trail.
+ * `broker.buy` derives the entry market cap from the pair. Looks under a minute apart share
+ * one point on the trail.
  */
 export function observe(w: Watch, price: number, now: number): void {
   if (!(price > 0)) return;

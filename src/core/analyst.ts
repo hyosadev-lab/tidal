@@ -2,7 +2,7 @@ import { store } from "./data/store.ts";
 import { breakevenPct } from "./domain/chains.ts";
 import { tradeSize } from "./domain/config.ts";
 import { CONVICTION_FLOOR, entryStrategy, pnlPct, positionSize } from "./domain/positions.ts";
-import { WATCH_MAX, WATCH_MIN_MINUTES, WATCH_MINUTES, WATCH_TTL_MINUTES } from "./domain/watchlist.ts";
+import { WATCH_MAX, WATCH_MINUTES, WATCH_TTL_MINUTES } from "./domain/watchlist.ts";
 import type { Candidate, Decision, StrategyRule, TradeConfig, Watch } from "./domain/types.ts";
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
@@ -183,7 +183,7 @@ THE MACHINE (facts, not advice)
 ${rows}
 - Two ways to act on a candidate. \`entries\` buys it now — for a setup that is already there on the brief and the candles you pulled. \`watch\` defers it — for a setup that needs something to happen first (a pullback to a level, flow confirming, a breakout holding). Do not buy what you would rather see confirmed, and do not park on the watchlist what is ready now: the next look at it is ${WATCH_MINUTES} minutes away. A token named in both is bought.
 - The watchlist holds at most ${WATCH_MAX} tokens; \`watch_slots\` is how many are free now and \`watchlist\` is what is on it. To add past that, \`unwatch\` something in the same answer. Tokens already on it are not in the candidate list — they are bought from the watch stage, not here.
-- A watched token can be bought by the watch stage once it has been there ${WATCH_MIN_MINUTES} minutes, and is dropped automatically after ${WATCH_TTL_MINUTES} minutes unbought — so watch what could be worth buying within the half hour, not what might be interesting some day.
+- A watched token is looked at again every ${WATCH_MINUTES} minutes by the watch stage, which can buy it, and is dropped automatically after ${WATCH_TTL_MINUTES} minutes unbought — so watch what could be worth buying within the half hour, not what might be interesting some day.
 - \`note\` is the only thing the watch stage will know about why a token is there. Write what you are waiting to see before buying and what would make you drop it, in numbers where you can ("holding above $X with buys_5m still ahead of sells_5m; drop under $Y or if top10 climbs"). A note that only says the token looks good gives the next call nothing to check.
 ${sizing}
 - Empty \`entries\` and \`watch\` arrays are valid answers, and a full watchlist you are content with needs no edits.
@@ -211,7 +211,7 @@ ${tail}`;
 
 THE MACHINE (facts, not advice)
 
-- The candidates in this brief ARE the watchlist — every token on it that has been watched for at least ${WATCH_MIN_MINUTES} minutes. You may buy only from it.
+- The candidates in this brief ARE the watchlist. You may buy only from it.
 - Every row carries a \`watch\` block: \`note\` (what the sweep stage was waiting for), \`minutes_watched\`, \`price_when_added\`, \`change_since_added_pct\` and \`trail\` — the price at each look since, oldest first, with how many minutes ago it was taken. That trail is the reason this stage exists: judge the token on what it did while you watched, against the note, not on the snapshot alone.
 - \`price\`, \`mcap_usd\` and \`liquidity_usd\` are fresh as of this call. Every other figure on the row is from the last sweep that carried the token — use the tools for anything you need current.
 ${rows}

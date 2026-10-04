@@ -160,26 +160,28 @@ only memory one call hands the next:
   token carries a `note` — what the analyst is waiting to see — because the next call knows
   nothing else.
 - **Watch tick** (`cycle/watch.ts`, every `WATCH_MINUTES`): re-prices the watchlist
-  (`tokenInfo`, weight 1 each), shows the analyst only the rows watched long enough, with their
-  price trail and note, and lets it buy, keep or drop. A tick with nothing ripe calls nothing.
+  (`tokenInfo`, weight 1 each), shows the analyst every row with its price trail and note, and
+  lets it buy, keep or drop. A tick with an empty watchlist calls nothing.
 
 Both stages get the tools and `LOOKUP_BUDGET`, and both call `openEntries`, which prefixes the
 thesis with `[sweep]` or `[watchlist]` — the trade's `reason`, so the ledger says which path a
 buy took. That split is the open question this design is being measured on: if nearly every buy
 is `[sweep]`, the watchlist is not earning its second LLM call.
 
-The limits are in `domain/watchlist.ts`, not in the prompt: `WATCH_MAX` (3), `WATCH_MIN_MINUTES`
-(3 — a token must have been watched that long before `ripe` lets the watch stage see it, so it
-can be neither bought nor dropped off the snapshot it was added on; shorter than a tick so the
-first tick after a sweep counts), `WATCH_TTL_MINUTES` (45, then it is dropped so a
-dead watch cannot hold a slot). `pruneWatchlist` also drops what became held, cooled-down,
-blacklisted or gate-failed. The list is persisted in `kv.state` (`store.watchlist`), and a row's
-`Candidate` is refreshed for free whenever a later sweep carries the token again.
+The limits are in `domain/watchlist.ts`, not in the prompt: `WATCH_MAX` (3) and
+`WATCH_TTL_MINUTES` (45, then it is dropped so a dead watch cannot hold a slot). `pruneWatchlist`
+also drops what became held, cooled-down, blacklisted or gate-failed. The list is persisted in
+`kv.state` (`store.watchlist`), and a row's `Candidate` is refreshed for free whenever a later
+sweep carries the token again. There is no minimum watch — the operator removed it: a token can
+be bought or dropped at the first tick after it was added.
 
 The sweep and the tick share one lock (`claim`/`release` in `control.ts`) — both end in
-`applyExits`, and interleaved they would each count the same free slot. The tick the timer fires
-during a sweep is dropped by that lock, so `runtime.ts` runs one right behind every sweep
-(`scanThenWatch`). A loss halt stops both timers.
+`applyExits`, and interleaved they would each count the same free slot. **The tick runs off its
+own timer only, never straight behind a sweep**: measured on the first paper run, a tick seconds
+after the sweep that filled the list re-judged the same snapshot and dropped what it had just
+added. The tick the timer fires during a sweep is dropped by the lock, so every third tick is
+skipped and a long-watched token goes 10 minutes between looks once per sweep interval. A loss
+halt stops both timers.
 
 ### `src/core/` layering
 
@@ -207,7 +209,7 @@ in, not imported).
 | `domain/config.ts` | `DEFAULT_CONFIG`, the Refine spec, `sanitizeConfig` (every dashboard input is clamped here — safety limits, not input tidying), the derived reads (`tradeSize`, `minPosition`, `slippage`), `liveReady` |
 | `domain/candidates.ts` | `toCandidate` + `buyableSet`: a feed row becomes a `Candidate` here and only here |
 | `domain/gates.ts` | what disqualifies a row and what ranks the rest: `runGates`, `gateTally`, `securityRisk`, `score` |
-| `domain/watchlist.ts` | the watchlist's limits and edits: `reviseWatchlist`, `pruneWatchlist`, `ripe`, `observe` — the cap, the minimum watch and the expiry live here, not in the prompt |
+| `domain/watchlist.ts` | the watchlist's limits and edits: `reviseWatchlist`, `pruneWatchlist`, `observe` — the cap and the expiry live here, not in the prompt |
 | `domain/positions.ts` | size it, plan its exit, decide when it leaves: `positionSize`, `entryStrategy`, `viableStrategy`, `evaluateExit`, `healthExit`, `isDust`. **The central split is stated in this file's header** |
 | `data/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
 | `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
@@ -229,7 +231,7 @@ in, not imported).
 Data flow: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` → every eligible
 row → `askAnalyst("sweep")` (`{entries, watch, unwatch, exits, notes}`) → `reviseWatchlist` +
 `buyableSet` over the sweep's rows → … every 5 minutes … `askAnalyst("watch")`
-(`{entries, unwatch, exits, notes}`) → `buyableSet` over the ripe watchlist rows → `broker.buy/sell` → `store` mutation → `store.emit` → SSE →
+(`{entries, unwatch, exits, notes}`) → `buyableSet` over the watchlist rows → `broker.buy/sell` → `store` mutation → `store.emit` → SSE →
 `public/app.js`. The monitor loop runs independently and never touches the LLM.
 
 **`gatherCandidates` is the whole search, and the brief is the near-whole evidence base.** The
@@ -292,7 +294,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   reintroduce a structural gate — or a hardcoded feed floor — without asking: the dashboard is
   where that policy lives now.
 - **A sweep costs one LLM call plus at most `LOOKUP_BUDGET` (6) GMGN reads; a watch tick costs
-  the same again plus one `tokenInfo` per watched token.** A tick with nothing ripe on the
+  the same again plus one `tokenInfo` per watched token.** A tick with an empty
   watchlist costs nothing — `runWatch` returns before the model is called. The budget is
   enforced in `budgetedTools`, not in the prompt: calls past it return a refusal string, so the
   model answers from the brief instead of erroring. `maxSteps` is `LOOKUP_BUDGET + 2`, and going
@@ -316,8 +318,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   route does not answer for, and `GMGN_PRIORITY_FEE` / `GMGN_TIP_FEE` override everything. GMGN
   rejects the swap outright when one is missing, so a protected buy silently becomes no buy.
 - **`buyableSet` is the last word on what can be bought.** It is handed the sweep's eligible rows
-  in the sweep stage and the watchlist's ripe rows in the watch stage — a watched token younger
-  than `WATCH_MIN_MINUTES` is in neither. It re-checks gates, cooldown,
+  in the sweep stage and the watchlist's rows in the watch stage. It re-checks gates, cooldown,
   blacklist and open positions in `cycle/entries.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto
   cooldown. An address the analyst names that is not in the set is logged and skipped, with the

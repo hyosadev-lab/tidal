@@ -313,7 +313,7 @@ function renderWatchlist(s) {
   const r = s.watchRules;
   const now = Date.now();
   $("c-watch").textContent = `${rows.length}/${r.max}`;
-  $("watch-rules").textContent = `checked every ${r.everyMinutes}m · buyable after ${r.minMinutes}m · dropped after ${r.ttlMinutes}m`;
+  $("watch-rules").textContent = `checked every ${r.everyMinutes}m · dropped after ${r.ttlMinutes}m`;
   $("e-watch").hidden = rows.length > 0;
   $("tbl-watch").querySelector("tbody").innerHTML = rows
     .map((w) => {
@@ -322,7 +322,6 @@ function renderWatchlist(s) {
       const chg = first > 0 ? (c.priceUsd / first - 1) * 100 : 0;
       // Supply is fixed, so the market cap at the add is the current one scaled back by price.
       const mcThen = first > 0 && c.priceUsd > 0 ? usd((c.marketCapUsd / c.priceUsd) * first, 0) : "—";
-      const ripe = now - w.addedAt >= r.minMinutes * 60000;
       const trail = w.prices.map((p) => `${clock(p.at)}  ${price(p.price)}`).join("\n");
       return `<tr>
         <td class="sym"><a class="linkish" href="${esc(tokenUrl(w.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
@@ -330,9 +329,7 @@ function renderWatchlist(s) {
         <td class="r muted">${mcThen}</td>
         <td class="r">${usd(c.marketCapUsd, 0)}</td>
         <td class="r ${tone(chg)}" title="${esc(trail)}">${pct(chg)}</td>
-        <td class="r muted">${dur(now - w.addedAt)}</td>
         <td class="r muted">${dur(w.addedAt + r.ttlMinutes * 60000 - now)}</td>
-        <td><span class="pill${ripe ? " pill-pass" : ""}" title="${ripe ? "watched long enough — the analyst may buy it at the next check" : `not buyable until it has been watched ${r.minMinutes}m`}">${ripe ? "buyable" : "watching"}</span></td>
       </tr>`;
     })
     .join("");
@@ -452,7 +449,7 @@ function renderTrades(s) {
         <td class="r">${price(t.price)}</td>
         <td class="r">${usd(t.usd)}</td>
         <td class="r ${t.side === "sell" ? tone(t.pnlUsd) : "flat"}" title="${esc(peakNote(t))}">${t.side === "sell" ? `${usd(t.pnlUsd)} · ${pct(t.pnlPct)}` : "—"}</td>
-        <td class="why">${esc(t.reason)}</td>
+        <td class="why"><div>${esc(t.reason)}</div></td>
       </tr>`,
     )
     .join("");

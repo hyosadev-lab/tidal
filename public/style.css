@@ -629,7 +629,11 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 .pill-pass  { border-color: var(--flood); color: var(--flood); }
 .pill-fail  { border-color: #4E211D; color: var(--ebb); }
 
-.why { white-space: normal; color: var(--haze); font-size: 11px; max-width: 34ch; }
+/* `.tbl td` is nowrap and more specific than a bare `.why`, hence the selector. The reason is
+   shown in full: the column is wide enough that a typical thesis takes two or three lines, and
+   the table scrolls sideways to reach it. The width sits on the div — a cell ignores its own. */
+.tbl td.why { white-space: normal; color: var(--haze); font-size: 11px; line-height: 1.45; }
+.tbl td.why div { width: 70ch; }
 
 .empty { margin: 12px 0 0; font-size: 12px; color: var(--haze); }
 .panel .fine { margin: 12px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--haze); max-width: 88ch; }
@@ -779,7 +783,6 @@ dialog.dialog::backdrop { background: rgba(3, 10, 12, .82); }
   .mark-name { font-size: 28px; }
   .station-run { width: 100%; justify-content: space-between; }
   .gauge-svg { height: 150px; }
-  .why { max-width: 20ch; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 import { db, insertEquity, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
 import { DEFAULT_CONFIG, liveReady, sanitizeConfig } from "../domain/config.ts";
-import { WATCH_MAX, WATCH_MIN_MINUTES, WATCH_MINUTES, WATCH_TTL_MINUTES } from "../domain/watchlist.ts";
+import { WATCH_MAX, WATCH_MINUTES, WATCH_TTL_MINUTES } from "../domain/watchlist.ts";
 import type { Candidate, EquityPoint, LogEntry, LogLevel, Position, RunState, Snapshot, Stats, Trade, TradeConfig, Watch } from "../domain/types.ts";
 
 const MAX_LOGS = 400;
@@ -364,7 +364,7 @@ export class Store {
       config: this.config,
       positions: this.s.positions,
       watchlist: this.s.watchlist,
-      watchRules: { max: WATCH_MAX, minMinutes: WATCH_MIN_MINUTES, ttlMinutes: WATCH_TTL_MINUTES, everyMinutes: WATCH_MINUTES },
+      watchRules: { max: WATCH_MAX, ttlMinutes: WATCH_TTL_MINUTES, everyMinutes: WATCH_MINUTES },
       trades: this.trades(120),
       logs: this.logs.slice(-160),
       equity: this.equitySeries(),

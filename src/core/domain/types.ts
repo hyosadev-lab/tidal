@@ -242,7 +242,7 @@ export type Snapshot = {
   positions: Position[];
   watchlist: Watch[];
   /** The limits in `domain/watchlist.ts`, so the dashboard does not keep its own copy. */
-  watchRules: { max: number; minMinutes: number; ttlMinutes: number; everyMinutes: number };
+  watchRules: { max: number; ttlMinutes: number; everyMinutes: number };
   trades: Trade[];
   logs: LogEntry[];
   equity: EquityPoint[];

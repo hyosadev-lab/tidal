@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WATCH_MAX, WATCH_MIN_MINUTES, WATCH_TTL_MINUTES, observe, pruneWatchlist, reviseWatchlist, ripe } from "../../../src/core/domain/watchlist.ts";
+import { WATCH_MAX, WATCH_TTL_MINUTES, observe, pruneWatchlist, reviseWatchlist } from "../../../src/core/domain/watchlist.ts";
 import { candidate } from "./fixtures.ts";
 
 const MIN = 60_000;
@@ -25,12 +25,9 @@ test("an unwatch in the same answer frees the slot it held", () => {
   assert.deepEqual(r.list.map((w) => w.c.address), ["a", "c", "d"]);
 });
 
-test("a token is buyable only once watched, and is dropped when it times out or cannot be bought", () => {
+test("a watched token is dropped when it times out or can no longer be bought", () => {
   const [w] = reviseWatchlist([], want("a"), [], rows, "sol", 0).list;
   assert.ok(w);
-  assert.equal(ripe(w, (WATCH_MIN_MINUTES - 1) * MIN), false);
-  assert.equal(ripe(w, WATCH_MIN_MINUTES * MIN), true);
-
   const free = () => "";
   assert.equal(pruneWatchlist([w], WATCH_TTL_MINUTES * MIN, "sol", free).list.length, 1);
   assert.equal(pruneWatchlist([w], WATCH_TTL_MINUTES * MIN + 1, "sol", free).list.length, 0);
