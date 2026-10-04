@@ -5,8 +5,8 @@
       "name": "dashboard",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
-      "port": 3111,
-      "url": "http://127.0.0.1:3111"
+      "port": 3712,
+      "url": "http://127.0.0.1:3712"
     }
   ]
 }

@@ -4,7 +4,7 @@ import { WATCH_MINUTES } from "./domain/watchlist.ts";
 import { store } from "./data/store.ts";
 import * as gmgn from "./market/gmgn.ts";
 import * as jupiter from "./market/jupiter.ts";
-import { arm, cancelInFlight, disarm, onResume } from "./cycle/control.ts";
+import { aborted, arm, cancelInFlight, disarm, generation, onResume } from "./cycle/control.ts";
 import { closePosition } from "./cycle/exits.ts";
 import { runMonitor } from "./cycle/monitor.ts";
 import { runScan, syncLiveBalance } from "./cycle/scan.ts";
@@ -14,7 +14,13 @@ import { runWatch } from "./cycle/watch.ts";
  * A sweep is followed straight away by a watch tick. They share one lock, so the tick the timer
  * fired while the sweep was running was dropped — this is that tick, run late instead of lost.
  */
-const scanThenWatch = (): Promise<void> => runScan().then(runWatch);
+const scanThenWatch = async (): Promise<void> => {
+  // A Stop that lands during the sweep ends the tick behind it too — `runWatch` would otherwise
+  // take a fresh generation and go on to buy for a run the operator had just ended.
+  const gen = generation();
+  await runScan();
+  if (!aborted(gen)) await runWatch();
+};
 
 /**
  * The lifecycle, and the whole surface `src/index.ts` drives. Everything below assembles the

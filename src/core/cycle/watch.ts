@@ -28,7 +28,10 @@ export async function runWatch(): Promise<void> {
 
   try {
     store.setWatchlist(pruneWatchlist(store.watchlist, Date.now(), cfg.chain, (a) => store.unavailable(a)));
-    if (!store.watchlist.length) return;
+    // Nothing watched long enough yet: there is nothing new to show the analyst and nothing it
+    // could buy. This is the tick right behind the sweep that filled an empty list — without the
+    // check the model re-judges the same snapshot seconds later and drops what it just added.
+    if (!store.watchlist.some((w) => ripe(w, Date.now()))) return;
 
     store.phase = "watching";
     store.push();
@@ -45,7 +48,10 @@ export async function runWatch(): Promise<void> {
     }
 
     const balanceOk = await syncLiveBalance();
-    const decision = await askAnalyst("watch", store.watchlist.map((w) => w.c), cfg.maxOpenPositions - store.positions.length);
+    // Only what has been watched long enough is shown, so a token added a moment ago can be
+    // neither bought nor dropped before there is anything to judge it on.
+    const seen = store.watchlist.filter((w) => ripe(w, Date.now())).map((w) => w.c);
+    const decision = await askAnalyst("watch", seen, cfg.maxOpenPositions - store.positions.length);
     if (!decision) return;
     if (aborted(gen)) {
       store.log("info", "Watch tick abandoned — stopped while the analyst was thinking.");
@@ -55,7 +61,8 @@ export async function runWatch(): Promise<void> {
 
     // Model-requested exits first — freeing a slot may enable an entry below.
     await applyExits(decision.exits);
-    store.setWatchlist(reviseWatchlist(store.watchlist, [], decision.unwatch, [], cfg.chain, Date.now()));
+    const shown = (u: { address: string }) => seen.some((c) => c.address.toLowerCase() === String(u?.address ?? "").toLowerCase());
+    store.setWatchlist(reviseWatchlist(store.watchlist, [], decision.unwatch.filter(shown), [], cfg.chain, Date.now()));
 
     const slots = cfg.maxOpenPositions - store.positions.length;
     if (slots <= 0) {
@@ -68,9 +75,7 @@ export async function runWatch(): Promise<void> {
     }
 
     store.phase = "entering";
-    const now = Date.now();
-    const buyable = store.watchlist.filter((w) => ripe(w, now)).map((w) => w.c);
-    await openEntries(decision.entries, buyable, cfg, slots, gen);
+    await openEntries(decision.entries, seen, cfg, slots, gen);
     // Bought is no longer watched.
     store.setWatchlist({ list: store.watchlist.filter((w) => !store.position(w.c.address)), notes: [] });
   } catch (e) {

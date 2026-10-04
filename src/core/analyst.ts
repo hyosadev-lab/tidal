@@ -2,7 +2,7 @@ import { store } from "./data/store.ts";
 import { breakevenPct } from "./domain/chains.ts";
 import { tradeSize } from "./domain/config.ts";
 import { CONVICTION_FLOOR, entryStrategy, pnlPct, positionSize } from "./domain/positions.ts";
-import { WATCH_MAX, WATCH_MIN_MINUTES, WATCH_MINUTES, WATCH_TTL_MINUTES, ripe } from "./domain/watchlist.ts";
+import { WATCH_MAX, WATCH_MIN_MINUTES, WATCH_MINUTES, WATCH_TTL_MINUTES } from "./domain/watchlist.ts";
 import type { Candidate, Decision, StrategyRule, TradeConfig, Watch } from "./domain/types.ts";
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
@@ -204,7 +204,7 @@ ${tail}`;
 
 THE MACHINE (facts, not advice)
 
-- The candidates in this brief ARE the watchlist. You may buy only from it, and only a row whose \`watch.buyable\` is true — the others have not been watched for ${WATCH_MIN_MINUTES} minutes yet and naming one in \`entries\` wastes a slot.
+- The candidates in this brief ARE the watchlist — every token on it that has been watched for at least ${WATCH_MIN_MINUTES} minutes. You may buy only from it.
 - Every row carries a \`watch\` block: \`note\` (what the sweep stage was waiting for), \`minutes_watched\`, \`price_when_added\`, \`change_since_added_pct\` and \`trail\` — the price at each look since, oldest first, with how many minutes ago it was taken. That trail is the reason this stage exists: judge the token on what it did while you watched, against the note, not on the snapshot alone.
 - \`price\`, \`mcap_usd\` and \`liquidity_usd\` are fresh as of this call. Every other figure on the row is from the last sweep that carried the token — use the tools for anything you need current.
 ${rows}
@@ -380,7 +380,7 @@ export async function askAnalyst(stage: Stage, candidates: Candidate[], slots: n
       age_minutes: Math.round(c.ageMinutes),
       launchpad: c.launchpad,
       seen_in: c.source,
-      ...(stage === "watch" && watched.has(c.address) ? { watch: { buyable: ripe(watched.get(c.address)!, now), ...trail(watched.get(c.address)!) } } : {}),
+      ...(stage === "watch" && watched.has(c.address) ? { watch: trail(watched.get(c.address)!) } : {}),
     })),
   };
 
