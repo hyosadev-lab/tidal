@@ -56,9 +56,9 @@ through `src/agent/llm.ts`.
 
 There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
 GMGN tool set plus a skill loader. All of it went with the
-analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` now holds three of them
-again, `gmgn_token_info`, `gmgn_token_kline` and `gmgn_token_traders` (`git log` it for the old,
-much larger set).
+analyst's tools — nothing in the engine loaded it. `src/agent/tools.ts` now holds five of them
+again, `gmgn_token_info`, `gmgn_token_kline`, `gmgn_token_traders`, `gmgn_token_holders` and
+`gmgn_market_signal` (`git log` it for the old, much larger set).
 
 ### Storage
 
@@ -235,11 +235,11 @@ row → `askAnalyst("sweep")` (`{entries, watch, unwatch, exits, notes}`) → `r
 `public/app.js`. The monitor loop runs independently and never touches the LLM.
 
 **`gatherCandidates` is the whole search, and the brief is the near-whole evidence base.** The
-analyst can deep-dive a row it already has (info + kline, 6 lookups per cycle), but it cannot
+analyst can deep-dive a row it already has (info + kline, 12 lookups per cycle), but it cannot
 search: an address outside the brief never went through `toCandidate` or the gates, so there is
 nothing to size and `buyableSet` refuses it. **Both lookups are now mandatory per entry** — the
 prompt requires `gmgn_token_info` *and* `gmgn_token_kline` on every address the analyst puts in
-`entries`, so the budget of 6 is 3 fully-researched entries per cycle. That pairing is deliberate:
+`entries`, so the budget of 12 is 6 fully-researched entries per cycle. That pairing is deliberate:
 `/v1/token/info` is much richer than the brief and carries most of what the feeds leave blank —
 bundler and sniper concentration (`stat.top_bundler_trader_percentage`, `top70_sniper_hold_rate`),
 `fresh_wallet_rate`, `bot_degen_rate`, dev status and deployer history (`dev.creator_token_status`,
@@ -265,11 +265,16 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   **The Jupiter path (live Solana) does not check it — the operator's decision.** There the
   barrier is `SOLANA_PRIVATE_KEY` being present, plus `broker` refusing when that key's address
   is not the wallet selected on the dashboard. Don't extend that exemption to any other route.
-- **The analyst's tools are three read routes and nothing else.** `askAnalyst` passes
+- **The analyst's tools are five read routes and nothing else.** `askAnalyst` passes
   `budgetedTools(LOOKUP_BUDGET)` from `src/agent/tools.ts` — `gmgn_token_info`,
-  `gmgn_token_kline` and `gmgn_token_traders` (the holder set wallet by wallet: cost basis,
-  whether they are still in, and the wallet that funded them — bucket weight 5, the most
-  expensive of the three), all `exist`-auth reads through `market/gmgn.ts`. The unattended loop still
+  `gmgn_token_kline`, `gmgn_token_traders` (the holder set wallet by wallet: cost basis,
+  whether they are still in, and the wallet that funded them — bucket weight 5),
+  `gmgn_token_holders` (the same row ranked by what is held now, so it adds the pool and
+  wallets that were sent supply without buying — also weight 5) and `gmgn_market_signal`
+  (GMGN's 50 latest alerts of one type on a chain, cut down to the populated fields; the only
+  tool that takes no address, and a cross-check only — `buyableSet` still refuses anything
+  outside the brief. Its bucket weight is unlisted in `ROUTE`, so it is charged 1, unverified),
+  all `exist`-auth reads through `market/gmgn.ts`. The unattended loop still
   cannot reach a shell, a spend route or the operator's wallet, because no such tool exists in
   that record. Keep it that way: add read-only routes one named tool at a time, never a shell,
   never a route that spends, and never the record wholesale from somewhere else.
@@ -293,7 +298,7 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   sends only the operator's Refine rows, so a blank Refine fetches the feeds unfiltered. Don't
   reintroduce a structural gate — or a hardcoded feed floor — without asking: the dashboard is
   where that policy lives now.
-- **A sweep costs one LLM call plus at most `LOOKUP_BUDGET` (6) GMGN reads; a watch tick costs
+- **A sweep costs one LLM call plus at most `LOOKUP_BUDGET` (12) GMGN reads; a watch tick costs
   the same again plus one `tokenInfo` per watched token.** A tick with an empty
   watchlist costs nothing — `runWatch` returns before the model is called. The budget is
   enforced in `budgetedTools`, not in the prompt: calls past it return a refusal string, so the
@@ -342,7 +347,8 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   route is no longer called: every alert type carries zero flow (`volume_*`, `swaps_*`, `buys_*`,
   `net_buy_*` are 0 on all of them, and `smart_degen_count` is 0 even on a smart-money buy), so a
   row only an alert surfaced had nothing to judge and a row it tagged kept the rank feed's numbers
-  anyway — a label, not a source. `market/gmgn.ts` still wraps `signals`; `git log` this file for
+  anyway — a label, not a source. `market/gmgn.ts` still wraps `signals`, and the analyst can
+  pull it as a tool (`gmgn_market_signal`) — the sweep still does not; `git log` this file for
   the measured per-type overlap and the `trigger_mc` carry-across if it ever comes back.
 - **Take-profit rungs sell a % of `originalQty`**, but a live percent sell is a % of the *current
   wallet balance* — `broker.sell` converts between the two. On the wire that percent becomes

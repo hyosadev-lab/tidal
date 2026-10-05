@@ -17,14 +17,14 @@ import * as gmgn from "./market/gmgn.ts";
  * of now and puts on the watchlist what needs to be seen doing something first. `watch` reads
  * only the watchlist, each token with its price trail and the note the sweep left, and buys,
  * keeps or drops. Either stage may spend up to `LOOKUP_BUDGET` read-only GMGN lookups (token
- * info, kline, traders). All read routes: nothing here can spend money, and the budget is what
+ * info, kline, traders, holders, market signal). All read routes: nothing here can spend money, and the budget is what
  * stops the analyst from eating the rate limit the sweep runs on.
  */
 
 export type Stage = "sweep" | "watch";
 
 /** Deep-dive lookups the analyst may spend per call, in either stage. Shares GMGN's bucket with the sweep. */
-const LOOKUP_BUDGET = 6;
+const LOOKUP_BUDGET = 12;
 
 // ── the brief ─────────────────────────────────────────────────────────
 //
@@ -164,13 +164,15 @@ You may request one when the thesis you wrote is dead on the numbers now in fron
 
   const tools = `TOOLS (${LOOKUP_BUDGET} lookups, this call only)
 
-\`gmgn_token_kline\` — OHLCV candles — and \`gmgn_token_info\` — the full profile: bundler and sniper concentration, fresh-wallet and bot rates, deployer history, launch liquidity against current, distance from the all-time high, and the buy vs sell volume split no feed in the brief carries. \`gmgn_token_traders\` — the wallets themselves, ranked: what each paid, whether they are still in, and where they were funded from, which is how a bundled or single-actor holder set stops looking like a crowd. All three work on any address in the brief or in \`open_positions\`.
+\`gmgn_token_kline\` — OHLCV candles — and \`gmgn_token_info\` — the full profile: bundler and sniper concentration, fresh-wallet and bot rates, deployer history, launch liquidity against current, distance from the all-time high, and the buy vs sell volume split no feed in the brief carries. \`gmgn_token_traders\` — the wallets themselves, ranked: what each paid, whether they are still in, and where they were funded from, which is how a bundled or single-actor holder set stops looking like a crowd. \`gmgn_token_holders\` — the same wallets ranked by what they hold now, which adds the pool and anyone who was sent supply without buying it; it overlaps \`gmgn_token_traders\`, so pull one of the two on a token. All four work on any address in the brief or in \`open_positions\`.
+
+\`gmgn_market_signal\` is the odd one: it takes no address and returns GMGN's most recent alerts for a chain (smart-money buy, price spike, new high). Most of that list is not in your brief and cannot be bought — it is a cross-check on a row you already have, not a place to find new ones.
 
 **Every address you put in \`entries\` must have had \`gmgn_token_kline\` pulled on it this call** — the exit plan below is yours to write, and you cannot size one without seeing how far this token actually travels between candles.
 
 How you spend the rest is your call, and spending it well is part of the job. ${narrow} \`gmgn_token_info\` is the one that answers what the brief structurally cannot: a row can be clean on every number you were given and 62% bundled underneath. Budget left unspent on a token you entered half-blind was not saved, and calls past the budget return a refusal instead of data — decide on what you have then.
 
-One call per token per route. Rows are free inside a request — \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does and \`gmgn_token_traders\` five times, so raise \`limit\` rather than calling again at a second resolution or for more wallets. Every request here shares one limiter with the sweep and with the buys that follow, and it makes callers wait rather than fail — a redundant lookup is paid in the next sweep's candidate list, not in an error you would see.`;
+One call per token per route. Rows are free inside a request — \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does and \`gmgn_token_traders\` and \`gmgn_token_holders\` five times, so raise \`limit\` rather than calling again at a second resolution or for more wallets. Every request here shares one limiter with the sweep and with the buys that follow, and it makes callers wait rather than fail — a redundant lookup is paid in the next sweep's candidate list, not in an error you would see.`;
 
   const entry = `{"address":"...","symbol":"...","conviction":0-100,"stopLossPct":${Math.min(10, cfg.stopLossPct)}-${cfg.stopLossPct},${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl","at":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}`;
 
