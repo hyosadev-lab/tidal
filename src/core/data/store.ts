@@ -1,9 +1,8 @@
-import { db, insertEquity, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
+import { db, insertEquity, insertLog, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
 import { DEFAULT_CONFIG, liveReady, sanitizeConfig } from "../domain/config.ts";
 import { WATCH_MAX, WATCH_MINUTES, WATCH_TTL_MINUTES } from "../domain/watchlist.ts";
 import type { Candidate, EquityPoint, LogEntry, LogLevel, Position, RunState, Snapshot, Stats, Trade, TradeConfig, Watch } from "../domain/types.ts";
 
-const MAX_LOGS = 400;
 /** Only what the tide strip draws — the table keeps the rest. */
 const MAX_EQUITY = 2000;
 
@@ -59,10 +58,8 @@ export class Store {
   lastRunAt = 0;
   nextRunAt = 0;
   lastCandidates: Candidate[] = [];
-  logs: LogEntry[] = [];
 
   private s: Persisted;
-  private logSeq = 1;
   private subs = new Set<(ev: string, data: unknown) => void>();
   private saveTimer: NodeJS.Timeout | null = null;
   private lastEquityAt = 0;
@@ -124,9 +121,14 @@ export class Store {
   }
 
   log(level: LogLevel, msg: string, detail?: string): LogEntry {
-    const entry: LogEntry = { id: this.logSeq++, at: Date.now(), level, msg, ...(detail ? { detail } : {}) };
-    this.logs.push(entry);
-    if (this.logs.length > MAX_LOGS) this.logs.splice(0, this.logs.length - MAX_LOGS);
+    const at = Date.now();
+    let id = at;
+    try {
+      id = insertLog(at, level, msg, detail);
+    } catch (e) {
+      console.error("log write failed:", e); // a full disk must not take down the loop
+    }
+    const entry: LogEntry = { id, at, level, msg, ...(detail ? { detail } : {}) };
     const tag = level === "error" ? "!" : level === "warn" ? "?" : level === "trade" ? "$" : "·";
     console.log(`${tag} ${msg}`);
     this.emit("log", entry);
@@ -143,6 +145,12 @@ export class Store {
   get positions(): Position[] {
     return this.s.positions;
   }
+  /** Oldest first, as the dashboard expects. Unbounded on disk — bounded at the query. */
+  logs(limit = 160): LogEntry[] {
+    const rows = db.prepare("select id, at, level, msg, detail from logs order by id desc limit ?").all(limit) as (LogEntry & { detail: string | null })[];
+    return rows.reverse().map(({ detail, ...r }) => ({ ...r, ...(detail ? { detail } : {}) }));
+  }
+
   /** Newest first, like the array this replaced. Unbounded on disk — bounded at the query. */
   trades(limit = 120): Trade[] {
     return rowsJson<Trade>("select json from trades order by at desc, rowid desc limit ?", limit);
@@ -328,10 +336,9 @@ export class Store {
 
   /** Soundings and outcomes survive on purpose — they are calibration data, not the ledger. */
   reset(): void {
-    db.exec("delete from trades; delete from equity;");
+    db.exec("delete from trades; delete from equity; delete from logs;");
     this.lastEquityAt = 0;
     this.s = emptyState(this.config);
-    this.logs = [];
     this.lastCandidates = [];
     this.runState = "stopped";
     this.haltReason = "";
@@ -366,7 +373,7 @@ export class Store {
       watchlist: this.s.watchlist,
       watchRules: { max: WATCH_MAX, ttlMinutes: WATCH_TTL_MINUTES, everyMinutes: WATCH_MINUTES },
       trades: this.trades(120),
-      logs: this.logs.slice(-160),
+      logs: this.logs(),
       equity: this.equitySeries(),
       stats: this.stats(),
       cycle: {

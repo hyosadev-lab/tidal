@@ -65,7 +65,7 @@ much larger set).
 Everything persisted lives in one SQLite file, `data/tta.db`, opened by `src/core/data/db.ts`
 with `node:sqlite` — stdlib, so the zero-dependency rule holds. The split is by shape:
 bounded state that the engine mutates in place (config, cash, open positions, cooldowns,
-blacklist) is a JSON blob in `kv`; unbounded append-only series (`trades`, `equity`,
+blacklist) is a JSON blob in `kv`; unbounded append-only series (`trades`, `equity`, `logs`,
 `soundings`, `outcomes`) are rows. WAL is on, so `calibrate.ts` reads while the engine trades.
 The old `state.json` / `config.json` / `*.jsonl` are imported once on first open and renamed
 `*.migrated`; that import is skipped when `TTA_DB` is set, so tests never touch `data/`.
@@ -212,7 +212,7 @@ in, not imported).
 | `domain/watchlist.ts` | the watchlist's limits and edits: `reviseWatchlist`, `pruneWatchlist`, `observe` — the cap and the expiry live here, not in the prompt |
 | `domain/positions.ts` | size it, plan its exit, decide when it leaves: `positionSize`, `entryStrategy`, `viableStrategy`, `evaluateExit`, `healthExit`, `isDust`. **The central split is stated in this file's header** |
 | `data/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
-| `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
+| `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity + log lines as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
 | `data/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `market/gmgn.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
 | `market/jupiter.ts` | the Solana execution route: Jupiter Swap V2 order/sign/execute, Trigger V2 (JWT login, `placeExit`, `cancelOrder`, `orders`), base58 and ed25519 signing on `node:crypto`, three Solana RPC reads. The cast boundary for Jupiter, as `gmgn.ts` is for GMGN |

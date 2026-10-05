@@ -6,7 +6,7 @@
  *   - bounded, mutated-in-place state (config, cash, open positions, cooldowns) is a JSON
  *     blob in `kv`. The engine mutates those objects directly all over `engine.ts`;
  *     rewriting a few kB per debounced save is cheaper than mapping them to columns.
- *   - unbounded append-only series (trades, equity, soundings, outcomes) are rows. They are
+ *   - unbounded append-only series (trades, equity, logs, soundings, outcomes) are rows. They are
  *     no longer capped by what fits in one file rewrite, and `calibrate.ts` can read them
  *     from a second process while the engine trades — WAL, one writer, many readers.
  *
@@ -40,6 +40,8 @@ db.exec(`
     key text primary key, ts integer not null, cycle integer not null, chain text not null, json text not null);
   create index if not exists soundings_ts on soundings(ts);
   create table if not exists outcomes (key text primary key, json text not null);
+  create table if not exists logs (
+    id integer primary key autoincrement, at integer not null, level text not null, msg text not null, detail text);
 `);
 
 export function kvGet<T>(k: string): T | undefined {
@@ -136,6 +138,12 @@ export function insertSounding(key: string, s: { ts: number; cycle: number; chai
 
 export function insertOutcome(key: string, o: unknown): void {
   db.prepare("insert or replace into outcomes (key, json) values (?, ?)").run(key, JSON.stringify(o));
+}
+
+/** Returns the row id, which is the entry's id — so ids keep counting across restarts. */
+export function insertLog(at: number, level: string, msg: string, detail?: string): number {
+  const r = db.prepare("insert into logs (at, level, msg, detail) values (?, ?, ?, ?)").run(at, level, msg, detail ?? null);
+  return Number(r.lastInsertRowid);
 }
 
 /** `select json from …` rows back into objects. */

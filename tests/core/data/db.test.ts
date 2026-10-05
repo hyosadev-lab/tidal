@@ -60,3 +60,16 @@ test("reset clears the ledger but not the config", () => {
   assert.equal(s.equitySeries().length, 0);
   assert.equal(s.config.maxOpenPositions, 7);
 });
+
+test("log lines survive a reopen, oldest first, ids still counting", () => {
+  const a = new Store();
+  const first = a.log("info", "one");
+  a.log("warn", "two", "why");
+
+  const b = new Store();
+  const tail = b.logs().slice(-2);
+  assert.deepEqual(tail.map((l) => l.msg), ["one", "two"]);
+  assert.equal(tail[1]!.detail, "why");
+  assert.equal("detail" in tail[0]!, false);
+  assert.ok(b.log("info", "three").id > first.id + 1);
+});
