@@ -42,3 +42,6 @@ gmgn-skills/
 
 # knowledge graph output (/graphify)
 graphify-out/
+
+# analyst skills — per-host, dropped in by the operator (see CLAUDE.md)
+/skills/
