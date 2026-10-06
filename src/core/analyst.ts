@@ -111,10 +111,12 @@ ${cost}`;
         ...cfg.takeProfit.map((r, i) => `  rung ${i + 1}: sell ${r.sell}% of the original size at +${r.at}%`),
       ].join("\n");
 
-  return `Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement):
+  // The operator's rows run as written — `pricedPlan` does not lift them — so the floors in
+  // `cost` would be describing a clamp that is not applied here.
+  return `Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement — the operator's rows, run exactly as written):
 ${rows}
 ${time}
-${cost}`;
+  break-even: +${hurdle.toFixed(1)}% on a position of this size — a rule that exits under it books a loss`;
 }
 
 function systemPrompt(cfg: TradeConfig, hurdle: number, stage: Stage): string {

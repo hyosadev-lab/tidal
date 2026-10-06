@@ -4,7 +4,7 @@ import { breakevenPct, minLegUsd, netOfFees } from "../../../src/core/domain/cha
 import { DEFAULT_CONFIG, slippage } from "../../../src/core/domain/config.ts";
 import { position } from "../domain/fixtures.ts";
 import { evaluateExit, isDust, viableStrategy } from "../../../src/core/domain/positions.ts";
-import { conditionOrders, recordExternalSell, settle, triggerSlices } from "../../../src/core/market/broker.ts";
+import { conditionOrders, pricedPlan, recordExternalSell, settle, triggerSlices } from "../../../src/core/market/broker.ts";
 import type { StrategyRule } from "../../../src/core/domain/types.ts";
 
 // Order translation and the sell paths. `settle` and `recordExternalSell` are pure enough
@@ -212,4 +212,15 @@ test("an exit plan becomes slices that cover the whole position, each carrying t
   assert.equal(legacy.length, DEFAULT_CONFIG.takeProfit.length + 1);
   assert.equal(legacy.reduce((a, s) => a + s.pct, 0), 100);
   assert.ok(legacy.every((s) => s.slAt === 25));
+});
+
+// The server's SK buy: rows of +20% and +10% went in, one order at +25% came out.
+test("a fixed strategy runs as written; only the analyst's plan is repriced", () => {
+  const rows: StrategyRule[] = [{ kind: "tp", at: 20, sell: 50 }, { kind: "tp", at: 10, sell: 50 }, { kind: "sl", at: -25, sell: 100 }];
+  const minLeg = minLegUsd("sol", 120);
+  assert.deepEqual(pricedPlan({ ...DEFAULT_CONFIG, fixedStrategy: true }, rows, 14.7, minLeg, 14), rows);
+  assert.deepEqual(pricedPlan({ ...DEFAULT_CONFIG, fixedStrategy: false }, rows, 14.7, minLeg, 14), [
+    { kind: "tp", at: 25, sell: 100 },
+    { kind: "sl", at: -25, sell: 100 },
+  ]);
 });

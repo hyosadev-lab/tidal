@@ -205,6 +205,15 @@ export async function withdrawExits(store: typeof Store, p: Position): Promise<b
   }
 }
 
+/**
+ * The plan a position opens with. The analyst's proposal is repriced by `viableStrategy` — targets
+ * lifted over break-even and the stop distance, small rungs folded. The operator's fixed rows are
+ * not: they run as written, the operator's decision, including a target that sells at a loss.
+ */
+export function pricedPlan(cfg: TradeConfig, strategy: StrategyRule[], hurdle: number, minLeg: number, usd: number): StrategyRule[] {
+  return cfg.fixedStrategy ? strategy : viableStrategy(strategy, hurdle, minLeg, usd, cfg.stopLossPct);
+}
+
 export type BuyResult = { position: Position; trade: Trade } | { error: string };
 
 export async function buy(
@@ -233,12 +242,11 @@ export async function buy(
   // at reset+1s and was refused too — every live buy this route was asked for failed that way.
   // Fees and impact are the model's (`breakevenPct`, `paperSlip`) in both modes.
 
-  // What this position has to gain before it is worth anything, and the plan the fees and the
-  // token's own volatility allow of the one it was given: targets under the hurdle or inside the
-  // stop distance lifted to it, rungs too small to pay for their own transaction folded together.
-  // Priced before the branch, so live hands GMGN exactly the plan paper would have run.
+  // What this position has to gain before it is worth anything, and the plan it will run on —
+  // see `pricedPlan`. Priced before the branch, so live hands GMGN exactly the plan paper would
+  // have run.
   const hurdle = breakevenPct(cfg.chain, usdAmount, nativeUsd);
-  const plan = viableStrategy(strategy, hurdle, minLegUsd(cfg.chain, nativeUsd), usdAmount, cfg.stopLossPct);
+  const plan = pricedPlan(cfg, strategy, hurdle, minLegUsd(cfg.chain, nativeUsd), usdAmount);
   // Logged whenever the plan changed shape *or* a target moved: the floor rewrites rungs silently
   // otherwise, and the whole point of it is being able to see that it did.
   if (plan.length !== strategy.length || plan.some((r, i) => r.at !== strategy[i]?.at))
@@ -248,6 +256,11 @@ export async function buy(
         `(break-even +${hurdle.toFixed(1)}%, stop distance ${cfg.stopLossPct}%) on $${usdAmount.toFixed(0)} — ` +
         `${strategy.map((r) => r.kind + (r.at ?? "")).join(" ")} → ${plan.map((r) => r.kind + (r.at ?? "")).join(" ")}.`,
     );
+  // The operator's rows are not repriced, so the one thing the floor would have caught is said
+  // out loud instead.
+  const under = plan.filter((r) => r.kind === "tp" && (r.at ?? 0) < hurdle).map((r) => `+${r.at}%`);
+  if (cfg.fixedStrategy && under.length)
+    store.log("warn", `${c.symbol}: fixed exit plan kept as written — ${under.join(", ")} is under break-even (+${hurdle.toFixed(1)}% on $${usdAmount.toFixed(0)}) and sells at a loss.`);
 
   // Filled in by whichever branch runs.
   let fillPrice = c.priceUsd;
