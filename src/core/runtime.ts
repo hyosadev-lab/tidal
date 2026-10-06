@@ -6,7 +6,7 @@ import * as gmgn from "./market/gmgn.ts";
 import * as jupiter from "./market/jupiter.ts";
 import { arm, cancelInFlight, disarm, onResume } from "./cycle/control.ts";
 import { closePosition } from "./cycle/exits.ts";
-import { runMonitor } from "./cycle/monitor.ts";
+import { runMonitor, stopStreams } from "./cycle/monitor.ts";
 import { runScan, syncLiveBalance } from "./cycle/scan.ts";
 import { runWatch } from "./cycle/watch.ts";
 
@@ -75,6 +75,7 @@ export async function start(): Promise<{ ok: boolean; error?: string }> {
 export function stop(keepState = false): void {
   cancelInFlight();
   disarm();
+  stopStreams();
   if (!keepState && store.runState === "running") {
     store.runState = "stopped";
     store.log("info", "Stopped. Open positions are left untouched — close them from the dashboard if you want out.");

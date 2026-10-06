@@ -137,6 +137,21 @@ under $10 — confirmed live: `Order must be at least 10 USD` — and that folde
 into one leg. The cost is stated plainly: **a Solana position has no stop while this process is
 down.** Don't bring the parking back without asking.
 
+**Between ticks, a streamed price.** With `HELIUS_API_KEY` set, a Solana position on a pool
+`market/helius.ts` can read is priced on every swap, and `monitor.onStreamPrice` runs the same
+plan against it at once instead of up to `monitorSeconds` later. Three things to keep in mind:
+
+- **One pool shape only: `pump_amm` quoted in SOL.** Anything else (`poolRef` returns null — a
+  PUMP-quoted pool, a CLMM, a bonding curve) stays on the tick. Each shape is its own arithmetic.
+- **The price is not the vault ratio.** A pump_amm pool adds a virtual quote reserve (~17.6 SOL,
+  a u64 at byte 245 of the pool account) to its SOL side; the bare ratio ran 10-74% under GMGN's
+  price on live pools. That offset is reverse-engineered, so a stream is only acted on after one
+  streamed price has landed within 20% of a GMGN read (`syncStream`) — otherwise it is switched
+  off for that position with a warning.
+- **The tick is still the loop.** The wallet mirror, `healthExit` and the time stop run only
+  there, and a stream that goes quiet for 15s hands the price back to GMGN. Stop closes every
+  stream (`stopStreams`): a stream that outlived Stop would sell.
+
 ### Two stages: buy now, or watch first
 
 The analyst is called in two stages (`Stage` in `analyst.ts`). The watchlist between them is the
@@ -204,6 +219,7 @@ in, not imported).
 | `data/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `market/gmgn.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
 | `market/jupiter.ts` | the Solana execution route: Jupiter Swap V2 order/sign/execute, base58 and ed25519 signing on `node:crypto`, three Solana RPC reads. The cast boundary for Jupiter, as `gmgn.ts` is for GMGN |
+| `market/helius.ts` | real-time price for a Solana position: Helius websocket `accountSubscribe` on a pump_amm pool's two vaults and its pool account, price = (quote vault + virtual quote) / base vault. The cast boundary for Helius. Optional — without `HELIUS_API_KEY` nothing here runs |
 | `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps. Live branches by chain: Solana → `jupiter.swap` and the monitor runs the exits, the rest → `gmgn.swap` with condition orders |
 | `cycle/control.ts` | the run's mutable state: the generation a Stop bumps (`generation`/`aborted`), the timer handles (`arm`/`disarm`), and `halt` |
 | `cycle/sweep.ts` | the whole search: `mergeFeeds`, `gatherCandidates` — three feeds in, one gated and scored list out |
@@ -211,7 +227,7 @@ in, not imported).
 | `cycle/watch.ts` | the watch tick: re-price the watchlist, ask the analyst, buy / keep / drop |
 | `cycle/entries.ts` | `openEntries` + `openPosition`: the only place that opens a position |
 | `cycle/exits.ts` | every path out: `applyExits`, `closePosition`, `bookSell`, `withdrawExitPlan`, the daily loss budget. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
-| `cycle/monitor.ts` | the 30s loop: mirror the wallet (`reconcile`), then run the exit plan. Never calls the model |
+| `cycle/monitor.ts` | the 30s loop: mirror the wallet (`reconcile`), then run the exit plan — and the same plan again on every streamed price in between. Never calls the model |
 | `analyst.ts` | the model half: the prompts for both stages, the brief, `askAnalyst(stage, …)`, `extractJson`. One LLM call per stage, each with the read-only tools on a per-call budget |
 | `runtime.ts` | lifecycle: `start`, `stop`, `reschedule`, `scanNow`, `manualClose`. The whole surface `src/index.ts` drives |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |

@@ -3,6 +3,7 @@ import { num, short } from "../domain/num.ts";
 import { store } from "../data/store.ts";
 import * as broker from "../market/broker.ts";
 import * as gmgn from "../market/gmgn.ts";
+import * as helius from "../market/helius.ts";
 import * as jupiter from "../market/jupiter.ts";
 import { aborted, generation } from "./control.ts";
 import { bookSell, closePosition } from "./exits.ts";
@@ -18,6 +19,10 @@ import type { Position, TradeConfig } from "../domain/types.ts";
  * the two things GMGN was never told — the time stop and `healthExit` — are all this loop acts
  * on itself. A Jupiter-bought one (Solana) has nothing on anyone else's side: Jupiter is only the
  * swap, so its whole plan runs here, exactly as in paper — and stops running if this process does.
+ *
+ * Between ticks a Solana position on a pool `helius` can read is also priced on every swap
+ * (`onStreamPrice`), and the same plan is run against that price the moment it arrives. The tick
+ * is still the whole loop for everything else: the wallet mirror, the health exit, the time stop.
  */
 
 async function readHoldings(cfg: TradeConfig): Promise<Map<string, number> | null> {
@@ -75,12 +80,96 @@ async function walletQty(p: Position, cfg: TradeConfig): Promise<number | undefi
 /** Only one tick runs at a time — a slow book must not overlap the next interval. */
 let monitoring = false;
 
+// ── streamed prices ───────────────────────────────────────────────────
+
+/**
+ * One per position that was offered to the stream. `new` until a streamed price has agreed with
+ * a GMGN read once — the pool arithmetic is reverse-engineered, and a wrong price here is a real
+ * sell — then `on`. `off` is a stream that disagreed: left alone for the life of the position.
+ */
+type Stream = { price: number; at: number; state: "new" | "on" | "off" };
+const streams = new Map<string, Stream>(); // by token address
+/** A streamed price this recent outranks GMGN's, which is the older of the two. */
+const STREAM_FRESH_MS = 15_000;
+/** How far a first streamed price may sit from GMGN's and still be the same price. */
+const STREAM_AGREES = 0.2;
+let solUsd = 0;
+let pushedAt = 0;
+
+const streaming = (p: Position): boolean => {
+  const s = streams.get(p.address);
+  return s?.state === "on" && Date.now() - s.at < STREAM_FRESH_MS;
+};
+
+/** Every stream closed — Stop means nothing here sells, and a stream would. */
+export function stopStreams(): void {
+  for (const a of streams.keys()) helius.unwatch(a);
+  streams.clear();
+}
+
+/** Starts a stream for a position that has none yet, and settles whether a new one can be trusted. */
+function syncStream(p: Position, info: Record<string, any> | null, gmgnPrice: number): void {
+  // A tick still in flight when Stop landed must not reopen what `stopStreams` just closed.
+  if (p.chain !== "sol" || !helius.enabled() || store.runState === "stopped") return;
+  const s = streams.get(p.address);
+  if (!s) {
+    const ref = helius.poolRef(info);
+    if (!ref) return;
+    streams.set(p.address, { price: 0, at: 0, state: "new" });
+    helius.watch(p.address, ref, (sol) => void onStreamPrice(p.address, sol));
+    return;
+  }
+  if (s.state !== "new" || !(gmgnPrice > 0) || Date.now() - s.at > STREAM_FRESH_MS) return;
+  if (Math.abs(s.price / gmgnPrice - 1) < STREAM_AGREES) {
+    s.state = "on";
+    store.log("info", `${p.symbol}: live price stream on — exits now run on every swap, not every tick.`);
+  } else {
+    s.state = "off";
+    helius.unwatch(p.address);
+    store.log("warn", `${p.symbol}: streamed price $${s.price.toPrecision(4)} disagrees with GMGN's $${gmgnPrice.toPrecision(4)} — stream off, exits stay on the ${store.config.monitorSeconds}s tick.`);
+  }
+}
+
+/** One swap in a watched pool. Prices the position, and runs its plan unless a tick is already at it. */
+async function onStreamPrice(address: string, sol: number): Promise<void> {
+  const p = store.position(address);
+  const s = streams.get(address);
+  if (!p || !s || s.state === "off" || !(solUsd > 0)) return;
+  s.price = sol * solUsd;
+  s.at = Date.now();
+  if (s.state !== "on") return;
+  p.lastPrice = s.price;
+  p.peakPrice = Math.max(p.peakPrice, s.price);
+  if (Date.now() - pushedAt > 2000) {
+    pushedAt = Date.now();
+    store.push();
+  }
+  // A tick in flight reads this same `lastPrice` when it reaches the plan, so nothing is lost.
+  if (monitoring) return;
+  monitoring = true;
+  try {
+    await runPlan(p, store.config, true);
+  } catch (e) {
+    store.log("error", `Stream exit for ${p.symbol} failed: ${short(e)}`);
+  } finally {
+    monitoring = false;
+  }
+}
+
 export async function runMonitor(): Promise<void> {
+  // A closed position's stream goes with it — before the early return, or the last one never would.
+  for (const a of streams.keys())
+    if (!store.position(a)) {
+      streams.delete(a);
+      helius.unwatch(a);
+    }
   if (monitoring || !store.positions.length) return;
   monitoring = true;
   const gen = generation();
   try {
     const cfg = store.config;
+    // What turns a streamed SOL price into dollars. Same 30s cache every buy and paper leg reads.
+    if (cfg.chain === "sol" && helius.enabled()) solUsd = await gmgn.nativeUsdPrice(cfg.chain).catch(() => solUsd);
     // One read for the whole wallet, before anything else: in live mode GMGN's copy of the
     // book is the real one, and every position below is checked against it.
     // Positions that know their decimals are read off the chain instead, one read each.
@@ -120,7 +209,8 @@ async function checkPosition(
     store.log("warn", `Price refresh failed for ${p.symbol}: ${short(e)}`);
   }
   const price = num(info?.price?.price);
-  if (price > 0) {
+  syncStream(p, info, price);
+  if (price > 0 && !streaming(p)) {
     p.lastPrice = price;
     p.peakPrice = Math.max(p.peakPrice, price);
   }
@@ -135,15 +225,20 @@ async function checkPosition(
     return;
   }
 
+  await runPlan(p, cfg, !!info || streaming(p));
+}
+
+/** The exit plan against `lastPrice`. `priced` is false when that price is stale, and then only the clock is believed. */
+async function runPlan(p: Position, cfg: TradeConfig, priced: boolean): Promise<void> {
   const exit = evaluateExit(p, cfg);
   if (!exit) return;
   // A position bought through GMGN carries its whole plan on GMGN's side (`strategyOrderId`),
   // so acting on a price rule here would be a second sell for an exit that is already placed.
   // What is left is the two things GMGN was never told: the time stop, and the health exit
-  // above it. A Jupiter position has no such order, so its plan runs here like a paper one.
-  // Same on a failed read, whatever the mode: `lastPrice` is stale, so only the clock is
-  // still telling the truth.
-  if ((p.strategyOrderId || !info) && exit.kind !== "time") return;
+  // the tick runs before this. A Jupiter position has no such order, so its plan runs here like
+  // a paper one. Same on a stale price, whatever the mode: only the clock is still telling
+  // the truth.
+  if ((p.strategyOrderId || !priced) && exit.kind !== "time") return;
   const rung = /^(?:tp|rule)(\d+)$/.exec(exit.kind);
   if (rung?.[1]) p.filledRungs.push(Number(rung[1]));
   await closePosition(p, exit.percent, exit.reason);
