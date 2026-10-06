@@ -580,6 +580,10 @@ input[type="range"] { width: 100%; accent-color: var(--flood); }
 /* ── tables ─────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
 
+/* The trade log is the one table that only grows: scroll it inside the panel. */
+.table-wrap:has(#tbl-trades) { max-height: 420px; overflow-y: auto; }
+#tbl-trades th { position: sticky; top: 0; z-index: 1; background: var(--hull); box-shadow: inset 0 -1px var(--rule); }
+
 .tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
 
 .tbl th {
