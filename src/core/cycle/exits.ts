@@ -24,12 +24,6 @@ export async function applyExits(exits: Decision["exits"]): Promise<void> {
 export async function closePosition(p: Position, percentOfOriginal: number, reason: string): Promise<void> {
   const cfg = store.config;
   try {
-    // Parked under Jupiter orders, the tokens are not in the wallet to be sold. Whatever this
-    // sale leaves behind comes back with them and is the monitor's to run from here on.
-    if (cfg.mode === "live" && p.jupiterExits && !(await broker.withdrawExits(store, p))) {
-      store.log("error", `Sell ${p.symbol} held back: its Jupiter orders are still in place. The monitor retries its own exits next tick; repeat a manual close.`);
-      return;
-    }
     const res = await broker.sell(store, cfg, p, percentOfOriginal, reason, p.entryLiquidityUsd);
     if ("error" in res) {
       store.log("error", `Sell ${p.symbol} failed: ${res.error}`);

@@ -186,14 +186,6 @@ export type Position = {
   strategyOrderId?: string;
   /** Token decimals, kept on Jupiter-bought positions: on-chain balances and fills are in smallest units. */
   decimals?: number;
-  /**
-   * Set while take-profit / stop-loss orders for this position sit in Jupiter's vault. The tokens
-   * are then not in the wallet, the monitor leaves the price rules to Jupiter, and anything this
-   * process sells itself has to cancel those orders first.
-   */
-  jupiterExits?: boolean;
-  /** Jupiter order ids whose fills are already in the ledger. */
-  bookedFills?: string[];
 };
 
 export type Trade = {

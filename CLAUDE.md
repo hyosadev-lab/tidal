@@ -129,25 +129,13 @@ two things GMGN was never told, the time stop and `healthExit`, and books everyt
 the balance. That is why an exit plan must survive translation — a rule `conditionOrders` drops
 is a rule that does not exist in live.
 
-**On Solana the plan goes to Jupiter instead**, as Trigger V2 orders placed right after the buy
-(`broker.parkExits`). `broker.triggerSlices` is the translation: a vault deposit belongs to one
-order, so the plan becomes slices that add up to the whole position — one OCO pair per `tp` rung
-(take-profit + the stop), a lone stop over the rest. **One stop price serves every slice** — the
-plan's first `sl` — so a staged stop parks as its first stage alone. Three things to keep in
-mind:
-
-- **$10 minimum per order** (`TRIGGER_MIN_USD` is 12, for margin). Rungs too small are folded
-  together; a position under it parks nothing and the monitor runs its whole plan, exactly as
-  in paper — with no protection if the process dies.
-- **Parked tokens are not in the wallet.** They sit in a custodial vault, so the wallet balance
-  says nothing about the position; the monitor mirrors `jupiter.orders()` instead
-  (`reconcileOrders`), booking each fill at what it actually fetched. Rows are matched by mint and
-  age, not order id — how an OCO's two legs appear in the history is not verified against a live
-  fill yet.
-- **Anything this process sells itself must withdraw first.** `closePosition` calls
-  `broker.withdrawExits` (cancel + signed withdrawal per order) before the sell and refuses to
-  sell if that fails. What a partial sale leaves behind stays in the wallet, un-parked, and is the
-  monitor's to run from then on.
+**On Solana nobody else runs the plan.** Jupiter is the swap and nothing more, so a live Solana
+position is run by the monitor exactly as a paper one: `evaluateExit` every tick, each rung its
+own `jupiter.swap`. It used to be parked as Jupiter Trigger V2 orders (`git log` for
+`parkExits` / `triggerSlices`); the operator took that out, because Jupiter refuses an order
+under $10 — confirmed live: `Order must be at least 10 USD` — and that folded a small ladder
+into one leg. The cost is stated plainly: **a Solana position has no stop while this process is
+down.** Don't bring the parking back without asking.
 
 ### Two stages: buy now, or watch first
 
@@ -215,8 +203,8 @@ in, not imported).
 | `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity + log lines as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
 | `data/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
 | `market/gmgn.ts` | what the engine asks GMGN, in the engine's vocabulary: feeds, normalisation, prices, swap wrappers. The **cast boundary** — `OpenApiClient` returns `unknown`, nothing outside this file speaks HTTP or touches `gmgnClient()` |
-| `market/jupiter.ts` | the Solana execution route: Jupiter Swap V2 order/sign/execute, Trigger V2 (JWT login, `placeExit`, `cancelOrder`, `orders`), base58 and ed25519 signing on `node:crypto`, three Solana RPC reads. The cast boundary for Jupiter, as `gmgn.ts` is for GMGN |
-| `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps. Live branches by chain: Solana → `jupiter.swap` then `parkExits`, the rest → `gmgn.swap` with condition orders |
+| `market/jupiter.ts` | the Solana execution route: Jupiter Swap V2 order/sign/execute, base58 and ed25519 signing on `node:crypto`, three Solana RPC reads. The cast boundary for Jupiter, as `gmgn.ts` is for GMGN |
+| `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps. Live branches by chain: Solana → `jupiter.swap` and the monitor runs the exits, the rest → `gmgn.swap` with condition orders |
 | `cycle/control.ts` | the run's mutable state: the generation a Stop bumps (`generation`/`aborted`), the timer handles (`arm`/`disarm`), and `halt` |
 | `cycle/sweep.ts` | the whole search: `mergeFeeds`, `gatherCandidates` — three feeds in, one gated and scored list out |
 | `cycle/scan.ts` | **the sweep stage, top to bottom** — read `runScan` and that is the flow: buy now, or put on the watchlist. Also `syncLiveBalance` |
