@@ -227,7 +227,7 @@ in, not imported).
 | `cycle/watch.ts` | the watch tick: re-price the watchlist, ask the analyst, buy / keep / drop |
 | `cycle/entries.ts` | `openEntries` + `openPosition`: the only place that opens a position |
 | `cycle/exits.ts` | every path out: `applyExits`, `closePosition`, `bookSell`, `withdrawExitPlan`, the daily loss budget. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
-| `cycle/monitor.ts` | the 30s loop: mirror the wallet (`reconcile`), then run the exit plan — and the same plan again on every streamed price in between. Never calls the model |
+| `cycle/monitor.ts` | the 5s loop (`monitorSeconds`, a constant — not a dashboard input, and each tick costs one `tokenInfo`, weight 1, per open position): mirror the wallet (`reconcile`), then run the exit plan — and the same plan again on every streamed price in between. Never calls the model |
 | `analyst.ts` | the model half: the prompts for both stages, the brief, `askAnalyst(stage, …)`, `extractJson`. One LLM call per stage, each with the read-only tools on a per-call budget |
 | `runtime.ts` | lifecycle: `start`, `stop`, `reschedule`, `scanNow`, `manualClose`. The whole surface `src/index.ts` drives |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |

@@ -1,6 +1,6 @@
 /**
  * Real-time prices straight off the chain, over Helius' standard Solana websocket — the cast
- * boundary for it, as `gmgn.ts` is for GMGN. The monitor's 30s GMGN read stays underneath as the
+ * boundary for it, as `gmgn.ts` is for GMGN. The monitor's GMGN read every tick stays underneath as the
  * fallback: this file only ever makes a price arrive sooner, and says nothing when it cannot.
  *
  * The websocket carries account changes, not prices, so a price is derived from the pool:
@@ -107,7 +107,7 @@ function onMessage(raw: string): void {
   if (price > 0) f.onPrice(price);
 }
 
-// ponytail: a socket that dies without a close event is not noticed here — the monitor's 30s
+// ponytail: a socket that dies without a close event is not noticed here — the monitor's per-tick
 // GMGN read takes over once the stream goes quiet. Add a heartbeat if that ever costs an exit.
 function connect(): void {
   if (ws || !feeds.size) return;

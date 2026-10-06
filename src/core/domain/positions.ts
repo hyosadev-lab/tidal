@@ -6,7 +6,7 @@ import { clamp, num } from "./num.ts";
  * THE TRADING PLAN
  *
  * Split by design:
- *   • Gates, sizing and exits are deterministic code. They run every 30s whether or
+ *   • Gates, sizing and exits are deterministic code. They run every 5s whether or
  *     not the model is reachable, in budget, or having a good day.
  *   • The model only ranks what already passed the gates and writes the thesis.
  *     It can veto a trade or ask for an early exit — it can never widen a limit.

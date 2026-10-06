@@ -21,7 +21,7 @@ Default-nya **paper mode**: harga beneran, uang bohongan. Dompet kamu gak kesent
 
 Pembagiannya disengaja:
 
-- **Gate, sizing, dan exit itu kode biasa.** Deterministik, jalan tiap 30 detik, gak peduli
+- **Gate, sizing, dan exit itu kode biasa.** Deterministik, jalan tiap 5 detik, gak peduli
   modelnya lagi lemot, kena rate limit, atau lagi ngaco. Posisi yang udah kebuka gak pernah
   bergantung sama panggilan LLM buat bisa ditutup.
 - **Model cuma milih dan nulis tesis.** Dia me-ranking kandidat yang *udah* lolos semua gate,
@@ -105,7 +105,7 @@ lantai, agent nolak start dan bilang kenapa — daripada bikin log "skipped" tia
 selamanya. Contoh: bankroll $45 dengan risk 5% cuma bisa bikin posisi $2.25, di bawah
 lantai SOL, jadi butuh minimal 7%.
 
-### 6. Exit — mekanis, tiap 30 detik
+### 6. Exit — mekanis, tiap 5 detik
 
 Dicek berurutan, yang pertama cocok yang jalan:
 
@@ -137,7 +137,7 @@ jalan lagi sampai besok atau sampai kamu start manual. Reset otomatis tengah mal
 - **Mode** — paper atau live (live minta konfirmasi ketik, lihat di bawah)
 - **Start / Stop** — posisi terbuka sengaja dibiarkan pas stop; tutup manual kalau mau keluar
 - **Instructions** — prompt opsional buat ngarahin analis, plus 4 preset siap pakai
-- **Interval** — menit antar scan; exit tetap dicek tiap 30 detik
+- **Interval** — menit antar scan; exit tetap dicek tiap 5 detik
 - **Risk envelope** — semua angka di atas bisa diubah dari UI
 - **Refine** — filter per-feed (umur, likuiditas, mcap, KOL, smart money, top-10, dev, insider);
   nyaring apa yang di-fetch, bukan gate

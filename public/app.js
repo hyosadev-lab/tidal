@@ -97,7 +97,10 @@ function drawTide(points, stats) {
   // Not while stopped: nothing reprices then, and a live point at Date.now() only stretches
   // the time axis until the real history is a sliver on the left.
   const live = state?.runState === "running" || points.length < 2;
-  const series = live ? [...points, { at: Date.now(), equity: stats.equity }] : points;
+  // Plotted one point per hour, the last reading in it: at a point a minute, every fill and
+  // every re-price is a spike, and the day's drift is lost under them.
+  const hourly = [...new Map(points.map((p) => [Math.floor(p.at / 3_600_000), p])).values()];
+  const series = live ? [...hourly, { at: Date.now(), equity: stats.equity }] : hourly;
   const vals = series.map((p) => p.equity);
   // Only what is plotted: peak/trough are all-time and survive the history trim, so drawing
   // the water lines from them floats them above a curve that never reached there.
@@ -134,7 +137,7 @@ function drawTide(points, stats) {
 
   $("mk-high").textContent = usd(hi);
   $("mk-low").textContent = usd(lo);
-  $("mk-span").textContent = `${points.length} soundings over ${dur(span)}`;
+  $("mk-span").textContent = `${hourly.length} hourly soundings over ${dur(span)}`;
 }
 
 // ── render ────────────────────────────────────────────────────────────

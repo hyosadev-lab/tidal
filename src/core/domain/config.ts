@@ -85,7 +85,7 @@ export const DEFAULT_CONFIG: TradeConfig = {
   chain: "sol",
   mode: "paper",
   intervalMinutes: 15,
-  monitorSeconds: 30,
+  monitorSeconds: 5,
   prompt: "",
 
   positionSizeNative: {},
@@ -178,7 +178,9 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
     chain,
     mode,
     intervalMinutes: clamp(input.intervalMinutes, 1, 1440, base.intervalMinutes),
-    monitorSeconds: clamp(input.monitorSeconds, 10, 600, base.monitorSeconds),
+    // Not a dashboard input, so a saved value would pin every existing ledger to the interval it
+    // was created with. The default is the setting.
+    monitorSeconds: DEFAULT_CONFIG.monitorSeconds,
     prompt: typeof input.prompt === "string" ? input.prompt.slice(0, 8000) : base.prompt,
 
     positionSizeNative: sanitizeSizes(input.positionSizeNative, base.positionSizeNative),
