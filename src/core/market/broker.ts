@@ -94,8 +94,11 @@ export function conditionOrders(cfg: TradeConfig, strategy: StrategyRule[], stop
 /**
  * Jupiter refuses an order worth under $10, priced when the deposit is crafted — after the fees
  * and the slippage of the buy. The margin is for those, and for a price that slipped meanwhile.
+ * That refusal is from Jupiter's docs, never seen here: `JUPITER_TRIGGER_MIN_USD=0` sends every
+ * rung as its own order so the answer can be read off the log (`parkExits` logs it and leaves
+ * the plan to the monitor).
  */
-export const TRIGGER_MIN_USD = 12;
+export const TRIGGER_MIN_USD = Number(process.env.JUPITER_TRIGGER_MIN_USD ?? 12);
 
 /** One slice of a position and the two prices it leaves at: `tpAt` % up (null = stop only), `slAt` % down. */
 export type TriggerSlice = { pct: number; tpAt: number | null; slAt: number };
@@ -130,7 +133,7 @@ export function triggerSlices(cfg: TradeConfig, strategy: StrategyRule[], stopLo
   // What no rung claimed, plus any rungs that never grew big enough: a stop-only slice if it can
   // stand alone, otherwise it rides with the last rung rather than sit in the wallet unguarded.
   const last = out[out.length - 1];
-  if ((usd * left) / 100 >= TRIGGER_MIN_USD) out.push({ pct: left, tpAt: null, slAt });
+  if (left > 0 && (usd * left) / 100 >= TRIGGER_MIN_USD) out.push({ pct: left, tpAt: null, slAt });
   else if (last) last.pct += left;
   return out;
 }
