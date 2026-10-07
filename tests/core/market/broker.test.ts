@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { breakevenPct, minLegUsd, netOfFees } from "../../../src/core/domain/chains.ts";
+import { breakevenPct, netOfFees } from "../../../src/core/domain/chains.ts";
 import { DEFAULT_CONFIG, slippage } from "../../../src/core/domain/config.ts";
 import { position } from "../domain/fixtures.ts";
-import { evaluateExit, isDust, viableStrategy } from "../../../src/core/domain/positions.ts";
-import { conditionOrders, pricedPlan, recordExternalSell, settle } from "../../../src/core/market/broker.ts";
+import { evaluateExit, isDust } from "../../../src/core/domain/positions.ts";
+import { conditionOrders, recordExternalSell, settle } from "../../../src/core/market/broker.ts";
 import type { StrategyRule } from "../../../src/core/domain/types.ts";
 
 // Order translation and the sell paths. `settle` and `recordExternalSell` are pure enough
@@ -105,63 +105,6 @@ test("break-even is the round trip, and the flat fee makes it worse the smaller 
   assert.ok(Math.abs(breakevenPct("sol", 20, SOL, 20.65) - 7.9) < 0.5);
 });
 
-// Noise floor held at 0 throughout: this test is about the fee half, and mixing the two would
-// stop it failing for the reason it is named after. The noise half is the test below it.
-test("the exit plan is repriced to what the fees allow", () => {
-  const minLeg = minLegUsd("sol", 75); // $9
-  // A target under the hurdle is lifted to it.
-  const lifted = viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 9, minLeg, 500, 0);
-  assert.deepEqual(lifted, [{ kind: "tp", at: 9, sell: 100 }]);
-
-  // A $20 position cannot afford a rung that nets $6.40 — it folds into the one above it.
-  const merged = viableStrategy(
-    [{ kind: "tp", at: 60, sell: 20 }, { kind: "tp", at: 150, sell: 30 }, { kind: "sl", at: -25, sell: 100 }],
-    9,
-    minLeg,
-    20,
-    0,
-  );
-  assert.deepEqual(merged, [{ kind: "tp", at: 150, sell: 50 }, { kind: "sl", at: -25, sell: 100 }]);
-
-  // When no rung is big enough the ladder collapses to the single leg it could afford.
-  const collapsed = viableStrategy([{ kind: "tp", at: 20, sell: 10 }, { kind: "tp", at: 30, sell: 10 }], 9, minLeg, 20, 0);
-  assert.deepEqual(collapsed, [{ kind: "tp", at: 30, sell: 20 }]);
-
-  // The same plan on a position ten times the size keeps every rung it was written with.
-  const kept = viableStrategy([{ kind: "tp", at: 60, sell: 20 }, { kind: "tp", at: 150, sell: 30 }], 9, minLeg, 200, 0);
-  assert.equal(kept.length, 2);
-});
-
-// The shape every position in the first live session ran on: a hurdle around +9%, a 25% stop, and
-// an analyst rung at +17-21% that filled on the first or second candle. The floor is what stops
-// that plan from being written, so this pins the exact rungs that session lost money on.
-test("a profit target inside the stop distance is lifted out of the noise", () => {
-  const minLeg = minLegUsd("sol", 75); // $9
-  const plan = (rules: StrategyRule[], usd = 500) => viableStrategy(rules, 9, minLeg, usd, 25);
-
-  assert.deepEqual(
-    plan([{ kind: "tp", at: 20.5, sell: 45 }, { kind: "sl", at: -25, sell: 100 }]),
-    [{ kind: "tp", at: 25, sell: 45 }, { kind: "sl", at: -25, sell: 100 }],
-    "risking 25% to make 20.5% is inverted before fees",
-  );
-
-  // The floor lifts, it never lowers: a target already above it is left exactly as written.
-  assert.deepEqual(plan([{ kind: "tp", at: 150, sell: 30 }]), [{ kind: "tp", at: 150, sell: 30 }]);
-
-  // Stops are never touched — raising one would deepen a loss, not protect a gain.
-  assert.deepEqual(
-    plan([{ kind: "sl", at: -12, sell: 50 }, { kind: "sl", at: -20, sell: 100 }]),
-    [{ kind: "sl", at: -12, sell: 50 }, { kind: "sl", at: -20, sell: 100 }],
-  );
-
-  // The higher floor binds, whichever it is: on a position small enough that the round trip costs
-  // more than the stop distance, fees are what the target is lifted to.
-  assert.deepEqual(
-    viableStrategy([{ kind: "tp", at: 5, sell: 100 }], 30, minLeg, 500, 25),
-    [{ kind: "tp", at: 30, sell: 100 }],
-  );
-});
-
 test("dust: a remainder under $1 or under 2% of the buy closes the position", () => {
   assert.equal(isDust(position()), false);
   // 1.5% of the original quantity left — a rounding remainder from a 100% fill.
@@ -169,15 +112,4 @@ test("dust: a remainder under $1 or under 2% of the buy closes the position", ()
   // 10% of the quantity left, but the price collapsed: under $1 is not worth another sell.
   assert.equal(isDust(position({ qty: 10_000, lastPrice: 0.00005 })), true);
   assert.equal(isDust(position({ qty: 10_000 })), false, "a real partial exit stays open");
-});
-
-// The server's SK buy: rows of +20% and +10% went in, one order at +25% came out.
-test("a fixed strategy runs as written; only the analyst's plan is repriced", () => {
-  const rows: StrategyRule[] = [{ kind: "tp", at: 20, sell: 50 }, { kind: "tp", at: 10, sell: 50 }, { kind: "sl", at: -25, sell: 100 }];
-  const minLeg = minLegUsd("sol", 120);
-  assert.deepEqual(pricedPlan({ ...DEFAULT_CONFIG, fixedStrategy: true }, rows, 14.7, minLeg, 14), rows);
-  assert.deepEqual(pricedPlan({ ...DEFAULT_CONFIG, fixedStrategy: false }, rows, 14.7, minLeg, 14), [
-    { kind: "tp", at: 25, sell: 100 },
-    { kind: "sl", at: -25, sell: 100 },
-  ]);
 });

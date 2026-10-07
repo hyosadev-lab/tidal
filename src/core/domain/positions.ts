@@ -131,67 +131,6 @@ export function entryStrategy(cfg: TradeConfig, proposed: unknown): StrategyRule
 export const entryStop = (cfg: TradeConfig, proposed: unknown): number =>
   clamp(proposed, Math.min(10, cfg.stopLossPct), cfg.stopLossPct, cfg.stopLossPct);
 
-/**
- * The same plan, priced. `entryStrategy` writes the shape; this is what the fees allow of it,
- * applied once at entry when the position's size and the round-trip cost are both known.
- *
- * Three corrections, and the first two are the same fact seen from different ends:
- *
- * - A profit target below break-even is not a profit target. It is lifted to the hurdle.
- * - A target inside the token's own noise is not a target either, and this is the more expensive
- *   half. A rung is filled the moment the price *touches* it, so on an asset whose median
- *   one-minute high-low range is ~25%, a rung at +20% is reached by the first or second candle
- *   whatever the thesis said. Measured over one session of this agent's own trades: six of six
- *   positions carrying a rung filled it within 18-206 seconds, three of them minutes before the
- *   rest of the position ran to +43%, +182% and +30%, the other three minutes before it stopped
- *   out. `noiseFloor` is the operator's stop distance, which is the one statement of "how far
- *   this token moves against me before I call it wrong" already in the config — a plan that
- *   risks that much to make less than that much is inverted before fees are counted.
- * - A rung too small to be worth its own transaction is folded into the next one up. Each rung is
- *   a separate swap paying the flat chain fee again, so a four-rung ladder on a small position
- *   spends four times to leave what one sale would have left. Sizes are estimated at the price
- *   that triggers the rung, which is the price it would actually sell at.
- *
- * `sl` passes through: a stop is not optional, and lifting one would deepen a loss rather than
- * protect a gain.
- */
-export function viableStrategy(
-  rules: StrategyRule[],
-  breakeven: number,
-  minLeg: number,
-  usd: number,
-  noiseFloor: number,
-): StrategyRule[] {
-  if (!rules.length || !(usd > 0)) return rules;
-  const out: StrategyRule[] = [];
-  let carry = 0;
-  let carriedTarget = 0;
-  // Both floors are "below this a rule does not do what it is named"; the higher one binds.
-  const floor = Math.max(breakeven, Math.max(0, noiseFloor));
-
-  for (const r of rules) {
-    if (r.kind !== "tp") {
-      out.push(r);
-      continue;
-    }
-    const at = Math.round(Math.max(r.at ?? 0, floor) * 10) / 10;
-    const sell = Math.min(100, r.sell + carry);
-    if (usd * (sell / 100) * (1 + at / 100) < minLeg) {
-      carry = sell;
-      carriedTarget = Math.max(carriedTarget, at);
-      continue;
-    }
-    carry = 0;
-    out.push({ ...r, at, sell });
-  }
-
-  // Whatever never grew big enough to sell on its own still needs somewhere to go: one rung at
-  // the highest target it reached, which is the ladder collapsing into the single leg it could
-  // afford all along.
-  if (carry > 0) out.push({ kind: "tp", at: carriedTarget, sell: carry });
-  return out;
-}
-
 /** Live risk checks against fresh token data for a position we already hold. */
 export function healthExit(p: Position, info: Record<string, any>): ExitSignal | null {
   const entryLiquidity = p.entryLiquidityUsd;

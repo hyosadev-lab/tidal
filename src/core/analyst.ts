@@ -41,37 +41,18 @@ function describeRule(r: StrategyRule): string {
 function exitPlan(cfg: TradeConfig, hurdle: number): string {
   const time = `  time stop: flat out after ${cfg.timeStopMinutes}m, whatever the position is doing — a plan whose targets need longer than that will not reach them`;
 
-  // Two floors under every profit target, and the higher one binds — `viableStrategy` enforces
-  // exactly this, so the number quoted here is the one the position will actually run on.
-  const floor = Math.max(hurdle, cfg.stopLossPct);
-
+  // Facts only: what a target costs and how a rung fills. Where to put one is the analyst's call
+  // — the engine runs the plan as written, and this used to argue for far targets.
   const cost = `
-WHAT A PROFIT TARGET HAS TO CLEAR: +${floor.toFixed(1)}%
+WHAT A PROFIT TARGET COSTS
 
-Two separate floors sit under every \`tp\`, and the engine lifts any target below the higher of
-them before the position opens. Neither is a target — both are zero.
-
-1. The round trip: +${hurdle.toFixed(1)}%. What a position of the size you are sizing has to gain, from the
-   price it entered at, before selling it returns what it cost — routing fee, pool fee, price
-   impact and the flat chain fee on both the buy and the sell. A rule that exits under this books
-   a loss whatever it is called. Rungs too small to be worth their own transaction are also folded
-   together, since each rung is a separate swap paying that flat fee again.
-2. The noise: ${cfg.stopLossPct}%, the stop distance. This is the floor that decides most plans, and the one
-   worth thinking about hardest. A rung fills the moment the price *touches* it, not when it
-   settles there, and a token on this list routinely covers 25% or more between the high and the
-   low of a single one-minute candle. So a target inside that band is not reached by your thesis
-   being right — it is reached by the next candle, in the first minute or two, on almost every
-   entry. What that costs is not the rung: it is the rest of the position, still open with its
-   best rung already spent, either running on without it or stopping out anyway. Risking ${cfg.stopLossPct}% to
-   make less than ${cfg.stopLossPct}% is inverted before a single fee is counted.
-
-You are not guessing at that band. \`gmgn_token_kline\` is a lookup you have to spend on this token
-anyway: read the actual high-to-low range of its recent 1m candles and size the plan against what
-you see. A token whose candles span 15% and one whose candles span 60% do not get the same rules,
-and the second one needs a first target far above this floor to mean anything at all.
-
-An entry only makes sense on a token you expect to clear +${floor.toFixed(1)}% by enough to be worth the risk
-of the stop. If you do not believe it will, the honest plan is no entry, not a nearer target.`;
+- Break-even: +${hurdle.toFixed(1)}%. What a position of the size you are sizing has to gain, from the price it
+  entered at, before selling it returns what it cost — routing fee, pool fee, price impact and the
+  flat chain fee on both the buy and the sell. A \`tp\` under it books a loss. The figure assumes
+  ONE sale: every rung is a separate swap paying the flat chain fee again.
+- A rung fills the moment the price *touches* its target, not when it settles there.
+  \`gmgn_token_kline\` shows the high-to-low range of this token's recent 1m candles.
+- Your targets run exactly as you write them. The engine neither lifts nor merges them.`;
 
   if (!cfg.fixedStrategy)
     return `Exits (you design them per entry, then they are mechanical — the engine runs them every
@@ -93,11 +74,10 @@ How they run, in the order the engine checks them:
 2. \`tp\` — the highest rung reached wins. A rung never reached sells nothing.
 
 Nothing follows the price up. A position that runs far past your last rung and comes back gives
-all of that back and exits at the stop or the time stop — so put rungs where you would actually
-want to be paid, including one far enough out to matter if the token really does run.
+all of that back and exits at the stop or the time stop.
 
 Clamps: a stop deeper than -${cfg.stopLossPct}% becomes -${cfg.stopLossPct}%, stops that do not cover the whole position get
-one more at -${cfg.stopLossPct}% for the rest, any \`tp\` target under +${floor.toFixed(1)}% is lifted to it, and an omitted or
+one more at -${cfg.stopLossPct}% for the rest, and an omitted or
 unusable \`strategy\` falls back to the operator's default plan.
 ${time}
 ${cost}`;
@@ -111,8 +91,7 @@ ${cost}`;
         ...cfg.takeProfit.map((r, i) => `  rung ${i + 1}: sell ${r.sell}% of the original size at +${r.at}%`),
       ].join("\n");
 
-  // The operator's rows run as written — `pricedPlan` does not lift them — so the floors in
-  // `cost` would be describing a clamp that is not applied here.
+  // The operator's rows are not the analyst's to design, so `cost` has nothing to advise here.
   return `Exits (mechanical, every ${cfg.monitorSeconds}s, no model involvement — the operator's rows, run exactly as written):
 ${rows}
 ${time}

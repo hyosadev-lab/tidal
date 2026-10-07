@@ -77,14 +77,3 @@ export function breakevenPct(chain: Chain, valueUsd: number, nativeUsd: number, 
   const paid = costUsd && costUsd > 0 ? costUsd : valueUsd * (1 + fee) + tx;
   return ((paid + tx) / (1 - fee) / valueUsd - 1) * 100;
 }
-
-/** Share of a leg the flat fee may eat before the leg is not worth submitting. */
-const MAX_LEG_FEE_PCT = 5;
-
-/**
- * Smallest sale worth making as its own transaction. A take-profit ladder is not free: every rung
- * is a separate swap paying the flat fee again, so a 4-rung plan on a $20 position spends ~$1.8
- * to exit what a single sale exits for $0.45.
- */
-export const minLegUsd = (chain: Chain, nativeUsd: number): number =>
-  (TX_COST_NATIVE[chain] * nativeUsd) / (MAX_LEG_FEE_PCT / 100);

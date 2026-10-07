@@ -208,12 +208,12 @@ in, not imported).
 |---|---|
 | `domain/types.ts` | shared types, no logic |
 | `domain/num.ts` | `num`, `numOrNull`, `truthy`, `clamp`, `short` — the coercions every wire value passes through, so the pure layer can read a feed row without the HTTP client |
-| `domain/chains.ts` | per-chain constants and the fee arithmetic on them: `NATIVE`, `MIN_POSITION_USD`, `GAS_RESERVE`, `SWAP_FEE_PCT`, `netOfFees`, `breakevenPct`, `minLegUsd` |
+| `domain/chains.ts` | per-chain constants and the fee arithmetic on them: `NATIVE`, `MIN_POSITION_USD`, `GAS_RESERVE`, `SWAP_FEE_PCT`, `netOfFees`, `breakevenPct` |
 | `domain/config.ts` | `DEFAULT_CONFIG`, the Refine spec, `sanitizeConfig` (every dashboard input is clamped here — safety limits, not input tidying), the derived reads (`tradeSize`, `minPosition`, `slippage`), `liveReady` |
 | `domain/candidates.ts` | `toCandidate` + `buyableSet`: a feed row becomes a `Candidate` here and only here |
 | `domain/gates.ts` | what disqualifies a row and what ranks the rest: `runGates`, `gateTally`, `securityRisk`, `score` |
 | `domain/watchlist.ts` | the watchlist's limits and edits: `reviseWatchlist`, `pruneWatchlist`, `observe` — the cap and the expiry live here, not in the prompt |
-| `domain/positions.ts` | size it, plan its exit, decide when it leaves: `positionSize`, `entryStrategy`, `viableStrategy`, `evaluateExit`, `healthExit`, `isDust`. **The central split is stated in this file's header** |
+| `domain/positions.ts` | size it, plan its exit, decide when it leaves: `positionSize`, `entryStrategy`, `evaluateExit`, `healthExit`, `isDust`. **The central split is stated in this file's header** |
 | `data/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
 | `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity + log lines as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
 | `data/soundings.ts` | append-only table of every scanned candidate + its price at scan time; written by the scan, costs no API call |
