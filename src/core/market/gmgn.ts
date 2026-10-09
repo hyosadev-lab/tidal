@@ -32,7 +32,7 @@ export type RankItem = Record<string, any>;
 
 /**
  * The rank feed. Every filter param GMGN accepts here now comes from one place — the operator's
- * Refine rows — so this takes no floors of its own; see `REFINE_FIELDS` (config.ts) for the
+ * Feed filters rows — so this takes no floors of its own; see `REFINE_FIELDS` (config.ts) for the
  * mapping. Only the query moves: what comes back is scored, never gated on these.
  */
 export async function trending(
@@ -40,7 +40,7 @@ export async function trending(
   opts: {
     interval?: string;
     limit?: number;
-    /** Operator's Refine rows, already mapped to rank params by `refineQuery`. */
+    /** Operator's Feed filters rows, already mapped to rank params by `refineQuery`. */
     refine?: Record<string, string | number>;
   } = {},
 ): Promise<RankItem[]> {
@@ -62,7 +62,7 @@ const TRENCHES_STRICT = {
 };
 
 /**
- * The operator's Refine rows over the strict preset. Where both name the same field, the
+ * The operator's Feed filters rows over the strict preset. Where both name the same field, the
  * tighter of the two wins: the dashboard can narrow this feed, never loosen it past strict.
  */
 export function trenchesFilters(refine: Record<string, string | number> = {}): Record<string, string | number> {

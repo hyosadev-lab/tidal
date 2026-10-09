@@ -51,7 +51,7 @@ so the key is present.
 ## Architecture
 
 One entry point: `src/index.ts` — static file server + JSON control API + SSE stream, driving
-`src/core/`. Its analyst is one LLM call per cycle (plus a capped few read-only GMGN lookups),
+`src/core/`. Its analyst is one LLM call per batch of due tokens (plus a capped few optional read-only GMGN lookups),
 through `src/agent/llm.ts`.
 
 There used to be a second: `src/cli.ts`, a readline chat loop with a `bash` tool and the full
@@ -152,39 +152,46 @@ plan against it at once instead of up to `monitorSeconds` later. Three things to
   there, and a stream that goes quiet for 15s hands the price back to GMGN. Stop closes every
   stream (`stopStreams`): a stream that outlived Stop would sell.
 
-### Two stages: buy now, or watch first
+### Two loops: fetch the tokens, analyse what is due
 
-The analyst is called in two stages (`Stage` in `analyst.ts`). The watchlist between them is the
-only memory one call hands the next:
+Fetching and analysing are separate, joined only by a kick (`fetchThenAnalyse` in `runtime.ts`):
 
-- **Sweep** (`cycle/scan.ts`, every `intervalMinutes`): the whole candidate list. For a
-  candidate it likes the analyst has two answers — `entries` buys it now, `watch` defers it
-  until it has been seen doing something. It also returns `unwatch` and `exits`. Each watched
-  token carries a `note` — what the analyst is waiting to see — because the next call knows
-  nothing else.
-- **Watch tick** (`cycle/watch.ts`, every `WATCH_MINUTES`): re-prices the watchlist
-  (`tokenInfo`, weight 1 each), shows the analyst every row with its price trail and note, and
-  lets it buy, keep or drop. A tick with an empty watchlist calls nothing.
+- **Fetch** (`cycle/scan.ts`, every `FETCH_SECONDS` = 60): the three feeds, gated and scored,
+  left in `store.pool`. No model, no lock, no buying. A fetch the rate limiter holds past the
+  minute makes the next one a no-op rather than stacking.
+- **Analyst queue** (`cycle/analyse.ts`): kicked after every fetch, it sends every token that is
+  due in one LLM call — the answer is `entries`, `exits` and a `recheck` time per token — and
+  `openEntries` is handed that batch, so the analyst can buy nothing it was not just shown.
 
-Both stages get the tools and `LOOKUP_BUDGET`, and both call `openEntries`, which prefixes the
-thesis with `[sweep]` or `[watchlist]` — the trade's `reason`, so the ledger says which path a
-buy took. That split is the open question this design is being measured on: if nearly every buy
-is `[sweep]`, the watchlist is not earning its second LLM call.
+`dueNow` in `domain/candidates.ts` is the queue: every eligible row that is due, best score
+first. A token never judged is due now, so **a newly surfaced token is analysed straight after
+the fetch that carried it** (`first_look: true` on its row). **The analyst sets when each token
+is due again** — `recheck: [{address, minutes}]`, clamped 1–30 in `analyse.ts`, not in the
+prompt, and ignored for an address outside the batch. `RECHECK_DEFAULT_MINUTES` (15, a constant
+there) is the fallback for a token it left out — the dashboard slider was removed on the
+operator's decision. The due-at map is `store.analysed`, in memory only — a restart re-reads
+the feed from scratch, so the first call after one carries the whole pool (~100 rows). The batch
+is marked with the fallback before the call, so a failed call cannot spin on the same rows; a
+null decision (dead key, model down, unparseable reply) ends the drain and the next fetch retries.
 
-The limits are in `domain/watchlist.ts`, not in the prompt: `WATCH_MAX` (3) and
-`WATCH_TTL_MINUTES` (45, then it is dropped so a dead watch cannot hold a slot). `pruneWatchlist`
-also drops what became held, cooled-down, blacklisted or gate-failed. The list is persisted in
-`kv.state` (`store.watchlist`), and a row's `Candidate` is refreshed for free whenever a later
-sweep carries the token again. There is no minimum watch — the operator removed it: a token can
-be bought or dropped at the first tick after it was added.
+It was one token per call for a few hours (`git log`); the operator changed it to a batch.
 
-The sweep and the tick share one lock (`claim`/`release` in `control.ts`) — both end in
-`applyExits`, and interleaved they would each count the same free slot. **The tick runs off its
-own timer only, never straight behind a sweep**: measured on the first paper run, a tick seconds
-after the sweep that filled the list re-judged the same snapshot and dropped what it had just
-added. The tick the timer fires during a sweep is dropped by the lock, so every third tick is
-skipped and a long-watched token goes 10 minutes between looks once per sweep interval. A loss
-halt stops both timers.
+Things to keep in mind:
+
+- **One drain at a time** (`claim`/`release` in `control.ts`). A kick that lands during a drain
+  is a no-op; the running drain reads the fresher `store.pool` as soon as its call is back.
+- **The queue does not run with every slot taken.** Nothing could be bought and each call is
+  paid for. The cost: the analyst's early `exits` are only asked for while a slot is free. The
+  exit plan, `healthExit` and the time stop never needed the model.
+- **The cost is the analyst's to run up:** a call goes out after any fetch that has something
+  due, so an analyst that answers 1 on everything is a full-pool call every minute.
+- **Soundings are sampled**, one fetch in 15 minutes (`SOUNDING_MINUTES` in `scan.ts`), not
+  every fetch: at one a minute the table would grow ~150k rows a day.
+- There is no watchlist. It was removed on the operator's decision (`git log` for
+  `domain/watchlist.ts` / `cycle/watch.ts`); "wait and see" is now just a pass, and the token
+  comes back with fresh numbers after the cooldown. Don't bring it back without asking.
+
+A loss halt stops the fetch timer, and the queue with it.
 
 ### `src/core/` layering
 
@@ -209,10 +216,9 @@ in, not imported).
 | `domain/types.ts` | shared types, no logic |
 | `domain/num.ts` | `num`, `numOrNull`, `truthy`, `clamp`, `short` — the coercions every wire value passes through, so the pure layer can read a feed row without the HTTP client |
 | `domain/chains.ts` | per-chain constants and the fee arithmetic on them: `NATIVE`, `MIN_POSITION_USD`, `GAS_RESERVE`, `SWAP_FEE_PCT`, `netOfFees`, `breakevenPct` |
-| `domain/config.ts` | `DEFAULT_CONFIG`, the Refine spec, `sanitizeConfig` (every dashboard input is clamped here — safety limits, not input tidying), the derived reads (`tradeSize`, `minPosition`, `slippage`), `liveReady` |
-| `domain/candidates.ts` | `toCandidate` + `buyableSet`: a feed row becomes a `Candidate` here and only here |
+| `domain/config.ts` | `DEFAULT_CONFIG`, the Feed filters spec, `sanitizeConfig` (every dashboard input is clamped here — safety limits, not input tidying), the derived reads (`tradeSize`, `minPosition`, `slippage`), `liveReady` |
+| `domain/candidates.ts` | `toCandidate` + `buyableSet`: a feed row becomes a `Candidate` here and only here. Also `dueNow`, the analyst's queue |
 | `domain/gates.ts` | what disqualifies a row and what ranks the rest: `runGates`, `gateTally`, `securityRisk`, `score` |
-| `domain/watchlist.ts` | the watchlist's limits and edits: `reviseWatchlist`, `pruneWatchlist`, `observe` — the cap and the expiry live here, not in the prompt |
 | `domain/positions.ts` | size it, plan its exit, decide when it leaves: `positionSize`, `entryStrategy`, `evaluateExit`, `healthExit`, `isDust`. **The central split is stated in this file's header** |
 | `data/db.ts` | the one SQLite file (`data/tta.db`) via `node:sqlite`; schema, `kv` helpers, row writers, one-shot import of the pre-SQLite JSON files. `TTA_DB` overrides the path. **`ROOT` is counted from this file's own location** — moving the file moves `data/` |
 | `data/store.ts` | **module-level singleton** `store`; mutable state in `kv.state` (debounced), trades + equity + log lines as rows, pub/sub for SSE. `store.unavailable(address)` is the one answer to held / cooldown / blacklist |
@@ -223,27 +229,26 @@ in, not imported).
 | `market/broker.ts` | paper vs live execution of buy/sell; the only place that submits swaps. Live branches by chain: Solana → `jupiter.swap` and the monitor runs the exits, the rest → `gmgn.swap` with condition orders |
 | `cycle/control.ts` | the run's mutable state: the generation a Stop bumps (`generation`/`aborted`), the timer handles (`arm`/`disarm`), and `halt` |
 | `cycle/sweep.ts` | the whole search: `mergeFeeds`, `gatherCandidates` — three feeds in, one gated and scored list out |
-| `cycle/scan.ts` | **the sweep stage, top to bottom** — read `runScan` and that is the flow: buy now, or put on the watchlist. Also `syncLiveBalance` |
-| `cycle/watch.ts` | the watch tick: re-price the watchlist, ask the analyst, buy / keep / drop |
+| `cycle/scan.ts` | **the fetch**: `runScan` every 60s — feeds in, `store.pool` out. Also `syncLiveBalance` |
+| `cycle/analyse.ts` | **the analyst queue**: `runAnalyst` — next token, ask, its exits, its entry, repeat |
 | `cycle/entries.ts` | `openEntries` + `openPosition`: the only place that opens a position |
 | `cycle/exits.ts` | every path out: `applyExits`, `closePosition`, `bookSell`, `withdrawExitPlan`, the daily loss budget. `bookSell` is the one post-sell path both `closePosition` and `reconcile` run through |
 | `cycle/monitor.ts` | the 5s loop (`monitorSeconds`, a constant — not a dashboard input, and each tick costs one `tokenInfo`, weight 1, per open position): mirror the wallet (`reconcile`), then run the exit plan — and the same plan again on every streamed price in between. Never calls the model |
-| `analyst.ts` | the model half: the prompts for both stages, the brief, `askAnalyst(stage, …)`, `extractJson`. One LLM call per stage, each with the read-only tools on a per-call budget |
+| `analyst.ts` | the model half: the prompt, the brief, `askAnalyst(candidates, slots, fresh)`, `extractJson`. One LLM call per batch, with the read-only tools on a per-call budget |
 | `runtime.ts` | lifecycle: `start`, `stop`, `reschedule`, `scanNow`, `manualClose`. The whole surface `src/index.ts` drives |
 | `calibrate.ts` | offline: re-prices those rows later and reports whether `score()` ranked anything. Reads only; never trades |
 
-Data flow: `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` → every eligible
-row → `askAnalyst("sweep")` (`{entries, watch, unwatch, exits, notes}`) → `reviseWatchlist` +
-`buyableSet` over the sweep's rows → … every 5 minutes … `askAnalyst("watch")`
-(`{entries, unwatch, exits, notes}`) → `buyableSet` over the watchlist rows → `broker.buy/sell` → `store` mutation → `store.emit` → SSE →
+Data flow: every minute `gatherCandidates` (3 GMGN feeds, deduped) → `runGates` + `score` →
+`store.pool` → `dueNow` → `askAnalyst(batch)` (`{entries, exits, recheck, notes}`) → `applyExits` →
+`buyableSet` over that batch → `broker.buy/sell` → `store` mutation → `store.emit` → SSE →
 `public/app.js`. The monitor loop runs independently and never touches the LLM.
 
 **`gatherCandidates` is the whole search, and the brief is the near-whole evidence base.** The
-analyst can deep-dive a row it already has (info + kline, 12 lookups per cycle), but it cannot
+analyst can deep-dive a row it was shown (12 lookups per call, none required), but it cannot
 search: an address outside the brief never went through `toCandidate` or the gates, so there is
-nothing to size and `buyableSet` refuses it. **Both lookups are now mandatory per entry** — the
-prompt requires `gmgn_token_info` *and* `gmgn_token_kline` on every address the analyst puts in
-`entries`, so the budget of 12 is 6 fully-researched entries per cycle. That pairing is deliberate:
+nothing to size and `buyableSet` refuses it. **No lookup is mandatory** — the operator removed
+the kline-per-entry rule: the prompt says to decide from the brief when it is enough and to pull
+a lookup only when the answer would change the decision or the exit plan. When one is spent,
 `/v1/token/info` is much richer than the brief and carries most of what the feeds leave blank —
 bundler and sniper concentration (`stat.top_bundler_trader_percentage`, `top70_sniper_hold_rate`),
 `fresh_wallet_rate`, `bot_degen_rate`, dev status and deployer history (`dev.creator_token_status`,
@@ -252,7 +257,7 @@ buy/sell *volume* split that neither feed reports. The tool's description in `sr
 is the field inventory, written from live responses — keep it that way, since it is the model's
 only view of the route. What stays a stated blank is only what neither the brief nor those two
 routes carries. The operator steers
-the sweep through the dashboard's Refine panel
+the sweep through the dashboard's Feed filters panel
 (`refineQuery`), not through the prompt — `cfg.prompt` shapes selection, not fetching, because the
 sweep runs before the model is called. Everything the model needs must therefore be on the
 candidate row: widening the analyst's view usually means adding a field in `askAnalyst`'s
@@ -295,21 +300,19 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   It rejects wash trading, honeypots, and rows with no address or no price. That is all. The
   graded properties it used to gate on (smart-money count, `rug_ratio`, top-10 rate, liquidity
   depth, dev still holding) are read, scored by `score()`, shown to the analyst, and filterable
-  per-feed from the dashboard's **Refine** panel — but they disqualify nothing. Consequence to
+  per-feed from the dashboard's **Feed filters** panel — but they disqualify nothing. Consequence to
   keep in mind when editing: a candidate with a $2k pool, no smart money and a dev still holding
-  reaches `askAnalyst` looking like any other row, and only the analyst, the Refine filters and
+  reaches `askAnalyst` looking like any other row, and only the analyst, the feed filters and
   `securityRisk` stand between it and a position. `SKIP` is gone entirely: `gatherCandidates`
-  sends only the operator's Refine rows, so a blank Refine fetches the feeds unfiltered. Don't
+  sends only the operator's Feed filters rows, so blank Feed filters fetch the feeds unfiltered. Don't
   reintroduce a structural gate — or a hardcoded feed floor — without asking: the dashboard is
   where that policy lives now.
-- **A sweep costs one LLM call plus at most `LOOKUP_BUDGET` (12) GMGN reads; a watch tick costs
-  the same again plus one `tokenInfo` per watched token.** A tick with an empty
-  watchlist costs nothing — `runWatch` returns before the model is called. The budget is
+- **A batch costs one LLM call plus at most `LOOKUP_BUDGET` (12) GMGN reads.** The budget is
   enforced in `budgetedTools`, not in the prompt: calls past it return a refusal string, so the
   model answers from the brief instead of erroring. `maxSteps` is `LOOKUP_BUDGET + 2`, and going
-  over it throws — a cycle that no-ops. Raising the budget takes tokens straight out of the
-  sweep's share of the same process-wide bucket (capacity 5, refilling 20 per 30s), which is what starves
-  the candidate list; measure before you raise it.
+  over it throws — that batch is passed on. Raising the budget takes tokens straight out of the
+  process-wide bucket (capacity 5, refilling 20 per 30s) that the fetch (8 weight a minute) and
+  the monitor (12 a minute per open position) also run on; measure before you raise it.
 - **In live mode the wallet, not the ledger, says what is still held.** The whole exit plan runs
   on GMGN's side, so positions shrink and disappear without this process selling anything — and
   the operator can sell from GMGN's UI too. One `walletHoldings` read per monitor tick (not per
@@ -326,8 +329,8 @@ candidate row: widening the analyst's view usually means adding a field in `askA
   nothing extra. `PRIORITY_FEE` / `TIP_FEE` in `config.ts` are the fallback for the chains that
   route does not answer for, and `GMGN_PRIORITY_FEE` / `GMGN_TIP_FEE` override everything. GMGN
   rejects the swap outright when one is missing, so a protected buy silently becomes no buy.
-- **`buyableSet` is the last word on what can be bought.** It is handed the sweep's eligible rows
-  in the sweep stage and the watchlist's rows in the watch stage. It re-checks gates, cooldown,
+- **`buyableSet` is the last word on what can be bought.** It is handed the batch the analyst was
+  shown. It re-checks gates, cooldown,
   blacklist and open positions in `cycle/entries.ts` immediately before entries — deliberately *after*
   the model's requested exits have run, since closing a position puts its address straight onto
   cooldown. An address the analyst names that is not in the set is logged and skipped, with the

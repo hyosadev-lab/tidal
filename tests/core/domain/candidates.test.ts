@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toCandidate } from "../../../src/core/domain/candidates.ts";
+import { dueNow, toCandidate } from "../../../src/core/domain/candidates.ts";
 import { candidate } from "./fixtures.ts";
 
 // A feed row becoming a Candidate: the one place the two feeds' disagreeing columns are
@@ -94,4 +94,20 @@ test("a 5m feed row lands in the unsuffixed fields, and the 5m ones stay blank",
     [null, null, null],
     "a row cannot fill its own second window — gatherCandidates copies these onto the 1h row",
   );
+});
+
+test("dueNow hands the analyst every eligible row that is due, new ones included", () => {
+  const a = candidate({ address: "A", score: 90 });
+  const b = candidate({ address: "B", score: 80 });
+  const gated = candidate({ address: "G", score: 0, gateFailures: ["honeypot"] });
+  const none = () => "";
+  const now = 60 * 60_000;
+  assert.deepEqual(dueNow([gated, a, b], new Map(), now, none), [a, b]);
+  // The analyst asked for A back in 10 minutes: skipped until then, then first again.
+  const due = new Map([["a", now + 10 * 60_000]]);
+  assert.deepEqual(dueNow([a, b], due, now, none), [b]);
+  assert.deepEqual(dueNow([a, b], due, now + 10 * 60_000, none), [a, b]);
+  // Held / cooldown / blacklist is the store's answer, and it wins.
+  assert.deepEqual(dueNow([a, b], new Map(), now, (x) => (x === "A" ? "held" : "")), [b]);
+  assert.deepEqual(dueNow([gated], new Map(), now, none), []);
 });

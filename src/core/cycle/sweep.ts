@@ -10,8 +10,8 @@ import type { Candidate } from "../domain/types.ts";
  * Step 1 of a cycle, and the whole search: only what this file surfaces can ever be bought.
  * Three ranking feeds are fetched together, deduped into one row per address, gated and scored.
  *
- * The sweep applies no floor of its own — the dashboard's Refine panel is the only thing that
- * narrows these feeds, and a blank Refine means an unfiltered feed. Structural quality is
+ * The sweep applies no floor of its own — the dashboard's Feed filters panel is the only thing that
+ * narrows these feeds, and blank Feed filters mean an unfiltered feed. Structural quality is
  * `score()`'s job and the operator's, so a hardcoded default here would be a gate wearing a
  * different name.
  */
@@ -56,10 +56,10 @@ export function mergeFeeds(feeds: Feed[]): Candidate[] {
 export async function gatherCandidates(): Promise<Candidate[]> {
   const cfg = store.config;
 
-  // The sweep applies no floor of its own: Refine is the only thing that narrows these feeds,
-  // and an empty Refine means an unfiltered feed. That is the point — structural quality is
+  // The sweep applies no floor of its own: Feed filters are the only thing that narrows these feeds,
+  // and empty Feed filters mean an unfiltered feed. That is the point — structural quality is
   // `score()`'s job and the operator's, so a hardcoded default here would be a gate wearing a
-  // different name. Expect more noise per cycle when Refine is blank.
+  // different name. Expect more noise per cycle when Feed filters are blank.
   const feeds: Promise<Feed>[] = [
     gmgn
       .trending(cfg.chain, { interval: "1h", limit: LIMIT, refine: refineQuery(cfg.refine) })

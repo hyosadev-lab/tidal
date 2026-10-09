@@ -20,7 +20,7 @@ const FLOORS = { sol: 3, bsc: 5, base: 5, eth: 25, robinhood: 5 };
 // Fee is denominated in whatever the chain pays gas in — mirrors NATIVE in src/trading/core/config.ts.
 const NATIVE_SYMBOL = { sol: "SOL", bsc: "BNB", base: "ETH", eth: "ETH", robinhood: "ETH" };
 
-// Refine rows — must match REFINE_FIELDS in src/trading/core/config.ts. Blank = no filter.
+// Feed filters rows — must match REFINE_FIELDS in src/trading/core/config.ts. Blank = no filter.
 const REFINE = ["age", "liquidity", "marketCap", "fee", "kol", "smartMoney", "top10", "devHolding", "insider"];
 // Typed and shown in thousands; the config stores plain USD, so convert at the edge.
 const REFINE_K = new Set(["liquidity", "marketCap"]);
@@ -61,12 +61,6 @@ const dur1 = (ms) => {
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
-};
-
-// dur() rounds to the minute — fine for ages, useless for a countdown ticking every second.
-const countdown = (ms) => {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : dur(ms);
 };
 
 const clock = (ts) =>
@@ -149,7 +143,6 @@ function render(s) {
   $("chip-chain").textContent = c.chain.toUpperCase();
   $("chip-mode").textContent = c.mode.toUpperCase();
   $("chip-mode").dataset.live = c.mode === "live" ? "1" : "0";
-  $("chip-cycle").textContent = `cycle ${s.cycle.count}`;
   $("beacon").dataset.state = s.runState;
   $("run-label").textContent = s.cycle.busy ? s.cycle.phase : s.runState;
   const runBtn = $("btn-run");
@@ -185,12 +178,9 @@ function render(s) {
   $("s-unrealised").className = `cell-v ${tone(st.unrealisedUsd)}`;
   $("s-winrate").textContent = st.wins + st.losses ? `${st.winRatePct.toFixed(0)}% · ${st.wins}/${st.wins + st.losses}` : "—";
   $("s-dd").textContent = `${st.maxDrawdownPct.toFixed(1)}%`;
-  $("s-next").textContent =
-    s.runState === "running" && s.cycle.nextRunAt ? countdown(s.cycle.nextRunAt - Date.now()) : "—";
 
   if (!dirty) fillForm(c, s);
   renderPositions(s);
-  renderWatchlist(s);
   renderCandidates(s);
   renderTrades(s);
   renderLogs(s.logs);
@@ -200,9 +190,6 @@ function fillForm(c, s) {
   for (const b of document.querySelectorAll("#seg-mode button"))
     b.setAttribute("aria-pressed", String(b.dataset.v === c.mode));
 
-  $("in-interval").value = c.intervalMinutes;
-  $("lbl-interval").textContent = `${c.intervalMinutes} min`;
-  $("lbl-monitor").textContent = c.monitorSeconds;
   $("in-prompt").value = c.prompt;
   $("mode-hint").textContent =
     c.mode === "live"
@@ -310,34 +297,6 @@ function renderPositions(s) {
     .join("");
 }
 
-/** What the analyst is watching before it buys: its note, and the price since it was added. */
-function renderWatchlist(s) {
-  const rows = s.watchlist || [];
-  const r = s.watchRules;
-  const now = Date.now();
-  $("c-watch").textContent = `${rows.length}/${r.max}`;
-  $("watch-rules").textContent = `checked every ${r.everyMinutes}m · dropped after ${r.ttlMinutes}m`;
-  $("e-watch").hidden = rows.length > 0;
-  $("tbl-watch").querySelector("tbody").innerHTML = rows
-    .map((w) => {
-      const c = w.c;
-      const first = w.prices[0]?.price || 0;
-      const chg = first > 0 ? (c.priceUsd / first - 1) * 100 : 0;
-      // Supply is fixed, so the market cap at the add is the current one scaled back by price.
-      const mcThen = first > 0 && c.priceUsd > 0 ? usd((c.marketCapUsd / c.priceUsd) * first, 0) : "—";
-      const trail = w.prices.map((p) => `${clock(p.at)}  ${price(p.price)}`).join("\n");
-      return `<tr>
-        <td class="sym"><a class="linkish" href="${esc(tokenUrl(w.chain, c.address))}" target="_blank" rel="noopener">${esc(c.symbol)}</a>
-          <small title="${esc(w.note)}">${esc(w.note)}</small></td>
-        <td class="r muted">${mcThen}</td>
-        <td class="r">${usd(c.marketCapUsd, 0)}</td>
-        <td class="r ${tone(chg)}" title="${esc(trail)}">${pct(chg)}</td>
-        <td class="r muted">${dur(w.addedAt + r.ttlMinutes * 60000 - now)}</td>
-      </tr>`;
-    })
-    .join("");
-}
-
 const ruleLabel = (r) =>
   ({
     tp: `TP +${r.at}% · ${r.sell}%`,
@@ -401,12 +360,12 @@ function renderCandidates(s) {
       const verdict = !pass
         ? '<span class="status is-fail" title="failed a safety check (reason below) — never shown to the AI, cannot be bought">blocked</span>'
         : c.analystNote === "sent"
-          ? '<span class="status is-pass" title="passed the safety checks and was shown to the AI analyst this cycle. Reviewed is not bought — the analyst still has to back it, now or after watching it">reviewed</span>'
-          : c.analystNote === "on the watchlist"
-            ? '<span class="status is-pass" title="already on the watchlist — the analyst follows it there instead of re-reading it here">watched</span>'
-            : '<span class="status" title="passed the safety checks but was not shown to the AI this cycle — reason below">skipped</span>';
+          ? '<span class="status is-pass" title="passed the safety checks and was shown to the AI analyst, which has not asked for it back yet. Reviewed is not bought — the analyst still has to back it">reviewed</span>'
+          : c.analystNote === "queued"
+            ? '<span class="status" title="passed the safety checks and goes to the AI analyst in its next call, with every other row that is due">queued</span>'
+            : '<span class="status" title="passed the safety checks but will not be shown to the AI — reason below">skipped</span>';
       // "sent" already says it went to the analyst; the note only carries what the pill can't.
-      const note = pass ? (c.analystNote === "sent" ? "" : (c.analystNote ?? "")) : c.gateFailures.join(", ");
+      const note = pass ? (c.analystNote === "sent" || c.analystNote === "queued" ? "" : (c.analystNote ?? "")) : c.gateFailures.join(", ");
       // Age reads on its own rather than buried in the meta line: on a memecoin it is half the trade.
       return `<article class="sounding${pass ? "" : " is-blocked"}">
         <header class="sounding-head">
@@ -618,7 +577,7 @@ function collectConfig() {
     const v = Number($(id).value);
     return Number.isFinite(v) ? v : fallback;
   };
-  // Refine boxes are plain text, so tolerate how people actually type numbers ("50,000",
+  // Feed filters boxes are plain text, so tolerate how people actually type numbers ("50,000",
   // "1 500"). Blank stays blank — that is the "no filter" signal — and anything still
   // unreadable is dropped rather than sent as NaN.
   const refine = {};
@@ -633,7 +592,6 @@ function collectConfig() {
   return {
     chain: chain || undefined,
     mode: document.querySelector('#seg-mode button[aria-pressed="true"]')?.dataset.v ?? "paper",
-    intervalMinutes: n("in-interval", 15),
     prompt: $("in-prompt").value,
     positionSizeNative: sizesWithInput(),
     maxOpenPositions: n("in-maxpos", 5),
@@ -726,11 +684,6 @@ $("btn-confirm-live").addEventListener("click", async () => {
   await save();
 });
 
-$("in-interval").addEventListener("input", (e) => {
-  $("lbl-interval").textContent = `${e.target.value} min`;
-  dirty = true;
-});
-$("in-interval").addEventListener("change", save);
 
 // ── exit builder ──────────────────────────────────────────────────────
 // These rows are the exit plan every new position is opened with. Leave the list
@@ -819,7 +772,7 @@ document.addEventListener("click", (e) => {
 $("in-prompt").addEventListener("input", () => (dirty = true));
 $("in-prompt").addEventListener("blur", save);
 
-for (const el of document.querySelectorAll('.fold input[type="number"], .fold input[type="text"]')) {
+for (const el of document.querySelectorAll('.fold input[type="number"], .fold input[type="text"], #refine input')) {
   el.addEventListener("input", () => (dirty = true));
   el.addEventListener("change", save);
 }
@@ -873,6 +826,7 @@ $("btn-run").addEventListener("click", async () => {
 });
 
 $("btn-scan").addEventListener("click", () => post("/api/scan"));
+$("btn-refine").addEventListener("click", () => $("refine").showModal());
 
 /**
  * In-page confirmation. window.confirm() is auto-dismissed — it returns false without ever
@@ -926,10 +880,3 @@ function connect() {
 }
 
 connect();
-setInterval(() => {
-  if (!state) return;
-  $("s-next").textContent =
-    state.runState === "running" && state.cycle.nextRunAt
-      ? countdown(state.cycle.nextRunAt - Date.now())
-      : "—";
-}, 1000);

@@ -102,8 +102,6 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
     const locked = chainLock(before, store.positions.length, body ?? {});
     if (locked) return { ok: false, error: locked };
     const cfg = store.updateConfig(body ?? {});
-    if (cfg.intervalMinutes !== before.intervalMinutes || cfg.monitorSeconds !== before.monitorSeconds)
-      engine.reschedule();
     if (cfg.mode !== before.mode) store.log("info", `Mode switched to ${cfg.mode}.`);
     if (cfg.chain !== before.chain) store.log("info", `Chain switched to ${cfg.chain.toUpperCase()}.`);
     // Live sizing is the wallet's, not the paper bankroll's. Without this the dashboard
@@ -192,7 +190,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`\n  tidal · dashboard on http://${HOST}:${PORT}`);
-  console.log(`  mode: ${store.config.mode}   chain: ${store.config.chain}   interval: ${store.config.intervalMinutes}m`);
+  console.log(`  mode: ${store.config.mode}   chain: ${store.config.chain}`);
   if (!process.env.OPENROUTER_API_KEY) console.log("  ! OPENROUTER_API_KEY missing — set it in .env before starting the agent");
   if (process.env.GMGN_ALLOW_AUTOMATED_TRADES === "1") console.log("  ! automated live trades are ENABLED in this shell");
   console.log("");

@@ -1,14 +1,13 @@
 import { minPosition, liveReady, tradeSize } from "./domain/config.ts";
 import { clamp } from "./domain/num.ts";
-import { WATCH_MINUTES } from "./domain/watchlist.ts";
 import { store } from "./data/store.ts";
 import * as gmgn from "./market/gmgn.ts";
 import * as jupiter from "./market/jupiter.ts";
 import { arm, cancelInFlight, disarm, onResume } from "./cycle/control.ts";
 import { closePosition } from "./cycle/exits.ts";
 import { runMonitor, stopStreams } from "./cycle/monitor.ts";
-import { runScan, syncLiveBalance } from "./cycle/scan.ts";
-import { runWatch } from "./cycle/watch.ts";
+import { runAnalyst } from "./cycle/analyse.ts";
+import { FETCH_SECONDS, runScan, syncLiveBalance } from "./cycle/scan.ts";
 
 /**
  * The lifecycle, and the whole surface `src/index.ts` drives. Everything below assembles the
@@ -16,6 +15,9 @@ import { runWatch } from "./cycle/watch.ts";
  */
 
 export { syncLiveBalance };
+
+/** One fetch, then the analyst on whatever it left queued. Two loops, joined only by this kick. */
+const fetchThenAnalyse = (): void => void runScan().then(runAnalyst);
 
 // A loss halt resumes through the same checks as Start. If they refuse, it stays halted and says why.
 onResume(() => {
@@ -63,11 +65,10 @@ export async function start(): Promise<{ ok: boolean; error?: string }> {
   store.haltReason = "";
   store.log(
     "info",
-    `Started on ${cfg.chain.toUpperCase()} in ${cfg.mode} mode — scanning every ${cfg.intervalMinutes}m, watchlist every ${WATCH_MINUTES}m, checking exits every ${cfg.monitorSeconds}s.`,
+    `Started on ${cfg.chain.toUpperCase()} in ${cfg.mode} mode — fetching tokens every ${FETCH_SECONDS}s, analysing whatever is due after each fetch, checking exits every ${cfg.monitorSeconds}s.`,
   );
 
-  arm(cfg.monitorSeconds, cfg.intervalMinutes, 1500, () => void runMonitor(), () => void runScan(), () => void runWatch());
-  store.nextRunAt = Date.now() + 1500;
+  arm(cfg.monitorSeconds, FETCH_SECONDS, 1500, () => void runMonitor(), fetchThenAnalyse);
   store.push();
   return { ok: true };
 }
@@ -80,7 +81,6 @@ export function stop(keepState = false): void {
     store.runState = "stopped";
     store.log("info", "Stopped. Open positions are left untouched — close them from the dashboard if you want out.");
   }
-  store.nextRunAt = 0;
   store.push();
 }
 
@@ -104,16 +104,9 @@ export async function wallets(fresh = false): Promise<{ at: number; list: gmgn.B
   return walletCache;
 }
 
-/** Restart the timers so a changed interval takes effect immediately. */
-export function reschedule(): void {
-  if (store.runState !== "running") return;
-  arm(store.config.monitorSeconds, store.config.intervalMinutes, null, () => void runMonitor(), () => void runScan(), () => void runWatch());
-  store.nextRunAt = Date.now() + store.config.intervalMinutes * 60_000;
-  store.push();
-}
-
 export async function scanNow(): Promise<void> {
   await runScan();
+  await runAnalyst();
 }
 
 export async function manualClose(positionId: string, percent = 100): Promise<{ ok: boolean; error?: string }> {

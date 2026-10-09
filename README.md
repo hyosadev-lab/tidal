@@ -27,11 +27,11 @@ Pembagiannya disengaja:
 - **Model cuma milih dan nulis tesis.** Dia me-ranking kandidat yang *udah* lolos semua gate,
   boleh nolak, boleh minta exit lebih awal — tapi gak bisa melonggarkan satu pun batas risiko.
 
-### 1. Scan (tiap `interval` menit)
+### 1. Scan (tiap 1 menit)
 
 Tiga feed digabung: `market trending` 1 jam, `market trending` 5 menit, dan `market trenches`
-(token yang udah graduate). Baris **Refine** didorong ke server GMGN biar hemat rate limit —
-kalau Refine kosong, feed-nya diambil apa adanya.
+(token yang udah graduate). Baris **Feed filters** didorong ke server GMGN biar hemat rate limit —
+kalau Feed filters kosong, feed-nya diambil apa adanya.
 
 ### 2. Gate — gagal satu, gugur
 
@@ -49,16 +49,16 @@ gak lolos ke sizing. Itu isi `runGates` (`src/trading/core/plan.ts`) selengkapny
 
 **Smart money, `rug_ratio`, top-10 holder, kedalaman kolam, dan status dev gak menggugurkan
 apa-apa.** Semuanya tetap dibaca, dikasih bobot sama `score()`, ditampilin ke analis, dan bisa
-disaring per-feed lewat panel **Refine** di dashboard — tapi gak ada yang didiskualifikasi
+disaring per-feed lewat panel **Feed filters** di dashboard — tapi gak ada yang didiskualifikasi
 karenanya. Ini keputusan operator, bukan kelupaan, dan konsekuensinya perlu diinget: token
 dengan kolam $2k, tanpa smart money, dan dev masih megang bakal nyampe ke analis kelihatan sama
-aja kayak baris lain. Yang berdiri antara dia dan posisi cuma analis, filter Refine, dan
+aja kayak baris lain. Yang berdiri antara dia dan posisi cuma analis, Feed filters, dan
 penolakan pre-trade di bawah.
 
 Sweep-nya juga gak punya lantai sendiri. `gatherCandidates` (`src/trading/engine.ts`) cuma
-ngirim baris **Refine** ke GMGN — Refine kosong artinya feed-nya gak disaring sama sekali, dan
+ngirim baris **Feed filters** ke GMGN — Feed filters kosong artinya feed-nya gak disaring sama sekali, dan
 sesi kayak gitu bakal nyeret jauh lebih banyak sampah per siklus. Itu memang disengaja: satu
-angka default di kode cuma bakal jadi gate yang ganti nama. Kalau mau lantai, isi Refine.
+angka default di kode cuma bakal jadi gate yang ganti nama. Kalau mau lantai, isi Feed filters.
 
 Sisanya bukan gate, tapi **penolakan pre-trade** — sekali per entry, lewat `token_security`,
 karena cuma route itu yang jawabannya bisa dipercaya (baris feed sering mengosongkannya):
@@ -137,9 +137,8 @@ jalan lagi sampai besok atau sampai kamu start manual. Reset otomatis tengah mal
 - **Mode** — paper atau live (live minta konfirmasi ketik, lihat di bawah)
 - **Start / Stop** — posisi terbuka sengaja dibiarkan pas stop; tutup manual kalau mau keluar
 - **Instructions** — prompt opsional buat ngarahin analis, plus 4 preset siap pakai
-- **Interval** — menit antar scan; exit tetap dicek tiap 5 detik
 - **Risk envelope** — semua angka di atas bisa diubah dari UI
-- **Refine** — filter per-feed (umur, likuiditas, mcap, KOL, smart money, top-10, dev, insider);
+- **Feed filters** — filter per-feed (umur, likuiditas, mcap, KOL, smart money, top-10, dev, insider);
   nyaring apa yang di-fetch, bukan gate
 - **Scan now** — paksa satu siklus tanpa nunggu timer
 

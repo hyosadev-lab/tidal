@@ -15,6 +15,6 @@ const { openEntries } = await import("../../../src/core/cycle/entries.ts");
 test("openEntries buys nothing while halted — a manual scan cannot slip past the loss limit", async () => {
   store.runState = "halted";
   const entries = [{ address: "0xabc", symbol: "T" }] as Parameters<typeof openEntries>[0];
-  assert.equal(await openEntries(entries, [], store.config, 3, 0, "sweep"), 0);
+  assert.equal(await openEntries(entries, [], store.config, 3, 0), 0);
   assert.equal(store.positions.length, 0);
 });

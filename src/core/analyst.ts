@@ -2,28 +2,22 @@ import { store } from "./data/store.ts";
 import { breakevenPct } from "./domain/chains.ts";
 import { tradeSize } from "./domain/config.ts";
 import { CONVICTION_FLOOR, entryStrategy, pnlPct, positionSize } from "./domain/positions.ts";
-import { WATCH_MAX, WATCH_MINUTES, WATCH_TTL_MINUTES } from "./domain/watchlist.ts";
-import type { Candidate, Decision, StrategyRule, TradeConfig, Watch } from "./domain/types.ts";
+import type { Candidate, Decision, StrategyRule, TradeConfig } from "./domain/types.ts";
 import { runAgent } from "../agent/llm.ts";
 import { budgetedTools } from "../agent/tools.ts";
 import { loadSkills, type Skill } from "../agent/skills.ts";
 import * as gmgn from "./market/gmgn.ts";
 
 /**
- * The model half of a cycle: what the analyst is told, and what comes back.
- * `engine.ts` owns everything that spends money; nothing here does.
+ * The model half: what the analyst is told, and what comes back. Nothing here spends money.
  *
- * One analyst, two stages. `sweep` reads the whole candidate list: it buys what it is convinced
- * of now and puts on the watchlist what needs to be seen doing something first. `watch` reads
- * only the watchlist, each token with its price trail and the note the sweep left, and buys,
- * keeps or drops. Either stage may spend up to `LOOKUP_BUDGET` read-only GMGN lookups (token
- * info, kline, traders, holders, market signal). All read routes: nothing here can spend money, and the budget is what
- * stops the analyst from eating the rate limit the sweep runs on.
+ * One call per batch. `cycle/analyse.ts` hands it every row that is due — the tokens a fetch has
+ * just surfaced and the ones it asked to see again — and the answer is what to buy and when it
+ * wants each of the rest back. The brief is meant to be enough: up to `LOOKUP_BUDGET` read-only
+ * GMGN lookups are there for the case where it is not, and none is required.
  */
 
-export type Stage = "sweep" | "watch";
-
-/** Deep-dive lookups the analyst may spend per call, in either stage. Shares GMGN's bucket with the sweep. */
+/** Deep-dive lookups the analyst may spend per call. Shares GMGN's bucket with the fetch and the monitor. */
 const LOOKUP_BUDGET = 12;
 
 // ── the brief ─────────────────────────────────────────────────────────
@@ -98,13 +92,13 @@ ${time}
   break-even: +${hurdle.toFixed(1)}% on a position of this size — a rule that exits under it books a loss`;
 }
 
-function systemPrompt(cfg: TradeConfig, hurdle: number, stage: Stage): string {
+function systemPrompt(cfg: TradeConfig, hurdle: number): string {
   // Deliberately thin: what the machine enforces, what to return, and the exit plan. *Selection*
   // policy — what makes a token worth buying — is the operator's, and arrives in
   // `userPromptBlock` from the dashboard. Adding house strategy back here overrules that box.
   const policy = cfg.prompt.trim()
     ? "Your selection policy is the operator's, in OPERATOR INSTRUCTIONS at the end of this message. Follow it. Where it is silent, judge from the numbers in the brief."
-    : "The operator has left the instruction box empty this cycle, so selection is entirely your judgment on the numbers in the brief.";
+    : "The operator has left the instruction box empty, so selection is entirely your judgment on the numbers in the brief.";
 
   const head = `You are a memecoin trader, sitting as the analyst for an automated trading agent on ${cfg.chain.toUpperCase()}, running in ${cfg.mode.toUpperCase()} mode.
 
@@ -115,16 +109,12 @@ How you trade, whatever the operator's policy below asks you to look for:
 - No chasing. A token already far up its move with the buyers thinning is someone else's exit.
 - Capital first. A missed runner costs nothing; a bad entry costs the round trip and the slot.
 
-You work in two stages, each a separate call with no memory of the last beyond what the brief carries:
-1. SWEEP, every ${cfg.intervalMinutes}m — you read every pre-screened candidate. One you are convinced of on what you can see now, you buy; one that needs to be seen doing something first goes on the watchlist.
-2. WATCH, every ${WATCH_MINUTES}m — you see only the watchlist, each token with its price since you added it and the note you left, and decide: buy, keep watching, or drop.
+The feeds are fetched every minute. Each call shows you the pre-screened tokens that are due: the ones seen for the first time (\`first_look: true\`) and the ones you asked to see again. For each you answer buy or pass, and you set when you want it back. Each call stands alone — you have no memory of the last.
 You do not place orders and you do not manage exits — the engine does that.
-
-THIS CALL IS THE ${stage.toUpperCase()} STAGE.
 
 ${policy}`;
 
-  // What a row's fields mean — the same row shape in both stages.
+  // What a row's fields mean.
   const rows = `- \`null\` on a candidate field means that row's feed did not report it — a blank, not a zero.
 - \`buys\`, \`sells\`, \`swaps_1h\` and \`volume_1h_usd\` cover the row's own longer window — an hour on the rank feed, 24h on a \`graduated\` row. The \`_5m\` fields cover the last five minutes.
 - \`seen_in\` names the feed the row came from — \`trending-1h\`, \`trending-5m\` or \`graduated\`, all three rankings, and the numbers on the row are theirs. Two names is one token found twice: mild confirmation, nothing more.
@@ -138,69 +128,27 @@ You may request one when the thesis you wrote is dead on the numbers now in fron
 
   const sizing = `- Sizing: a fixed ${tradeSize(cfg)} ${gmgn.NATIVE_SYMBOL[cfg.chain]} per position — the same every entry, max ${cfg.maxOpenPositions} open at once. Conviction does not change the size, it only decides whether the entry happens at all: the engine buys only above ${CONVICTION_FLOOR}, so ${CONVICTION_FLOOR} itself is a refusal and anything at or below it is the same as leaving the token out.`;
 
-  const narrow =
-    stage === "sweep"
-      ? "Shortlisting from the brief costs nothing, so narrow first and look only at rows you are close to buying."
-      : "Look only at rows you are close to buying.";
+  const tools = `TOOLS (optional — ${LOOKUP_BUDGET} lookups, this call only)
 
-  const tools = `TOOLS (${LOOKUP_BUDGET} lookups, this call only)
+Decide from the brief when the brief is enough: a token you would pass on needs no lookup, and neither does one whose numbers already make the case. Pull a lookup only when its answer would change your decision or your exit plan, and only on a row you are close to buying.
 
-\`gmgn_token_kline\` — OHLCV candles — and \`gmgn_token_info\` — the full profile: bundler and sniper concentration, fresh-wallet and bot rates, deployer history, launch liquidity against current, distance from the all-time high, and the buy vs sell volume split no feed in the brief carries. \`gmgn_token_traders\` — the wallets themselves, ranked: what each paid, whether they are still in, and where they were funded from, which is how a bundled or single-actor holder set stops looking like a crowd. \`gmgn_token_holders\` — the same wallets ranked by what they hold now, which adds the pool and anyone who was sent supply without buying it; it overlaps \`gmgn_token_traders\`, so pull one of the two on a token. All four work on any address in the brief or in \`open_positions\`.
+\`gmgn_token_kline\` — OHLCV candles: how far this token travels between candles, which is what an exit plan is sized against. \`gmgn_token_info\` — the full profile: bundler and sniper concentration, fresh-wallet and bot rates, deployer history, launch liquidity against current, distance from the all-time high, and the buy vs sell volume split the brief does not carry. \`gmgn_token_traders\` — the wallets themselves, ranked: what each paid, whether they are still in, and where they were funded from. \`gmgn_token_holders\` — the same wallets ranked by what they hold now, which adds the pool and anyone who was sent supply without buying it; it overlaps \`gmgn_token_traders\`, so pull one of the two. All four work on any address in the brief or in \`open_positions\`.
 
-\`gmgn_market_signal\` is the odd one: it takes no address and returns GMGN's most recent alerts for a chain (smart-money buy, price spike, new high). Most of that list is not in your brief and cannot be bought — it is a cross-check on a row you already have, not a place to find new ones.
+\`gmgn_market_signal\` takes no address and returns GMGN's most recent alerts for a chain (smart-money buy, price spike, new high). Nothing on that list can be bought — it is a cross-check on a row you already have, not a place to find new ones.
 
-**Every address you put in \`entries\` must have had \`gmgn_token_kline\` pulled on it this call** — the exit plan below is yours to write, and you cannot size one without seeing how far this token actually travels between candles.
-
-How you spend the rest is your call, and spending it well is part of the job. ${narrow} \`gmgn_token_info\` is the one that answers what the brief structurally cannot: a row can be clean on every number you were given and 62% bundled underneath. Budget left unspent on a token you entered half-blind was not saved, and calls past the budget return a refusal instead of data — decide on what you have then.
-
-One call per token per route. Rows are free inside a request — \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does and \`gmgn_token_traders\` and \`gmgn_token_holders\` five times, so raise \`limit\` rather than calling again at a second resolution or for more wallets. Every request here shares one limiter with the sweep and with the buys that follow, and it makes callers wait rather than fail — a redundant lookup is paid in the next sweep's candidate list, not in an error you would see.`;
+One call per token per route. \`gmgn_token_kline\` costs twice what \`gmgn_token_info\` does and \`gmgn_token_traders\` and \`gmgn_token_holders\` five times, so raise \`limit\` rather than calling again. Every request shares one limiter with the feed and with the buys that follow, and it makes callers wait rather than fail. Calls past the budget return a refusal instead of data — decide on what you have then.`;
 
   const entry = `{"address":"...","symbol":"...","conviction":0-100,"stopLossPct":${Math.min(10, cfg.stopLossPct)}-${cfg.stopLossPct},${cfg.fixedStrategy ? "" : '"strategy":[{"kind":"tp|sl","at":<%>,"sell":<%>}],'}"thesis":"one or two sentences of concrete reasoning"}`;
-
-  if (stage === "sweep")
-    return `${head}
-
-THE MACHINE (facts, not advice)
-
-- You may buy or watch only tokens from the candidate list. An address that is not in it was never screened, priced or sized, so naming it in \`entries\` or \`watch\` is refused.
-${rows}
-- Two ways to act on a candidate. \`entries\` buys it now — for a setup that is already there on the brief and the candles you pulled. \`watch\` defers it — for a setup that needs something to happen first (a pullback to a level, flow confirming, a breakout holding). Do not buy what you would rather see confirmed, and do not park on the watchlist what is ready now: the next look at it is ${WATCH_MINUTES} minutes away. A token named in both is bought.
-- The watchlist holds at most ${WATCH_MAX} tokens; \`watch_slots\` is how many are free now and \`watchlist\` is what is on it. To add past that, \`unwatch\` something in the same answer. Tokens already on it are not in the candidate list — they are bought from the watch stage, not here.
-- A watched token is looked at again every ${WATCH_MINUTES} minutes by the watch stage, which can buy it, and is dropped automatically after ${WATCH_TTL_MINUTES} minutes unbought — so watch what could be worth buying within the half hour, not what might be interesting some day.
-- \`note\` is the only thing the watch stage will know about why a token is there. Write what you are waiting to see before buying and what would make you drop it, in numbers where you can ("holding above $X with buys_5m still ahead of sells_5m; drop under $Y or if top10 climbs"). A note that only says the token looks good gives the next call nothing to check.
-${sizing}
-- Empty \`entries\` and \`watch\` arrays are valid answers, and a full watchlist you are content with needs no edits.
-
-${tools}
-
-${exitPlan(cfg, hurdle)}
-
-${exits}
-
-OUTPUT
-
-Reply with raw JSON only. No prose, no markdown fences.
-{
-  "entries": [${entry}],
-  "watch":   [{"address":"...","symbol":"...","note":"what you are waiting to see, and what would kill it"}],
-  "unwatch": [{"address":"...","reason":"what changed"}],
-  "exits":   [{"address":"...","percent":1-100,"reason":"what changed"}],
-  "notes":   "one line on the market read this cycle"
-}
-
-${tail}`;
 
   return `${head}
 
 THE MACHINE (facts, not advice)
 
-- The candidates in this brief ARE the watchlist. You may buy only from it.
-- Every row carries a \`watch\` block: \`note\` (what the sweep stage was waiting for), \`minutes_watched\`, \`price_when_added\`, \`change_since_added_pct\` and \`trail\` — the price at each look since, oldest first, with how many minutes ago it was taken. That trail is the reason this stage exists: judge the token on what it did while you watched, against the note, not on the snapshot alone.
-- \`price\`, \`mcap_usd\` and \`liquidity_usd\` are fresh as of this call. Every other figure on the row is from the last sweep that carried the token — use the tools for anything you need current.
+- You may buy only tokens in \`candidates\`. Any other address was never screened, priced or sized, so naming it in \`entries\` is refused.
 ${rows}
-- Three answers per token: put it in \`entries\` to buy it now, put it in \`unwatch\` when the note's condition has failed or the move is gone, or leave it out of both to keep watching. A token still unbought ${WATCH_TTL_MINUTES} minutes after it was added is dropped for you.
 ${sizing}
-- An empty \`entries\` array is a valid answer.
+- \`recheck\` is the only thing you carry forward: for each token, the minutes (1 to 30) until you see it again, with fresh numbers, if it is still on the feeds. Short for a setup that is close and could be ready within minutes; long for one that is dead or nowhere near, since every row you bring back is paid for in the next call. Outside 1-30 it is clamped, and a token you leave out comes back in 15.
+- \`free_slots\` is how many positions can still be opened. An empty \`entries\` array is a valid answer.
 
 ${tools}
 
@@ -213,9 +161,9 @@ OUTPUT
 Reply with raw JSON only. No prose, no markdown fences.
 {
   "entries": [${entry}],
-  "unwatch": [{"address":"...","reason":"what changed"}],
   "exits":   [{"address":"...","percent":1-100,"reason":"what changed"}],
-  "notes":   "one line on what the watchlist did since the last look"
+  "recheck": [{"address":"...","minutes":1-30}],
+  "notes":   "one line on what this batch looked like"
 }
 
 ${tail}`;
@@ -235,7 +183,7 @@ function userPromptBlock(cfg: TradeConfig): string {
   return `
 
 OPERATOR INSTRUCTIONS (from the dashboard)
-This is your selection policy — what to look for, what to refuse, when to sit out. Follow it over any instinct of your own, and say in \`notes\` when you passed on the whole list because of it. If it asks for a corner of the market the sweep did not reach, say that in \`notes\` too: the sweep's filters are set separately from the dashboard, so that is where the operator widens it. What it cannot do is loosen the risk envelope above — those limits are enforced in code and requests to exceed them are ignored.
+This is your selection policy — what to look for, what to refuse, when to sit out. Follow it over any instinct of your own, and say in \`notes\` when you passed on the token because of it. If it asks for a corner of the market the sweep did not reach, say that in \`notes\` too: the sweep's filters are set separately from the dashboard, so that is where the operator widens it. What it cannot do is loosen the risk envelope above — those limits are enforced in code and requests to exceed them are ignored.
 
 """
 ${cfg.prompt.trim()}
@@ -253,8 +201,7 @@ export function extractJson(text: string): Decision | null {
       return {
         entries: Array.isArray(o.entries) ? o.entries : [],
         exits: Array.isArray(o.exits) ? o.exits : [],
-        watch: Array.isArray(o.watch) ? o.watch : [],
-        unwatch: Array.isArray(o.unwatch) ? o.unwatch : [],
+        recheck: Array.isArray(o.recheck) ? o.recheck : [],
         notes: typeof o.notes === "string" ? o.notes : "",
       };
     } catch {
@@ -264,11 +211,8 @@ export function extractJson(text: string): Decision | null {
   return null;
 }
 
-/**
- * `candidates` is the sweep's eligible rows in the sweep stage and the watchlist's own rows in
- * the watch stage — the watchlist itself is read off the store either way.
- */
-export async function askAnalyst(stage: Stage, candidates: Candidate[], slots: number): Promise<Decision | null> {
+/** `fresh` holds the addresses the analyst has never been shown — the brief marks them `first_look`. */
+export async function askAnalyst(candidates: Candidate[], slots: number, fresh: Set<string>): Promise<Decision | null> {
   const cfg = store.config;
 
   if (!process.env.OPENROUTER_API_KEY) {
@@ -297,20 +241,6 @@ export async function askAnalyst(stage: Stage, candidates: Candidate[], slots: n
   const typicalSize = positionSize(cfg, store.cash, nativeUsd);
   const hurdle = breakevenPct(cfg.chain, typicalSize, nativeUsd);
 
-  // What the watchlist adds to a row: the note and the price over time.
-  const now = Date.now();
-  const watched = new Map(store.watchlist.map((w) => [w.c.address, w]));
-  const trail = (w: Watch) => {
-    const first = w.prices[0]?.price ?? 0;
-    return {
-      note: w.note,
-      minutes_watched: Math.round((now - w.addedAt) / 60_000),
-      price_when_added: first,
-      change_since_added_pct: first > 0 ? Number(((w.c.priceUsd / first - 1) * 100).toFixed(1)) : null,
-      trail: w.prices.map((p) => ({ minutes_ago: Math.round((now - p.at) / 60_000), price: p.price })),
-    };
-  };
-
   const brief = {
     chain: cfg.chain,
     mode: cfg.mode,
@@ -322,14 +252,9 @@ export async function askAnalyst(stage: Stage, candidates: Candidate[], slots: n
     free_slots: slots,
     day_pnl_pct: Number(store.stats().dayPnlPct.toFixed(2)),
     open_positions: book,
-    ...(stage === "sweep"
-      ? {
-          watch_slots: Math.max(0, WATCH_MAX - watched.size),
-          watchlist: [...watched.values()].map((w) => ({ address: w.c.address, symbol: w.c.symbol, ...trail(w) })),
-        }
-      : {}),
     candidates: candidates.map((c) => ({
       address: c.address,
+      first_look: fresh.has(c.address),
       symbol: c.symbol,
       structure_score: c.score,
       price: c.priceUsd,
@@ -362,29 +287,28 @@ export async function askAnalyst(stage: Stage, candidates: Candidate[], slots: n
       age_minutes: Math.round(c.ageMinutes),
       launchpad: c.launchpad,
       seen_in: c.source,
-      ...(stage === "watch" && watched.has(c.address) ? { watch: trail(watched.get(c.address)!) } : {}),
     })),
   };
 
   const skills = loadSkills();
-  const system = systemPrompt(cfg, hurdle, stage) + skillBlock(skills) + userPromptBlock(cfg);
+  const system = systemPrompt(cfg, hurdle) + skillBlock(skills) + userPromptBlock(cfg);
   // The model is env-dependent and fails silently — a missing .env falls back to the
   // default. Print it so two hosts behaving differently can be compared from the log alone.
-  store.log("model", `Analyst (${stage}): ${process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5 (default)"} · skills: ${skills.map((s) => s.name).join(", ") || "none"}`);
-  const prompt = `${stage === "sweep" ? "Sweep" : "Watch"} brief:\n\n${JSON.stringify(brief, null, 1)}\n\nReturn the JSON decision.`;
+  store.log("model", `Analyst (${candidates.length} tokens): ${process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5 (default)"} · skills: ${skills.map((s) => s.name).join(", ") || "none"}`);
+  const prompt = `Brief:\n\n${JSON.stringify(brief, null, 1)}\n\nReturn the JSON decision.`;
 
   try {
     const res = await runAgent(prompt, {
       system,
       tools: budgetedTools(LOOKUP_BUDGET),
       // Budget + 2: one step to answer after the last lookup, one spare. Past that runAgent
-      // throws and the cycle is a no-op, which is the right failure for a model that loops.
+      // throws and the batch is passed on, which is the right failure for a model that loops.
       maxSteps: LOOKUP_BUDGET + 2,
       onTool: (name, args) => store.log("model", `Analyst lookup: ${name} ${JSON.stringify(args)}`),
     });
     const decision = extractJson(res.text);
     if (!decision) {
-      store.log("warn", "Analyst reply wasn't valid JSON — no action this cycle.", res.text.slice(0, 400));
+      store.log("warn", "Analyst reply wasn't valid JSON — no action on this batch.", res.text.slice(0, 400));
       return null;
     }
     return decision;

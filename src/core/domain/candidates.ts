@@ -78,6 +78,23 @@ export function toCandidate(r: Record<string, any>, source: string): Candidate {
  * size, no entry liquidity to record and nothing to check — naming it spends a slot on a
  * refusal. `blocked` carries the held, cooled-down and blacklisted addresses, lowercased.
  */
+/**
+ * The analyst's next batch: every eligible row that is due, in the pool's order (best score
+ * first). `dueAt` maps a lowercased address to when the analyst asked to see it again — a token
+ * never judged is due now, which is what gets a new arrival analysed straight after the fetch
+ * that carried it. `unavailable` is the store's held / cooldown / blacklist.
+ */
+export function dueNow(
+  pool: Candidate[],
+  dueAt: Map<string, number>,
+  now: number,
+  unavailable: (address: string) => unknown,
+): Candidate[] {
+  return pool.filter(
+    (c) => !c.gateFailures.length && !unavailable(c.address) && now >= (dueAt.get(c.address.toLowerCase()) ?? 0),
+  );
+}
+
 export function buyableSet(eligible: Candidate[], blocked: Set<string>): Map<string, Candidate> {
   const out = new Map<string, Candidate>();
   for (const c of eligible) {

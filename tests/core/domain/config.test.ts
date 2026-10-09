@@ -25,8 +25,7 @@ test("0 is the auto flag on the three fields that have one, not a real value", (
 });
 
 test("out-of-range config is clamped rather than trusted", () => {
-  const c = sanitizeConfig({ intervalMinutes: 0, stopLossPct: -5, maxOpenPositions: 999 });
-  assert.equal(c.intervalMinutes, 1);
+  const c = sanitizeConfig({ stopLossPct: -5, maxOpenPositions: 999 });
   assert.equal(c.stopLossPct, 5);
   assert.equal(c.maxOpenPositions, 20);
 });
@@ -101,5 +100,5 @@ test("chainLock: chain and wallet stay put while a position is open", () => {
   assert.match(chainLock(c, 2, { chain: "bsc" })!, /2 open positions/);
   assert.match(chainLock(c, 1, { walletAddress: "0xdef" })!, /open position first/);
   // the dashboard posts the whole form: unchanged values, in any case, are not a change
-  assert.equal(chainLock(c, 1, { chain: "sol", walletAddress: " 0xabc ", intervalMinutes: 5 }), null);
+  assert.equal(chainLock(c, 1, { chain: "sol", walletAddress: " 0xabc ", maxOpenPositions: 5 }), null);
 });

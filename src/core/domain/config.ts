@@ -11,7 +11,7 @@ import { clamp, num } from "./num.ts";
  */
 
 /**
- * The dashboard's "Refine" panel → GMGN feed filters, one min/max pair per row. These narrow
+ * The dashboard's "Feed filters" panel → GMGN feed filters, one min/max pair per row. These narrow
  * what the feeds *return*; they are not gates and cannot loosen one — `runGates` still runs on
  * every row that comes back, so a slack refine value costs wasted rows, never a wider risk
  * envelope. Config keys are `<key>Min` / `<key>Max`; an absent key means "no filter" (0 is a
@@ -84,7 +84,6 @@ export function refineQuery(refine: Record<string, number>, feed: "rank" | "tren
 export const DEFAULT_CONFIG: TradeConfig = {
   chain: "sol",
   mode: "paper",
-  intervalMinutes: 15,
   monitorSeconds: 5,
   prompt: "",
 
@@ -177,7 +176,6 @@ export function sanitizeConfig(input: Partial<TradeConfig>, base: TradeConfig = 
   return {
     chain,
     mode,
-    intervalMinutes: clamp(input.intervalMinutes, 1, 1440, base.intervalMinutes),
     // Not a dashboard input, so a saved value would pin every existing ledger to the interval it
     // was created with. The default is the setting.
     monitorSeconds: DEFAULT_CONFIG.monitorSeconds,

@@ -19,7 +19,7 @@ import { tokenInfo, kline, tokenTraders, tokenHolders, signals } from "../core/m
  * worked. `git log -- src/agent/tools.ts` has the full GMGN set as it used to be.
  */
 /**
- * Per-cycle lookup budget. GMGN's limiter is process-wide (~20 weight per 30s, IP-scoped) and
+ * Per-call lookup budget. GMGN's limiter is process-wide (~20 weight per 30s, IP-scoped) and
  * the sweep has already spent most of it by the time the analyst runs, so the model gets a
  * small allowance and a plain refusal after it — not an error, so it just answers from the brief.
  */
@@ -28,7 +28,7 @@ export function budgetedTools(max = 6): Record<string, Tool> {
   return Object.fromEntries(
     Object.entries(tools).map(([name, t]) => [
       name,
-      { ...t, run: (a: any) => (left-- > 0 ? t.run(a) : `lookup budget spent (${max} per cycle) — decide on the brief.`) },
+      { ...t, run: (a: any) => (left-- > 0 ? t.run(a) : `lookup budget spent (${max} per call) — decide on the brief.`) },
     ]),
   );
 }
@@ -172,7 +172,7 @@ export const tools: Record<string, Tool> = {
     description:
       "GMGN's latest alerts on a chain — the newest tokens something just happened to. Not a lookup on one " +
       "token: it takes no address and returns a list, most of it tokens that are NOT in your brief. " +
-      "You cannot buy or watch an address that is not in the brief, so use this one way: check whether a row " +
+      "You cannot buy an address that is not in the brief, so use this one way: check whether a row " +
       "you are already considering shows up here. An alert is context, never a reason on its own, and a " +
       "candidate missing from the list is not a mark against it — the list is only the 50 most recent.\n" +
       "signal_type: 12 = smart-money buy, 6 = price spike, 7 = new all-time high.\n" +

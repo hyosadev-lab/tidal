@@ -62,13 +62,13 @@ export function securityRisk(sec: Record<string, any> | null, chain: string): st
  * cannot sell, and rows we cannot read. The graded properties from GMGN's 🔴 Skip column —
  * smart-money count, rug_ratio, top-10 concentration, pool depth, dev still holding — no
  * longer gate. They are still read, still scored by `score()`, still shown to the analyst,
- * and still steerable per-feed from the dashboard's Refine panel; they are simply no longer
+ * and still steerable per-feed from the dashboard's Feed filters panel; they are simply no longer
  * a refusal. That moves the call on a thin pool or a concentrated holder set from this
  * function to the analyst and the operator.
  *
  * Worth being explicit about what that costs: a candidate with zero smart money, a 0.9
  * rug_ratio, 90% in the top ten and a $2k pool now reaches the analyst, and only the analyst
- * and the Refine filters stand between it and a position. `securityRisk` is unchanged and
+ * and the feed filters stand between it and a position. `securityRisk` is unchanged and
  * still refuses honeypot-equivalents, high tax, live mint/freeze authority and unburned
  * liquidity before any entry, on every chain.
  *

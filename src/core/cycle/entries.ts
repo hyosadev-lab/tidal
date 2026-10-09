@@ -24,12 +24,6 @@ export async function openEntries(
   cfg: TradeConfig,
   slots: number,
   gen: number,
-  /**
-   * Which stage is buying. Prefixed onto the thesis, which is the trade's `reason` — so the
-   * ledger says how many buys came straight off a sweep and how many through the watchlist.
-   * ponytail: a text prefix, not a column. Give `Trade` a field if this ever needs querying.
-   */
-  via: "sweep" | "watchlist",
 ): Promise<number> {
   // The daily loss halt is enforced here, the one place that buys: a manual scan still runs
   // while halted, and its exits are welcome — its entries are not.
@@ -59,7 +53,7 @@ export async function openEntries(
         "warn",
         // The address is what the lookup actually used, so log it: a mistyped or omitted
         // one looks identical to a gate failure without it.
-        `Analyst picked ${String(e.symbol ?? "?").slice(0, 20)} (${String(e.address ?? "no address").slice(0, 24)}), which is not eligible — it failed a gate, is on cooldown, or has not been on the watchlist long enough. Skipped.`,
+        `Analyst picked ${String(e.symbol ?? "?").slice(0, 20)} (${String(e.address ?? "no address").slice(0, 24)}), which is not eligible — it failed a gate, is on cooldown, or was not the token it was shown. Skipped.`,
       );
       continue;
     }
@@ -85,7 +79,7 @@ export async function openEntries(
       gen,
       c,
       size,
-      `[${via}] ${String(e.thesis ?? "").slice(0, 400)}`,
+      String(e.thesis ?? "").slice(0, 400),
       conviction,
       entryStop(cfg, e.stopLossPct),
       entryStrategy(cfg, e.strategy),

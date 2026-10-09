@@ -16,8 +16,6 @@ export type StrategyRule = { kind: "tp" | "sl"; at?: number; sell: number };
 export type TradeConfig = {
   chain: Chain;
   mode: Mode;
-  /** Minutes between full scan + analysis cycles. */
-  intervalMinutes: number;
   /** Seconds between price refreshes / exit checks (much faster than a scan). */
   monitorSeconds: number;
   /** Free-form user instructions injected into the analyst prompt. */
@@ -44,7 +42,7 @@ export type TradeConfig = {
 
   // ── Discovery / execution ───────────────────────────────────────────
   /**
-   * Dashboard "Refine" rows, keyed `<field>Min` / `<field>Max` — see `REFINE_FIELDS`
+   * Dashboard "Feed filters" rows, keyed `<field>Min` / `<field>Max` — see `REFINE_FIELDS`
    * (config.ts) for the fields and their per-feed GMGN params. Feed query filters, not gates:
    * they are the only thing narrowing what the sweep fetches, and blank means unfiltered.
    * Nothing here disqualifies a candidate — `runGates` is the only thing that does.
@@ -114,26 +112,12 @@ export type Candidate = {
   gateFailures: string[];
   score: number;
   /**
-   * Set by the scan for rows that passed the gates: `"sent"` if the analyst was shown this
-   * row, otherwise why it wasn't. Written here because held / cooldown / blacklist live in
-   * the store and never travel on a Candidate — the dashboard cannot work it out.
+   * Set by the fetch for rows that passed the gates: `"sent"` if the analyst has judged this
+   * token inside the analysis cooldown, `"queued"` if it is waiting its turn, otherwise why it
+   * will not be shown. Written here because held / cooldown / blacklist live in the store and
+   * never travel on a Candidate — the dashboard cannot work it out.
    */
   analystNote?: string;
-};
-
-/**
- * A token the analyst is watching before it decides whether to buy. The sweep puts it here, the
- * watch tick is the only place it can be bought from — see `domain/watchlist.ts` for the limits.
- */
-export type Watch = {
-  chain: Chain;
-  /** The row as a sweep last saw it, with price, market cap and liquidity kept fresh by the watch tick. */
-  c: Candidate;
-  addedAt: number;
-  /** What the analyst said it is waiting for — the only memory one call hands the next. */
-  note: string;
-  /** Price at each look, oldest first: the sweep that added it, then every tick since. */
-  prices: { at: number; price: number }[];
 };
 
 export type Position = {
@@ -232,17 +216,11 @@ export type Snapshot = {
   haltReason: string;
   config: TradeConfig;
   positions: Position[];
-  watchlist: Watch[];
-  /** The limits in `domain/watchlist.ts`, so the dashboard does not keep its own copy. */
-  watchRules: { max: number; ttlMinutes: number; everyMinutes: number };
   trades: Trade[];
   logs: LogEntry[];
   equity: EquityPoint[];
   stats: Stats;
   cycle: {
-    count: number;
-    lastRunAt: number;
-    nextRunAt: number;
     busy: boolean;
     phase: string;
     lastCandidates: Candidate[];
@@ -268,7 +246,7 @@ export type Stats = {
   dayPnlPct: number;
 };
 
-/** What the analyst model returns. The sweep stage fills `watch`, the watch stage `entries`. */
+/** What the analyst model returns for the batch of tokens it was shown. */
 export type Decision = {
   entries: {
     address: string;
@@ -280,9 +258,7 @@ export type Decision = {
     thesis: string;
   }[];
   exits: { address: string; percent: number; reason: string }[];
-  /** Sweep stage: tokens to put on the watchlist, with what the analyst is waiting to see. */
-  watch: { address: string; symbol?: string; note: string }[];
-  /** Either stage: tokens to take off it. */
-  unwatch: { address: string; reason: string }[];
+  /** When the analyst wants each token back. Clamped 1–30 in `analyse.ts`; a token left out gets `RECHECK_DEFAULT_MINUTES`. */
+  recheck: { address: string; minutes: number }[];
   notes: string;
 };

@@ -1,7 +1,6 @@
 import { db, insertEquity, insertLog, insertTrade, kvGet, kvSet, rowsJson } from "./db.ts";
 import { DEFAULT_CONFIG, liveReady, sanitizeConfig } from "../domain/config.ts";
-import { WATCH_MAX, WATCH_MINUTES, WATCH_TTL_MINUTES } from "../domain/watchlist.ts";
-import type { Candidate, EquityPoint, LogEntry, LogLevel, Position, RunState, Snapshot, Stats, Trade, TradeConfig, Watch } from "../domain/types.ts";
+import type { Candidate, EquityPoint, LogEntry, LogLevel, Position, RunState, Snapshot, Stats, Trade, TradeConfig } from "../domain/types.ts";
 
 /** Only what the tide strip draws — the table keeps the rest. */
 const MAX_EQUITY = 2000;
@@ -10,7 +9,6 @@ const MAX_EQUITY = 2000;
 type Persisted = {
   cash: number;
   positions: Position[];
-  watchlist: Watch[];
   dayStartEquity: number;
   dayStamp: string;
   peakEquity: number;
@@ -38,7 +36,6 @@ function emptyState(cfg: TradeConfig): Persisted {
   return {
     cash: cfg.paperStartEquityUsd,
     positions: [],
-    watchlist: [],
     dayStartEquity: cfg.paperStartEquityUsd,
     dayStamp: today(),
     peakEquity: cfg.paperStartEquityUsd,
@@ -55,9 +52,11 @@ export class Store {
   haltReason = "";
   phase = "idle";
   busy = false;
-  lastRunAt = 0;
-  nextRunAt = 0;
   lastCandidates: Candidate[] = [];
+  /** The whole last fetch, best score first — what the analyst's queue is drawn from. Not persisted. */
+  pool: Candidate[] = [];
+  /** Lowercased address → when the analyst may see it again. Not persisted: a restart re-reads the feed. */
+  analysed = new Map<string, number>();
 
   private s: Persisted;
   private subs = new Set<(ev: string, data: unknown) => void>();
@@ -78,7 +77,6 @@ export class Store {
       ...base,
       ...raw,
       positions: Array.isArray(raw.positions) ? raw.positions : [],
-      watchlist: Array.isArray(raw.watchlist) ? raw.watchlist : [],
       cooldowns: raw.cooldowns && typeof raw.cooldowns === "object" ? raw.cooldowns : {},
       blacklist: Array.isArray(raw.blacklist) ? raw.blacklist : [],
     };
@@ -184,22 +182,6 @@ export class Store {
   addTrade(t: Trade): void {
     insertTrade(t);
     this.emit("trade", t);
-  }
-
-  // ── watchlist ─────────────────────────────────────────────────────
-  get watchlist(): Watch[] {
-    return this.s.watchlist;
-  }
-
-  watching(address: string): boolean {
-    return this.s.watchlist.some((w) => w.c.address.toLowerCase() === address.toLowerCase());
-  }
-
-  /** Takes what a `domain/watchlist.ts` rule returned: the new list, and why it changed. */
-  setWatchlist(r: { list: Watch[]; notes: string[] }): void {
-    this.s.watchlist = r.list;
-    for (const n of r.notes) this.log("info", `Watchlist: ${n}`);
-    this.save();
   }
 
   // ── cooldown / blacklist ──────────────────────────────────────────
@@ -340,6 +322,8 @@ export class Store {
     this.lastEquityAt = 0;
     this.s = emptyState(this.config);
     this.lastCandidates = [];
+    this.pool = [];
+    this.analysed.clear();
     this.runState = "stopped";
     this.haltReason = "";
     this.save();
@@ -370,16 +354,11 @@ export class Store {
       haltReason: this.haltReason,
       config: this.config,
       positions: this.s.positions,
-      watchlist: this.s.watchlist,
-      watchRules: { max: WATCH_MAX, ttlMinutes: WATCH_TTL_MINUTES, everyMinutes: WATCH_MINUTES },
       trades: this.trades(120),
       logs: this.logs(),
       equity: this.equitySeries(),
       stats: this.stats(),
       cycle: {
-        count: this.s.cycleCount,
-        lastRunAt: this.lastRunAt,
-        nextRunAt: this.nextRunAt,
         busy: this.busy,
         phase: this.phase,
         lastCandidates: this.lastCandidates,
