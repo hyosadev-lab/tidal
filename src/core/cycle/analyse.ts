@@ -60,12 +60,18 @@ export async function runAnalyst(): Promise<void> {
         if (!shown.has(key)) continue;
         const minutes = clamp(r.minutes, 1, 30, RECHECK_DEFAULT_MINUTES);
         store.analysed.set(key, Date.now() + minutes * 60_000);
-        again.push(`${shown.get(key)} ${minutes}m`);
+        // The clamp is silent to the model, so the log says when it bit: an analyst that keeps asking
+        // for 60 reads as one that always picks 30 otherwise.
+        const asked = Number(r.minutes);
+        again.push(`${shown.get(key)} ${minutes}m${Number.isFinite(asked) && asked !== minutes ? ` (asked ${asked})` : ""}`);
       }
       store.log(
         "model",
         `Analysed ${batch.length} (${fresh.size} new): ${decision.notes || "no note"}`,
-        again.length ? `back in: ${again.join("  ")} · the rest ${RECHECK_DEFAULT_MINUTES}m` : undefined,
+        // "the rest" only when there is one: on a batch it answered in full the phrase reads as a second rule.
+        [again.length ? `next look: ${again.join("  ")}` : "", again.length < batch.length ? `${again.length ? "the rest" : "all"} in ${RECHECK_DEFAULT_MINUTES}m` : ""]
+          .filter(Boolean)
+          .join(" · "),
       );
 
       // Exits first: closing a position frees a slot and puts its address onto cooldown.

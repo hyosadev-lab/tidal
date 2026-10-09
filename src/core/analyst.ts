@@ -147,7 +147,7 @@ THE MACHINE (facts, not advice)
 - You may buy only tokens in \`candidates\`. Any other address was never screened, priced or sized, so naming it in \`entries\` is refused.
 ${rows}
 ${sizing}
-- \`recheck\` is the only thing you carry forward: for each token, the minutes (1 to 30) until you see it again, with fresh numbers, if it is still on the feeds. Short for a setup that is close and could be ready within minutes; long for one that is dead or nowhere near, since every row you bring back is paid for in the next call. Outside 1-30 it is clamped, and a token you leave out comes back in 15.
+- \`recheck\` is the only thing you carry forward: for each token, the minutes (1 to 30) until you see it again, with fresh numbers, if it is still on the feeds. Set it by how soon this token's setup could change: short for one that is close and could be ready within minutes, long for one that is dead or nowhere near. Outside 1-30 it is clamped, and a token you leave out comes back in 15.
 - \`free_slots\` is how many positions can still be opened. An empty \`entries\` array is a valid answer.
 
 ${tools}
