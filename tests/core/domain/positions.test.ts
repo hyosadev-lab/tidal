@@ -2,7 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gasReserve, minPosition, sanitizeConfig } from "../../../src/core/domain/config.ts";
 import { position } from "./fixtures.ts";
-import { entryStop, entryStrategy, evaluateExit, healthExit, positionSize } from "../../../src/core/domain/positions.ts";
+import {
+  entryStop,
+  entryStrategy,
+  evaluateExit,
+  healthExit,
+  positionSize,
+  STREAM_BAND,
+  streamPriceSane,
+} from "../../../src/core/domain/positions.ts";
 import type { StrategyRule } from "../../../src/core/domain/types.ts";
 import { DEFAULT_CONFIG } from "../../../src/core/domain/config.ts";
 import type { TradeConfig } from "../../../src/core/domain/types.ts";
@@ -167,6 +175,23 @@ test("drained liquidity forces an exit", () => {
   const e = healthExit(position({ entryLiquidityUsd: 80_000 }), { liquidity: 20_000 });
   assert.equal(e?.percent, 100);
   assert.equal(healthExit(position({ entryLiquidityUsd: 80_000 }), { liquidity: 79_000 }), null);
+});
+
+// ── streamed prices ───────────────────────────────────────────────────
+
+test("a streamed price is only acted on while it agrees with the tick's own read", () => {
+  const ref = 0.001;
+  assert.equal(streamPriceSane(0.001, ref), true);
+  assert.equal(streamPriceSane(0.003, ref), true, `${STREAM_BAND}× up is still a price`);
+  assert.equal(streamPriceSane(0.00034, ref), true, "and so is the same move down");
+  assert.equal(streamPriceSane(0.0031, ref), false, "past the band the tick runs the plan instead");
+  assert.equal(streamPriceSane(0.0003, ref), false);
+  // The UNCC print: ~8×10⁷ the real price, and one of these was booked as a $332M paper fill.
+  assert.equal(streamPriceSane(32742, 0.0004), false);
+  assert.equal(streamPriceSane(0.0004, 0), true, "nothing to compare with yet — the first check is syncStream's");
+  assert.equal(streamPriceSane(0, 0.001), false, "zero is never a price");
+  assert.equal(streamPriceSane(Number.NaN, 0.001), false);
+  assert.equal(streamPriceSane(Number.POSITIVE_INFINITY, 0.001), false);
 });
 
 // ── minimum position size ─────────────────────────────────────────────

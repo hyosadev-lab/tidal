@@ -143,6 +143,27 @@ export function healthExit(p: Position, info: Record<string, any>): ExitSignal |
 }
 
 /**
+ * How far a streamed price may sit from the tick's own read before it is not a price.
+ *
+ * The stream exists to move *between* ticks, so a print may legitimately lead the last GMGN
+ * read — but only by so much. A genuine 3× inside one 5s tick is deferred to the tick, which
+ * runs the same plan a moment later; the asymmetry is deliberate, because a deferred print
+ * costs one tick and a believed one is a fill at a price that never existed.
+ */
+export const STREAM_BAND = 3;
+
+/**
+ * Whether a price read between ticks may be acted on. `ref` is the last GMGN read: 0 means the
+ * stream has not agreed with a read yet and the caller decides (that first agreement is its own
+ * check). A non-positive price is never a price, and neither is one an order of magnitude off.
+ */
+export function streamPriceSane(price: number, ref: number): boolean {
+  if (!(price > 0)) return false;
+  if (!(ref > 0)) return true;
+  return price <= ref * STREAM_BAND && price * STREAM_BAND >= ref;
+}
+
+/**
  * A slice smaller than this is noise, not a position: a rounding remainder GMGN's own fills
  * leave behind. Used two ways — a *remainder* this size means the position is closed, and a
  * *delta* this size against the wallet is not a sale worth booking.

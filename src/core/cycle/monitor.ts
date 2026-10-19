@@ -1,4 +1,4 @@
-import { DUST_FRACTION, evaluateExit, healthExit, isDust } from "../domain/positions.ts";
+import { DUST_FRACTION, evaluateExit, healthExit, isDust, STREAM_BAND, streamPriceSane } from "../domain/positions.ts";
 import { num, short } from "../domain/num.ts";
 import { store } from "../data/store.ts";
 import * as broker from "../market/broker.ts";
@@ -86,13 +86,18 @@ let monitoring = false;
  * One per position that was offered to the stream. `new` until a streamed price has agreed with
  * a GMGN read once — the pool arithmetic is reverse-engineered, and a wrong price here is a real
  * sell — then `on`. `off` is a stream that disagreed: left alone for the life of the position.
+ *
+ * `ref` is the last GMGN read, re-anchored on every tick, and `rejects` counts consecutive
+ * prints that did not agree with it.
  */
-type Stream = { price: number; at: number; state: "new" | "on" | "off" };
+type Stream = { price: number; at: number; state: "new" | "on" | "off"; ref: number; rejects: number };
 const streams = new Map<string, Stream>(); // by token address
 /** A streamed price this recent outranks GMGN's, which is the older of the two. */
 const STREAM_FRESH_MS = 15_000;
 /** How far a first streamed price may sit from GMGN's and still be the same price. */
 const STREAM_AGREES = 0.2;
+/** Consecutive out-of-band prints before the stream is given up as broken. */
+const STREAM_MAX_REJECTS = 3;
 let solUsd = 0;
 let pushedAt = 0;
 
@@ -115,10 +120,13 @@ function syncStream(p: Position, info: Record<string, any> | null, gmgnPrice: nu
   if (!s) {
     const ref = helius.poolRef(info);
     if (!ref) return;
-    streams.set(p.address, { price: 0, at: 0, state: "new" });
+    streams.set(p.address, { price: 0, at: 0, state: "new", ref: gmgnPrice > 0 ? gmgnPrice : 0, rejects: 0 });
     helius.watch(p.address, ref, (sol) => void onStreamPrice(p.address, sol));
     return;
   }
+  // The tick's own read is the yardstick every later print is held to (`streamPriceSane`), so it
+  // re-anchors on every tick, not only while the stream is still being trusted in.
+  if (gmgnPrice > 0) s.ref = gmgnPrice;
   if (s.state !== "new" || !(gmgnPrice > 0) || Date.now() - s.at > STREAM_FRESH_MS) return;
   if (Math.abs(s.price / gmgnPrice - 1) < STREAM_AGREES) {
     s.state = "on";
@@ -135,7 +143,26 @@ async function onStreamPrice(address: string, sol: number): Promise<void> {
   const p = store.position(address);
   const s = streams.get(address);
   if (!p || !s || s.state === "off" || !(solUsd > 0)) return;
-  s.price = sol * solUsd;
+  const price = sol * solUsd;
+  // Agreeing once, when the stream was switched on, is not enough: the pool arithmetic is
+  // reverse-engineered, and a single bad print afterwards used to run an exit — and, in paper,
+  // be booked as cash. Every later print is held to the tick's last GMGN read instead.
+  if (s.state === "on" && !streamPriceSane(price, s.ref)) {
+    s.rejects += 1;
+    if (s.rejects === 1)
+      store.log(
+        "warn",
+        `${p.symbol}: streamed price $${price.toPrecision(4)} is not within ${STREAM_BAND}× of GMGN's $${s.ref.toPrecision(4)} — ignored, exits wait for the ${store.config.monitorSeconds}s tick.`,
+      );
+    if (s.rejects >= STREAM_MAX_REJECTS) {
+      s.state = "off";
+      helius.unwatch(address);
+      store.log("warn", `${p.symbol}: ${s.rejects} streamed prices in a row disagreed with GMGN — stream off, exits stay on the tick.`);
+    }
+    return;
+  }
+  s.rejects = 0;
+  s.price = price;
   s.at = Date.now();
   if (s.state !== "on") return;
   p.lastPrice = s.price;

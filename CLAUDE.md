@@ -145,9 +145,12 @@ plan against it at once instead of up to `monitorSeconds` later. Three things to
   PUMP-quoted pool, a CLMM, a bonding curve) stays on the tick. Each shape is its own arithmetic.
 - **The price is not the vault ratio.** A pump_amm pool adds a virtual quote reserve (~17.6 SOL,
   a u64 at byte 245 of the pool account) to its SOL side; the bare ratio ran 10-74% under GMGN's
-  price on live pools. That offset is reverse-engineered, so a stream is only acted on after one
-  streamed price has landed within 20% of a GMGN read (`syncStream`) — otherwise it is switched
-  off for that position with a warning.
+  price on live pools. That offset is reverse-engineered, so a streamed price is only acted on
+  when it agrees with the tick's own GMGN read: within 20% for the first one (`syncStream`), then
+  within `STREAM_BAND` (3×) on every later print (`streamPriceSane`, re-anchored by the tick). A
+  print outside that band is ignored and the tick keeps running the plan; three in a row and the
+  stream is switched off for that position with a warning. One unvalidated print was enough to
+  sell a paper position at 8×10⁷ the real price — keep every print checked, not just the first.
 - **The tick is still the loop.** The wallet mirror, `healthExit` and the time stop run only
   there, and a stream that goes quiet for 15s hands the price back to GMGN. Stop closes every
   stream (`stopStreams`): a stream that outlived Stop would sell.
