@@ -1,11 +1,8 @@
 {
   "name": "tidal-trading-agent",
-  "main": "src/index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.ts",
-    "calibrate": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/core/calibrate.ts",
     "test": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --test 'tests/**/*.test.ts'"
   },
   "devDependencies": {

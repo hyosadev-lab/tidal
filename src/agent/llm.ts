@@ -12,6 +12,8 @@ export type Message = {
 };
 
 export type AgentOptions = {
+  /** Any OpenAI-compatible chat completions base URL. Default OpenRouter. */
+  baseUrl?: string;
   model?: string;
   system?: string;
   tools?: Record<string, Tool>;
@@ -28,7 +30,7 @@ async function complete(messages: Message[], o: AgentOptions) {
     type: "function",
     function: { name, description: t.description, parameters: t.parameters },
   }));
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const res = await fetch(`${o.baseUrl ?? process.env.LLM_BASE_URL ?? "https://openrouter.ai/api/v1"}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${o.apiKey ?? process.env.OPENROUTER_API_KEY}`,
@@ -41,14 +43,14 @@ async function complete(messages: Message[], o: AgentOptions) {
       ...(tools.length ? { tools } : {}),
     }),
   });
-  if (!res.ok) throw new Error(`openrouter ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`llm ${res.status}: ${await res.text()}`);
   const json = await res.json();
-  if (json.error) throw new Error(`openrouter: ${json.error.message}`);
+  if (json.error) throw new Error(`llm: ${json.error.message}`);
   const choice = json.choices[0];
   // An empty answer with no tool call is a failure with a cause — usually the output limit,
   // spent on reasoning. Say which, instead of handing back "" to be reported as bad JSON.
   if (!choice.message.content && !choice.message.tool_calls?.length)
-    throw new Error(`openrouter: empty reply (finish_reason: ${choice.finish_reason ?? "none"}, output tokens: ${json.usage?.completion_tokens ?? "?"})`);
+    throw new Error(`llm: empty reply (finish_reason: ${choice.finish_reason ?? "none"}, output tokens: ${json.usage?.completion_tokens ?? "?"})`);
   return choice.message as Message;
 }
 
@@ -87,4 +89,15 @@ export async function runAgent(prompt: string, o: AgentOptions = {}) {
     }
   }
   throw new Error("maxSteps exceeded");
+}
+
+/** Wraps `tools` so the whole set shares `max` calls; past that a call returns a refusal string, not an error. */
+export function budgetedTools(tools: Record<string, Tool>, max: number): Record<string, Tool> {
+  let left = max;
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, t]) => [
+      name,
+      { ...t, run: (a: any) => (left-- > 0 ? t.run(a) : `tool budget spent (${max} per run) — answer with what you have.`) },
+    ]),
+  );
 }

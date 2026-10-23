@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runAgent, type Message } from "../../src/agent/llm.ts";
+import { runAgent, budgetedTools, type Message } from "../../src/agent/llm.ts";
 
 test("loops through a tool call and returns the final answer", async () => {
   const replies = [
@@ -84,4 +84,21 @@ test("tool errors go back to the model instead of throwing", async () => {
 
   assert.equal(text, "recovered");
   assert.equal(last.messages.at(-1).content, "error: nope");
+});
+
+test("budgetedTools shares one budget across every tool, then refuses", async () => {
+  const t = { description: "", parameters: {}, run: () => "ok" };
+  const b = budgetedTools({ a: t, b: t }, 2);
+  assert.deepEqual([await b.a!.run({}), await b.b!.run({})], ["ok", "ok"]);
+  assert.match(String(await b.a!.run({})), /budget spent/);
+});
+
+test("baseUrl points the loop at another OpenAI-compatible endpoint", async () => {
+  let url = "";
+  globalThis.fetch = (async (u: string) => {
+    url = u;
+    return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }));
+  }) as any;
+  await runAgent("hi", { apiKey: "test", baseUrl: "http://localhost:11434/v1" });
+  assert.equal(url, "http://localhost:11434/v1/chat/completions");
 });

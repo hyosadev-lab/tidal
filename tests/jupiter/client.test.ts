@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { b58decode, b58encode, parseKey, signTransaction } from "../../../src/core/market/jupiter.ts";
+import { b58decode, b58encode, parseKey, signTransaction } from "../../src/jupiter/client.ts";
 
 // The signing half of the Jupiter route — everything that can be pinned without the network.
 // A wrong byte here is a transaction Jupiter refuses, or a signature for the wrong wallet.

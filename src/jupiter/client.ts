@@ -1,26 +1,23 @@
 import { createPrivateKey, createPublicKey, sign } from "node:crypto";
 import type { KeyObject } from "node:crypto";
-import { short } from "../domain/num.ts";
 
 /**
- * Jupiter Swap V2 — the Solana execution route, and the cast boundary for it the way `gmgn.ts`
- * is for GMGN: nothing outside this file speaks to Jupiter or to a Solana RPC.
+ * Jupiter Swap V2 transport — Solana token swaps, plus the three Solana RPC reads a swap needs.
+ * The counterpart of `src/gmgn/`: nothing else in the repo speaks to Jupiter or a Solana RPC.
  *
  * Unlike a GMGN swap, nothing here is custodial. `/order` hands back an unsigned transaction,
- * this process signs it with the wallet's own key (`SOLANA_PRIVATE_KEY`) and `/execute` lands
- * it. So that key in the environment is the whole barrier between this process and the wallet:
- * there is no `GMGN_ALLOW_AUTOMATED_TRADES` check on this path — the operator's decision.
- *
- * Jupiter is the swap and nothing more. Take-profit and stop-loss used to be parked as Trigger
- * V2 orders; the operator took that out — a $10 minimum per order folded small ladders into one
- * leg — so the monitor runs every exit, and nothing guards a position while this process is down.
+ * this process signs it with the wallet's own key (`SOLANA_PRIVATE_KEY`, base58 or JSON byte
+ * array) and `/execute` lands it. That key in the environment is the whole barrier between this
+ * process and the wallet: there is no `GMGN_ALLOW_AUTOMATED_TRADES` check on this path — the
+ * operator's decision. Don't extend that exemption to any other route.
  *
  * `JUPITER_API_KEY` is optional: without it requests go out keyless (30/min, and `/execute` has
- * its own bucket). `SOLANA_RPC_URL` overrides the public RPC the three wallet reads use.
+ * its own bucket). `SOLANA_RPC_URL` overrides the public RPC the wallet reads use.
  */
 
 const API = "https://api.jup.ag/swap/v2";
-const WSOL = "So11111111111111111111111111111111111111112";
+/** Wrapped SOL — the mint to swap from (buy) or into (sell). */
+export const WSOL = "So11111111111111111111111111111111111111112";
 const RPC = "https://api.mainnet-beta.solana.com";
 
 // ── base58 + key ──────────────────────────────────────────────────────
@@ -210,4 +207,9 @@ export async function tokenBalance(owner: string, mint: string): Promise<bigint>
   let sum = 0n;
   for (const a of r?.value ?? []) sum += BigInt(a?.account?.data?.parsed?.info?.tokenAmount?.amount ?? "0");
   return sum;
+}
+
+function short(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  return m.replace(/\s+/g, " ").slice(0, 220);
 }
