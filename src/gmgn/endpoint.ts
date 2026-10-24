@@ -12,117 +12,115 @@ import { buildAuthQuery, buildMessage, detectAlgorithm, sign } from "./signer.ts
  * GMGN_DEBUG curl logging are kept as-is.
  */
 
-const RATE_LIMIT_RETRY_BUFFER_MS = 1000;
-// The limiter's cooldown is 30s, so a 5s ceiling never retried it: a feed that drew the 429
-// was simply dropped for the whole cycle. The shared gate holds every other request until the
-// reset anyway, so waiting it out costs nothing extra. A ban's reset is minutes — still refused.
-const DEFAULT_RATE_LIMIT_AUTO_RETRY_MAX_WAIT_MS = 35_000;
-const USER_AGENT = "tta-0-gmgn-client";
-const DEFAULT_TIMEOUT_MS = 60_000;
-
 /**
- * Per-route bucket weight and timeout override. Unlisted routes weigh 1 and time out at
- * DEFAULT_TIMEOUT_MS. The weights are GMGN's published ones (the "Rate Limits" table in each
- * gmgn-skills SKILL.md), not tuned guesses: the bucket only paces correctly if it charges what
- * the server charges. The table this replaced had rank at 1 and trenches at 3, so the sweep was
- * booked as 5 while the server counted 8 — against a capacity of 5.
+ * Per-route weight and timeout override. Unlisted routes weigh 1 and time out at
+ * REQUEST_TIMEOUT_MS. The weights are GMGN's published ones (GMGN API Management → Paid Plans,
+ * read 25 Oct 2026), not tuned guesses: the bucket only paces correctly if it charges what the
+ * server charges. Weight-1 routes are listed too, so "unlisted" means unpublished, not cheap.
+ * `/v1/market/search` is the one route here with no published weight.
  */
 const ROUTE: Record<string, { weight?: number; timeoutMs?: number }> = {
-  "/v1/market/rank": { weight: 3 },
-  "/v1/trenches": { weight: 2 },
-  "/v1/market/token_kline": { weight: 2 },
-  "/v1/market/hot_searches": { weight: 3 },
+  // token
+  "/v1/token/info": { weight: 1 },
+  "/v1/token/security": { weight: 1 },
+  "/v1/token/pool_info": { weight: 1 },
   "/v1/market/token_top_holders": { weight: 5 },
   "/v1/market/token_top_traders": { weight: 5 },
+  // market
+  "/v1/market/rank": { weight: 3 },
+  "/v1/market/token_kline": { weight: 2 },
+  "/v1/trenches": { weight: 2 },
+  "/v1/market/hot_searches": { weight: 3 },
+  "/v1/market/token_signal": { weight: 3 },
+  // portfolio
   "/v1/user/info": { weight: 2 },
+  "/v1/user/wallet_token_balance": { weight: 3 },
   "/v1/user/wallet_holdings": { weight: 2 },
-  "/v1/user/wallet_token_balance": { weight: 2 },
   "/v1/user/created_tokens": { weight: 2 },
   "/v1/user/wallet_activity": { weight: 3 },
   "/v1/user/wallet_stats": { weight: 3 },
-  "/v1/user/wallet_profits": { weight: 3 },
-  "/v1/trade/quote": { weight: 10 },
+  "/v1/user/wallet_profits": { weight: 4 },
+  // track
+  "/v1/user/kol": { weight: 1 },
+  "/v1/user/smartmoney": { weight: 2 },
+  "/v1/trade/follow_wallet": { weight: 11 },
+  "/v1/user/follow_tokens": { weight: 3 },
+  "/v1/user/follow_token_groups": { weight: 1 },
+  // trade
+  "/v1/trade/query_order": { weight: 5 },
+  "/v1/trade/quote": { weight: 11 },
   "/v1/trade/swap": { weight: 10, timeoutMs: 120_000 },
   "/v1/trade/multi_swap": { weight: 10, timeoutMs: 120_000 },
-  "/v1/trade/query_order": { weight: 5 },
-  "/v1/trade/strategy/create": { weight: 5 },
+  "/v1/trade/strategy/orders": { weight: 1 },
   "/v1/trade/strategy/cancel": { weight: 2 },
+  "/v1/trade/strategy/create": { weight: 5 },
+  "/v1/trade/gas_price": { weight: 1 },
+  // cooking
+  "/v1/cooking/statistics": { weight: 1 },
+  "/v1/cooking/create_token": { weight: 5 },
 };
 
-/**
- * One leaky bucket and one queue for the whole process — the limit is per API key, so
- * sharing them across client instances is the point. GMGN extends the cooldown by 5s
- * every time you hit a 429, so retry spam makes the ban worse: it is cheaper to wait
- * here than to be told to wait there.
- *
- * Requests are serialised rather than merely rate-limited so the token accounting stays
- * honest under concurrency, and so the timestamp (validated within ±5s) and client_id
- * are built after the wait, not before it.
- */
-// GMGN's plans are Free 5/5, Plus 20/20, Pro 50/50 (rate/capacity). The defaults are the free
-// plan's. Capacity is as published. The refill is not: "rate 5" reads as 5 weight per second, but
-// measured on a free key, trenches (2) sent 0.4s behind a rank (3) that had itself waited 3s for
-// room came back 429, which a 5/s refill would have waved through — the measurements bracket the
-// real refill between 0.67 and 1.18 weight/s. 20/30 is the low end of that, and the spacing it
-// produces (rank, 3s, rank, 3s, trenches) is the one run measured to pass.
-// On a paid plan set GMGN_RATE_BURST to the plan's capacity and raise GMGN_RATE_PER_SEC with it.
-const RATE = Number(process.env.GMGN_RATE_PER_SEC) || 20 / 30;
-const CAPACITY = Number(process.env.GMGN_RATE_BURST) || 5;
-let tokens = CAPACITY;
-let lastRefill = Date.now();
+// ── Pacing ──────────────────────────────────────────────────────────────
+//
+// GMGN's rule (Free plan): a Rate Weight of 5 per second. What a request really costs is not
+// the published weight in ROUTE — measured 25 Oct 2026 off the x-ratelimit-remaining header,
+// from a full 5: token_info and security (1) leave 3, kline (2) leaves 2, rank (3) leaves 1,
+// top_traders and top_holders (5) leave 0. So the cost is weight + 1, capped at 5. Why, GMGN
+// does not say. Market Trending (3+1) and Market Trenches (2+1) cannot go out in one second.
+//
+// So: in any one second, the requests sent must cost 5 or less. A request that does not fit
+// waits until enough of the last second's requests have aged out. Going over draws a 429, and
+// every 429 adds 5s to the cooldown until it becomes a ban (RATE_LIMIT_BANNED).
+//
+// On a paid plan, raise RATE_WEIGHT (Plus 20, Pro 50).
+
+const RATE_WEIGHT = 5;
+/** One second, plus 100ms so jitter in transit cannot squeeze two seconds' worth together. */
+const WINDOW_MS = 1_100;
+/** After a 429 a read waits for the reset and tries once more — only if the reset is this close. A ban's is minutes. */
+const RETRY_MAX_WAIT_MS = 35_000;
+/** Give up on a reply after this. Swaps get longer in ROUTE. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
+/** What each request in the window cost, and when it went out. */
+let sent: { at: number; cost: number }[] = [];
+let pausedUntil = 0;
+// One line for the whole process: requests go out one at a time, in order, so the window math
+// stays honest and each request's timestamp (checked within ±5s) is stamped after its wait.
 let queue: Promise<unknown> = Promise.resolve();
 
-async function takeTokens(weight: number): Promise<void> {
-  // A route heavier than the bucket (swap is 10, the free plan holds 5) could never be paid for
-  // and would wait forever; charge it the whole bucket instead and let the server decide.
-  weight = Math.min(weight, CAPACITY);
+/** Waits until a request of `weight` fits in the last second, then books it. */
+async function waitForRoom(weight: number): Promise<void> {
+  // Capped at a whole second: measured on the weight-5 routes, which pass from a full budget.
+  // Swap (10) and quote (11) are unmeasured; they too wait for an empty second.
+  const cost = Math.min(weight + 1, RATE_WEIGHT);
   for (;;) {
     const now = Date.now();
-    tokens = Math.min(CAPACITY, tokens + ((now - lastRefill) / 1000) * RATE);
-    lastRefill = now;
-    if (tokens >= weight) {
-      tokens -= weight;
-      return;
-    }
-    await sleep(Math.ceil(((weight - tokens) / RATE) * 1000) + 20);
+    sent = sent.filter((r) => now - r.at < WINDOW_MS);
+    const used = sent.reduce((sum, r) => sum + r.cost, 0);
+    if (used + cost <= RATE_WEIGHT) break;
+    await sleep(sent[0]!.at + WINDOW_MS - now); // until the oldest ages out
   }
+  sent.push({ at: Date.now(), cost });
 }
 
 /**
- * The bucket above is the plan; this gate is for when the plan is wrong — a second process on
- * the same key, a restart that hands a fresh bucket to a server that remembers the old one. A
- * `RATE_LIMIT_EXCEEDED` is survivable, but the requests already queued behind it turn it into
- * `RATE_LIMIT_BANNED`. A per-request retry cannot fix that: the damage is done by the *next*
- * request, not the one that failed.
- *
- * So the whole process holds one gate. Any 429 that names a reset time closes it for everyone
- * until then, and the pacing gap doubles; clean requests decay it back toward the floor.
+ * A 429 pauses every route, not just the one that drew it: the requests already queued behind
+ * it are what turn a cooldown into a ban. It also covers what the window cannot see — a second
+ * process on the same key, or a restart the server remembers.
  */
-const GAP_FLOOR_MS = Number(process.env.GMGN_MIN_REQUEST_GAP_MS) || 400;
-const GAP_CEILING_MS = 10_000;
-let gapMs = GAP_FLOOR_MS;
-let gateOpensAt = 0;
-
-/** Called on every 429 that carries a reset time. Shuts the gate for every route, not just this one. */
-function noteRateLimited(resetAtUnix?: number): void {
-  gapMs = Math.min(GAP_CEILING_MS, gapMs * 2);
-  const until = (resetAtUnix ? resetAtUnix * 1000 : Date.now() + gapMs) + 1_000;
-  gateOpensAt = Math.max(gateOpensAt, until);
+function pauseAll(resetAtUnix?: number): void {
+  const until = (resetAtUnix ? resetAtUnix * 1000 : Date.now() + 5_000) + 1_000;
+  pausedUntil = Math.max(pausedUntil, until);
 }
 
-function noteSucceeded(): void {
-  gapMs = Math.max(GAP_FLOOR_MS, gapMs * 0.9);
-}
-
-function schedule<T>(weight: number, run: () => Promise<T>): Promise<T> {
+/** Runs `request` when its turn comes, it fits in the window, and no pause is on. */
+function schedule<T>(weight: number, request: () => Promise<T>): Promise<T> {
   const result = queue.then(async () => {
-    await takeTokens(weight);
-    const wait = gateOpensAt - Date.now();
+    const wait = pausedUntil - Date.now();
     if (wait > 0) await sleep(wait);
-    gateOpensAt = Date.now() + gapMs;
-    const out = await run();
-    noteSucceeded();
-    return out;
+    await waitForRoom(weight);
+    return request();
   });
   queue = result.catch(() => undefined);
   return result;
@@ -639,7 +637,7 @@ export class OpenApiClient {
       const headers: Record<string, string> = {
         "X-APIKEY": this.apiKey,
         "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
+        "User-Agent": "tta-0-gmgn-client",
       };
       const bodyStr = body !== null ? JSON.stringify(body) : null;
       return { method, subPath, url, headers, body: bodyStr, curlStr: formatCurl(method, url, headers, bodyStr) };
@@ -668,7 +666,7 @@ export class OpenApiClient {
         "X-APIKEY": this.apiKey,
         "X-Signature": signature,
         "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
+        "User-Agent": "tta-0-gmgn-client",
       };
       return { method, subPath, url, headers, body: bodyStr || null, curlStr: formatCurl(method, url, headers, bodyStr || null) };
     }, subPath, method !== "POST");
@@ -677,12 +675,10 @@ export class OpenApiClient {
   private async executePreparedRequest(
     prepare: () => PreparedRequest,
     subPath: string,
-    autoRetryOnRateLimit: boolean,
+    retryOnRateLimit: boolean,
   ): Promise<unknown> {
-    const maxAttempts = autoRetryOnRateLimit ? 2 : 1;
     const weight = ROUTE[subPath]?.weight ?? 1;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const send = async () => {
       try {
         // prepare() runs inside the queue: the timestamp it stamps is validated within
         // ±5s server-side, so it has to be built after the wait, not before it.
@@ -692,22 +688,22 @@ export class OpenApiClient {
           return this.parseResponse(request.method, request.subPath, res, request.curlStr);
         });
       } catch (err) {
-        // Shut the shared gate before anything else: the requests already queued behind this one
-        // are what turn a 30s cooldown into a ban.
-        if (err instanceof OpenApiError && (err.status === 429 || err.apiError === "RATE_LIMIT_EXCEEDED" || err.apiError === "RATE_LIMIT_BANNED"))
-          noteRateLimited(err.resetAtUnix);
-        const retryDelayMs = getRateLimitRetryDelayMs(err, attempt, maxAttempts, autoRetryOnRateLimit);
-        if (retryDelayMs == null) throw err;
-
-        if (process.env.GMGN_DEBUG) {
-          console.error(`[gmgn] ${subPath} hit rate limit, retrying once in ${Math.ceil(retryDelayMs / 1000)}s`);
-        }
-        // Backoff waits outside the queue — holding it would stall unrelated routes.
-        await sleep(retryDelayMs);
+        if (isRateLimited(err)) pauseAll(err.resetAtUnix);
+        throw err;
       }
-    }
+    };
 
-    throw new Error("Unexpected retry loop exit");
+    try {
+      return await send();
+    } catch (err) {
+      // Retry once, and only when GMGN said when — never a swap (retryOnRateLimit is false for POSTs).
+      if (!retryOnRateLimit || !isRateLimited(err) || !err.resetAtUnix) throw err;
+      const waitMs = Math.max(err.resetAtUnix * 1000 - Date.now(), 0) + 1_000; // +1s for clock drift
+      if (waitMs > RETRY_MAX_WAIT_MS) throw err;
+      if (process.env.GMGN_DEBUG) console.error(`[gmgn] ${subPath} hit rate limit, retrying once in ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs); // outside the queue — holding it would stall unrelated routes
+      return send();
+    }
   }
 
   private async doFetch(
@@ -723,7 +719,7 @@ export class OpenApiClient {
         method,
         headers,
         body: body ?? undefined,
-        signal: AbortSignal.timeout(ROUTE[subPath]?.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(ROUTE[subPath]?.timeoutMs ?? REQUEST_TIMEOUT_MS),
       });
     } catch (err: unknown) {
       const cause = extractRootCause(err);
@@ -746,7 +742,7 @@ export class OpenApiClient {
       throw new Error(msg);
     };
 
-    const resetAtUnix = parseRateLimitReset(res.headers.get("x-ratelimit-reset"));
+    const resetAtUnix = Number(res.headers.get("x-ratelimit-reset")) || undefined;
 
     let text!: string;
     try {
@@ -779,27 +775,8 @@ export class OpenApiClient {
   }
 }
 
-function getRateLimitRetryDelayMs(err: unknown, attempt: number, maxAttempts: number, autoRetryOnRateLimit: boolean): number | null {
-  if (!autoRetryOnRateLimit || attempt >= maxAttempts) return null;
-  if (!(err instanceof OpenApiError)) return null;
-  if (err.apiError !== "RATE_LIMIT_EXCEEDED" && err.apiError !== "RATE_LIMIT_BANNED") return null;
-  if (err.resetAtUnix == null) return null;
-
-  const waitMs = Math.max(err.resetAtUnix * 1000 - Date.now(), 0) + RATE_LIMIT_RETRY_BUFFER_MS;
-  return waitMs <= getAutoRetryMaxWaitMs() ? waitMs : null;
-}
-
-function parseRateLimitReset(raw: string | null): number | undefined {
-  if (raw == null || raw.trim() === "") return undefined;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function getAutoRetryMaxWaitMs(): number {
-  const raw = process.env.GMGN_RATE_LIMIT_AUTO_RETRY_MAX_WAIT_MS;
-  if (!raw) return DEFAULT_RATE_LIMIT_AUTO_RETRY_MAX_WAIT_MS;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_RATE_LIMIT_AUTO_RETRY_MAX_WAIT_MS;
+function isRateLimited(err: unknown): err is OpenApiError {
+  return err instanceof OpenApiError && (err.status === 429 || err.apiError === "RATE_LIMIT_EXCEEDED" || err.apiError === "RATE_LIMIT_BANNED");
 }
 
 function buildOpenApiErrorMessage(params: OpenApiErrorParams): string {
