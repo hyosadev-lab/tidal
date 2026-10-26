@@ -33,7 +33,9 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
     `OPENROUTER_MODEL`). A tool is `{description, parameters (JSON Schema), run}`; it loops until
     the model answers without tool calls, and throws past `maxSteps`. `budgetedTools(tools, max)`
     caps a whole tool set to `max` calls, answering a refusal string after that.
-  - `skills.ts`: `loadSkills(dir)` reads every `<dir>/<name>/SKILL.md` (default `skills/`).
+  - No skills: tool descriptions say how to read the data, the operator prompt (dashboard
+    settings) holds the strategy. `git log -- src/agent/skills.ts` has the old loader if a long,
+    rarely needed reference ever has to be loaded on demand.
 - `src/gmgn/` — GMGN OpenAPI transport: `endpoint.ts` (`OpenApiClient`, auth, signing, retries,
   the process-wide queue + leaky bucket), `signer.ts`, `client.ts` (env-configured singleton,
   needs `GMGN_API_KEY`; `GMGN_PRIVATE_KEY` signs swap/order routes). `gmgn-skills/` is an
@@ -43,7 +45,6 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
   `decimals`, `tokenBalance`. GMGN is no longer the swap route (rate limits); `JUPITER_API_KEY`
   optional, `SOLANA_RPC_URL` overrides the public RPC. Base58 and ed25519 on `node:crypto`.
 - `src/auth.ts` — dashboard session/CSRF helpers, currently unused.
-- `skills/` — empty for now and no longer gitignored: a `skills/<name>/SKILL.md` added here is tracked.
 
 ## Invariants worth knowing before you edit
 
