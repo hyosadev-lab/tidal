@@ -40,6 +40,8 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
   the process-wide queue + leaky bucket), `signer.ts`, `client.ts` (env-configured singleton,
   needs `GMGN_API_KEY`; `GMGN_PRIVATE_KEY` signs swap/order routes). `gmgn-skills/` is an
   untracked reference clone for endpoint shapes, excluded from `tsconfig.json`.
+  `tools.ts`: the agent's tool set — `gmgn_token_top_holders`, `gmgn_token_top_traders`,
+  `gmgn_token_kline`, `gmgn_created_tokens`, Solana only, rows cut to live-verified fields.
 - `src/jupiter/client.ts` — Solana swaps via Jupiter Swap V2 (`swap`: `/order` → sign in-process
   with `SOLANA_PRIVATE_KEY` → `/execute`, which confirms itself), plus RPC reads `solBalance`,
   `decimals`, `tokenBalance`. GMGN is no longer the swap route (rate limits); `JUPITER_API_KEY`
