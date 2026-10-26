@@ -102,3 +102,17 @@ test("baseUrl points the loop at another OpenAI-compatible endpoint", async () =
   await runAgent("hi", { apiKey: "test", baseUrl: "http://localhost:11434/v1" });
   assert.equal(url, "http://localhost:11434/v1/chat/completions");
 });
+
+test("usage sums across steps, and a failed run still carries its transcript", async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "c", function: { name: "x", arguments: "{}" } }] } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2 },
+      }),
+    )) as any;
+  const err: any = await runAgent("go", { apiKey: "test", maxSteps: 2 }).catch((e) => e);
+  assert.match(err.message, /maxSteps/);
+  assert.deepEqual(err.usage, { input: 20, output: 4 });
+  assert.deepEqual(err.messages.map((m: Message) => m.role), ["user", "assistant", "tool", "assistant", "tool"]);
+});

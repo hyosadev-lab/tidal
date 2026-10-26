@@ -3,6 +3,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/index.ts",
     "test": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --test 'tests/**/*.test.ts'"
   },
   "devDependencies": {

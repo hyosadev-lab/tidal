@@ -25,7 +25,10 @@ export type AgentOptions = {
   onTool?: (name: string, args: unknown, result: unknown) => void;
 };
 
-async function complete(messages: Message[], o: AgentOptions) {
+/** Tokens billed over a whole run, summed across steps. */
+export type Usage = { input: number; output: number };
+
+async function complete(messages: Message[], o: AgentOptions, usage: Usage) {
   const tools = Object.entries(o.tools ?? {}).map(([name, t]) => ({
     type: "function",
     function: { name, description: t.description, parameters: t.parameters },
@@ -46,6 +49,8 @@ async function complete(messages: Message[], o: AgentOptions) {
   if (!res.ok) throw new Error(`llm ${res.status}: ${await res.text()}`);
   const json = await res.json();
   if (json.error) throw new Error(`llm: ${json.error.message}`);
+  usage.input += json.usage?.prompt_tokens ?? 0;
+  usage.output += json.usage?.completion_tokens ?? 0;
   const choice = json.choices[0];
   // An empty answer with no tool call is a failure with a cause — usually the output limit,
   // spent on reasoning. Say which, instead of handing back "" to be reported as bad JSON.
@@ -54,7 +59,10 @@ async function complete(messages: Message[], o: AgentOptions) {
   return choice.message as Message;
 }
 
-/** Runs the tool-calling loop until the model answers without tool calls. */
+/**
+ * Runs the tool-calling loop until the model answers without tool calls. A thrown error carries
+ * `messages` and `usage` too: the transcript of a failed run is its audit trail.
+ */
 export async function runAgent(prompt: string, o: AgentOptions = {}) {
   const messages: Message[] = [
     ...(o.history?.length
@@ -64,11 +72,19 @@ export async function runAgent(prompt: string, o: AgentOptions = {}) {
         : []),
     { role: "user", content: prompt },
   ];
+  const usage: Usage = { input: 0, output: 0 };
+  try {
+    return await loop(messages, o, usage);
+  } catch (e) {
+    throw Object.assign(e instanceof Error ? e : new Error(String(e)), { messages, usage });
+  }
+}
 
+async function loop(messages: Message[], o: AgentOptions, usage: Usage) {
   for (let step = 0; step < (o.maxSteps ?? 10); step++) {
-    const msg = await complete(messages, o);
+    const msg = await complete(messages, o, usage);
     messages.push(msg);
-    if (!msg.tool_calls?.length) return { text: msg.content ?? "", messages };
+    if (!msg.tool_calls?.length) return { text: msg.content ?? "", messages, usage };
 
     for (const call of msg.tool_calls) {
       const tool = o.tools?.[call.function.name];

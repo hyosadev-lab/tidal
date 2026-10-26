@@ -174,6 +174,43 @@ export async function swap(a: { inputMint: string; outputMint: string; amount: s
   }
 }
 
+/**
+ * What a swap of `amount` would fill at right now — Jupiter's own route, price impact and fee
+ * included — without a taker, so nothing is built, signed or sent. Paper mode fills on this.
+ */
+export async function quote(a: { inputMint: string; outputMint: string; amount: string; slippagePct: number }): Promise<
+  { outAmount: string; inUsd: number; outUsd: number } | { error: string }
+> {
+  try {
+    const q = new URLSearchParams({ inputMint: a.inputMint, outputMint: a.outputMint, amount: a.amount });
+    if (a.slippagePct > 0) q.set("slippageBps", String(Math.round(a.slippagePct * 100)));
+    const r = await http(`${API}/order?${q}`);
+    const out = String(r["outAmount"] ?? "");
+    if (!/^[1-9]\d*$/.test(out)) return { error: `jupiter quoted no output: ${r["errorMessage"] ?? r["error"] ?? "no route"}` };
+    return { outAmount: out, inUsd: Number(r["inUsdValue"]) || 0, outUsd: Number(r["outUsdValue"]) || 0 };
+  } catch (e) {
+    return { error: short(e) };
+  }
+}
+
+/** `liquidityUsd` null = not reported, which is not a drained pool. */
+export type Price = { usd: number; liquidityUsd: number | null; decimals: number | null };
+
+/**
+ * USD price and liquidity per mint off Jupiter's Price API: every DEX, up to 50 mints in one
+ * call. A mint Jupiter cannot price is missing from the map — not a zero.
+ */
+export async function prices(mints: string[]): Promise<Map<string, Price>> {
+  const r = await http(`https://api.jup.ag/price/v3?ids=${mints.slice(0, 50).join(",")}`);
+  const out = new Map<string, Price>();
+  for (const [mint, v] of Object.entries(r)) {
+    const usd = Number(v?.usdPrice);
+    const liq = Number(v.liquidity);
+    if (usd > 0) out.set(mint, { usd, liquidityUsd: liq > 0 ? liq : null, decimals: Number.isInteger(v.decimals) ? v.decimals : null });
+  }
+  return out;
+}
+
 // ── wallet reads (Solana RPC) ─────────────────────────────────────────
 
 async function rpc(method: string, params: unknown[]): Promise<any> {

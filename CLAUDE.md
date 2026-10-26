@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Rebuild in progress** (branch `rebuild/agent-tidal`): the trading engine (`src/core/`), the
-dashboard (`public/`) and `src/index.ts` were deleted to start over. `git log` / `main` has them,
-including the old analyst's GMGN tool set with its live-verified field inventories.
+**Rebuild in progress** (branch `rebuild/agent-tidal`): the engine is rebuilt headless from the
+"Trading Agent Flow" design canvas (Flow page); the dashboard (`public/`, the canvas's Dashboard
+page) is not. `git log` / `main` has the old engine (`src/core/`) and dashboard.
 
 ## Runtime
 
@@ -18,12 +18,34 @@ Do not reach for Bun-specific APIs, and do not add npm dependencies without bein
 ## Commands
 
 ```bash
+npm start                                     # the engine, headless (loads .env)
 npm test                                      # node --test, all tests/**/*.test.ts
 node --test tests/agent/llm.test.ts           # one file
 npx tsc --noEmit                              # type check
 ```
 
 Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
+
+## The engine
+
+`src/index.ts` runs three timers: `entryCycle` (`entry.ts`, every 60s), `exitTick` (`exit.ts`,
+every 3s) and an equity row a minute. Config is the 'config' row in `settings` (`config.ts`:
+Settings-board defaults written on first start, every value clamped), re-read every cycle.
+
+- Entry: GMGN 1h rank + signal (fetch filters applied) plus waits now due → `isDue` (new; wait
+  over; bought and cooldown over; never skipped, held or blocked) → up to 10 snapshotted
+  (`snapshot.ts`, `/v1/token/info` → tokens / token_snapshots / snapshot_flow) → one agent run
+  (`decide.ts`: brief, system prompt + operator prompt, `budgetedTools`, verdict JSON validated,
+  → agent_runs / tool_calls / decisions) → per buy, best conviction first: exit plan, security
+  (`/v1/token/security`), slot, size, cash, entry snapshot, `trade.buy`. A refusal on the token
+  itself is a 'skip' row (final). No agent run while every slot is taken or buying is paused.
+- Exit: one Jupiter Price API read for every open position; `evaluate` (pure) fires sl → health
+  (liquidity drain) → time stop → tp. A >3× jump is confirmed on GMGN first. Live positions are
+  matched against the wallet every ~30s; tokens gone without a sell are booked `external`.
+  The design's Helius `transactionSubscribe` stream needs a paid Helius plan — polling stands in.
+- `trade.ts` moves funds. Paper fills on a live Jupiter `/order` quote with no taker (real route,
+  impact and fee; nothing sent). Live swaps via `jupiter/client.ts`. Paper cash, equity and the
+  daily loss pause are derived from `trades` / `equity`, never stored.
 
 ## What is left
 
@@ -46,8 +68,9 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
   with `SOLANA_PRIVATE_KEY` → `/execute`, which confirms itself), plus RPC reads `solBalance`,
   `decimals`, `tokenBalance`. GMGN is no longer the swap route (rate limits); `JUPITER_API_KEY`
   optional, `SOLANA_RPC_URL` overrides the public RPC. Base58 and ed25519 on `node:crypto`.
-- `src/db.ts` — the ledger: `openDb(path?)` opens `data/tta.db` (`TTA_DB` overrides), WAL, foreign
-  keys on, STRICT tables. The DDL is `schema.dbml` translated; change both together.
+- `src/db.ts` — the ledger: `openDb(path?)` opens `data/tta.db` (`TTA_DB` overrides) and sets the
+  module-level `db`; WAL, foreign keys on, STRICT tables. `insert(table, row)` and `tx(fn)`. The
+  DDL is `schema.dbml` translated; change both together.
 - `src/auth.ts` — dashboard session/CSRF helpers, currently unused.
 
 ## Invariants worth knowing before you edit

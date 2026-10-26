@@ -234,11 +234,38 @@ create table if not exists logs (
 ) strict;
 `;
 
-/** Opens (creating if needed) the ledger and applies the schema. Pass ":memory:" in tests. */
+/** The process's ledger, set by the last `openDb`. One per process: tests reopen it on ":memory:". */
+export let db!: DatabaseSync;
+
+/** Opens (creating if needed) the ledger, applies the schema and makes it `db`. */
 export function openDb(path = process.env.TTA_DB || DEFAULT_PATH): DatabaseSync {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
+  db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = on;");
   db.exec(SCHEMA);
   return db;
+}
+
+/**
+ * Inserts one row from an object whose keys are column names, and returns its id. `table` and
+ * the keys come from code, never from data; undefined values are stored as null.
+ */
+export function insert(table: string, row: Record<string, unknown>): number {
+  const keys = Object.keys(row);
+  const values = Object.fromEntries(keys.map((k) => [k, (row[k] ?? null) as never]));
+  const sql = `insert into ${table} (${keys.join(", ")}) values (${keys.map((k) => `$${k}`).join(", ")})`;
+  return Number(db.prepare(sql).run(values).lastInsertRowid);
+}
+
+/** Runs `fn` in one transaction: all of it lands, or none of it. */
+export function tx<T>(fn: () => T): T {
+  db.exec("begin");
+  try {
+    const out = fn();
+    db.exec("commit");
+    return out;
+  } catch (e) {
+    db.exec("rollback");
+    throw e;
+  }
 }
