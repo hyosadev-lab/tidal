@@ -28,7 +28,8 @@ test("a second holds at most 5 weight, counting each request as its weight + 1",
   }) as typeof fetch;
   // token_info costs 1 + 1: two fit in a second (4), the third waits for the first to age out.
   await Promise.all([1, 2, 3].map(() => client.getTokenInfo("sol", "x")));
-  assert.ok(at[1]! - at[0]! < 200, "the second goes straight out");
+  // 500, not 200: under the parallel test run a loaded CPU alone can take 200ms. The third waits ≥1000.
+  assert.ok(at[1]! - at[0]! < 500, "the second goes straight out");
   assert.ok(at[2]! - at[0]! >= 1000, "the third waits for the next second");
 });
 
