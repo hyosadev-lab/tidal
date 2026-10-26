@@ -44,6 +44,8 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
   with `SOLANA_PRIVATE_KEY` → `/execute`, which confirms itself), plus RPC reads `solBalance`,
   `decimals`, `tokenBalance`. GMGN is no longer the swap route (rate limits); `JUPITER_API_KEY`
   optional, `SOLANA_RPC_URL` overrides the public RPC. Base58 and ed25519 on `node:crypto`.
+- `src/db.ts` — the ledger: `openDb(path?)` opens `data/tta.db` (`TTA_DB` overrides), WAL, foreign
+  keys on, STRICT tables. The DDL is `schema.dbml` translated; change both together.
 - `src/auth.ts` — dashboard session/CSRF helpers, currently unused.
 
 ## Invariants worth knowing before you edit
