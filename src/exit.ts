@@ -3,7 +3,8 @@ import { db } from "./db.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import { log, short } from "./log.ts";
-import { noteSol, openPositions, recordSell, sell, type Position, type SellReason } from "./trade.ts";
+import { status } from "./control.ts";
+import { bookExternal, noteSol, openPosition, openPositions, sell, type Position, type SellReason } from "./trade.ts";
 
 /**
  * The exit loop: every POLL_MS one Jupiter Price API read prices every open position, and each
@@ -73,17 +74,14 @@ async function gmgnPrice(mint: string): Promise<number | null> {
 async function walletWatch(p: Position): Promise<void> {
   if (p.mode !== "live" || !p.wallet || Date.now() - p.opened_at < 60_000) return;
   try {
-    const held = await jup.tokenBalance(p.wallet, p.token);
-    const gone = BigInt(p.qty) - held;
-    if (gone * 100n <= BigInt(p.original_qty)) return; // within 1%: rounding, not a sale
-    const price = p.last_price_usd ?? p.entry_price_usd;
-    recordSell(p, gone, (Number(gone) / 10 ** p.decimals) * price, "external", [], null);
+    await bookExternal(p.id, await jup.tokenBalance(p.wallet, p.token));
   } catch (e) {
     log("warn", `Wallet read for ${p.symbol} failed: ${short(e)}`);
   }
 }
 
-async function check(p: Position, cfg: Config, px: jup.Price | undefined, now: number): Promise<void> {
+async function check(at: Position, cfg: Config, px: jup.Price | undefined, now: number): Promise<void> {
+  let p = at;
   let price = px?.usd ?? null;
   const last = p.last_price_usd;
   if (price !== null && last && (price > last * JUMP || price * JUMP < last)) {
@@ -103,14 +101,16 @@ async function check(p: Position, cfg: Config, px: jup.Price | undefined, now: n
   }
   if (polls % WALLET_EVERY === 0) {
     await walletWatch(p);
-    if (BigInt(p.qty) * 100n <= BigInt(p.original_qty)) return;
+    const fresh = openPosition(p.id);
+    if (!fresh) return;
+    p = { ...fresh, last_price_usd: p.last_price_usd, peak_price_usd: p.peak_price_usd, entry_liquidity_usd: p.entry_liquidity_usd };
   }
 
   const rules = db.prepare("select id, kind, at_pct, sell_pct, filled_at from exit_rules where position_id = ? order by seq").all(p.id) as RuleRow[];
   const exit = evaluate(p, rules, price, px?.liquidityUsd ?? null, now, cfg);
   if (!exit || now < (retryAt.get(p.id) ?? 0)) return;
   try {
-    const err = await sell(p, exit.pct, exit.reason, exit.ruleIds);
+    const err = await sell(p.id, exit.pct, exit.reason, exit.ruleIds);
     if (err) {
       retryAt.set(p.id, now + RETRY_MS);
       log("warn", `Sell ${p.symbol} (${exit.reason}) failed: ${err} — retrying in ${RETRY_MS / 1000}s.`);
@@ -127,6 +127,8 @@ export async function exitTick(cfg: Config): Promise<void> {
   polling = true;
   try {
     const open = openPositions();
+    status.exit.lastAt = Date.now();
+    status.exit.mints = open.length;
     if (!open.length) return;
     polls++;
     let prices = new Map<string, jup.Price>();
@@ -135,10 +137,12 @@ export async function exitTick(cfg: Config): Promise<void> {
       noteSol(prices.get(jup.WSOL)?.usd);
       if (priceDown) log("info", "Jupiter prices are back.");
       priceDown = false;
+      status.exit.priceError = "";
     } catch (e) {
       // No prices: only the clock still runs this poll.
       if (!priceDown) log("warn", `Jupiter price read failed: ${short(e)} — only time stops run until it is back.`);
       priceDown = true;
+      status.exit.priceError = short(e);
     }
     const now = Date.now();
     for (const p of open) await check(p, cfg, prices.get(p.token), now);

@@ -3,8 +3,8 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 /**
  * Dashboard login against `DASHBOARD_TOKEN`: a form trades the token for a session cookie.
  * Not HTTP Basic — the browser's own prompt loops into ERR_TOO_MANY_RETRIES whenever an
- * extension or a cached credential answers the challenge wrongly. A same-origin cookie
- * rides fetch *and* EventSource, so `public/app.js` needs no change either way.
+ * extension or a cached credential answers the challenge wrongly. A same-origin cookie rides
+ * every fetch the dashboard makes.
  */
 
 const COOKIE = "tidal_session";
@@ -50,123 +50,58 @@ export function authProblem(host: string, token: string | undefined): string | n
 }
 
 /**
- * Self-contained on purpose: `/style.css` sits behind the same gate, so the page carries the
- * dashboard's tokens inline (keep them in step with `public/style.css :root`).
- * `error` is always a literal from this codebase, never request data.
+ * The sign-in page, per the design's Login board. Self-contained on purpose: `/app.css` sits
+ * behind the same gate, so the page carries its own styles. Nothing here comes from the request.
  */
-export function loginPage(error = ""): string {
-  return `<!doctype html><html lang="id"><head><meta charset="utf-8">
+export function loginPage(wrong: boolean): string {
+  const line = wrong ? "#FF8170" : "#3A3A3F";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tidal · gateway</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🌊</text></svg>">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<title>Tidal sign-in</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Urbanist:wght@400;500;600;700&display=swap">
 <style>
-  :root {
-    --abyss:#071316; --hull:#0B1A1E; --hull-2:#0E2126; --rule:#17343A; --rule-2:#22474E;
-    --foam:#DCEAE6; --haze:#6F8B8E; --flood:#56E0B8; --ebb:#FF7B6E; --lamp:#F0B44B;
-    --serif:"Instrument Serif","Iowan Old Style",Georgia,serif;
-    --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
-    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; min-height: 100dvh;
-    display: grid; place-items: center; padding: 24px 16px 120px;
-    background: radial-gradient(900px 480px at 50% -10%, #0E2A30 0%, transparent 65%), var(--abyss);
-    color: var(--foam); font: 14px/1.5 var(--sans); overflow: hidden;
-  }
-
-  /* the tide, rolling under the gate */
-  .tide { position: fixed; inset: auto 0 0 0; height: 150px; pointer-events: none; }
-  .tide svg { position: absolute; bottom: 0; width: 200%; height: 100%; }
-  .tide path { fill: none; stroke-width: 1; }
-  .t1 { animation: roll 18s linear infinite; }
-  .t2 { animation: roll 27s linear infinite reverse; bottom: -14px !important; }
-  .t3 { animation: roll 40s linear infinite; bottom: -30px !important; }
-  @keyframes roll { to { transform: translateX(-50%); } }
-
-  .gate { position: relative; width: min(390px, 100%); }
-  .mark { display: flex; align-items: baseline; justify-content: center; gap: 10px; margin-bottom: 22px; }
-  .mark-name { font-family: var(--serif); font-size: 46px; line-height: 1; letter-spacing: .01em; }
-  .mark-sub { font-family: var(--mono); font-size: 10px; letter-spacing: .22em; text-transform: uppercase; color: var(--haze); }
-
-  .panel {
-    background: linear-gradient(180deg, var(--hull) 0%, #0A171B 100%);
-    border: 1px solid var(--rule); border-radius: 3px; padding: 22px 22px 20px;
-    box-shadow: 0 30px 80px -30px rgba(0,0,0,.7), 0 0 0 1px rgba(86,224,184,.03) inset;
-  }
-  .status {
-    display: flex; align-items: center; gap: 9px; margin: 0 0 18px;
-    font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--haze);
-  }
-  .beacon { width: 8px; height: 8px; border-radius: 50%; background: var(--lamp); animation: sweep 2.6s ease-in-out infinite; }
-  @keyframes sweep {
-    0%,100% { box-shadow: 0 0 0 0 rgba(240,180,75,.45); opacity: 1; }
-    50%     { box-shadow: 0 0 0 7px rgba(240,180,75,0); opacity: .6; }
-  }
-  .status .chip { margin-left: auto; border: 1px solid var(--rule); border-radius: 3px; padding: 2px 7px; font-size: 9.5px; }
-
-  label {
-    display: flex; align-items: center; gap: 9px; margin: 0 0 9px;
-    font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: .22em; text-transform: uppercase; color: var(--haze);
-  }
-  label::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
-
-  input {
-    width: 100%; background: var(--abyss); border: 1px solid var(--rule); border-radius: 3px;
-    color: var(--foam); font: 13px var(--mono); letter-spacing: .04em; padding: 12px;
-    transition: border-color .12s;
-  }
-  input::placeholder { color: #3F6268; letter-spacing: .02em; }
-  input:hover { border-color: var(--rule-2); }
-  input:focus { outline: 2px solid var(--flood); outline-offset: 1px; border-color: transparent; }
-  .go:focus-visible { outline: 2px solid var(--flood); outline-offset: 1px; }
-
-  .error {
-    margin: 12px 0 0; padding: 9px 12px; border: 1px solid #4E211D; border-left-width: 3px; border-left-color: var(--ebb);
-    background: #1D0F0D; color: var(--ebb); font: 12px var(--mono); border-radius: 3px;
-  }
-
-  .go {
-    width: 100%; margin-top: 14px; appearance: none; cursor: pointer;
-    background: var(--flood); border: 1px solid var(--flood); border-radius: 3px; color: #04211A;
-    font: 700 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 12px 14px;
-    display: flex; justify-content: center; align-items: center; gap: 10px; transition: background .12s;
-  }
-  .go:hover { background: #74EDC8; border-color: #74EDC8; }
-  .go span { transition: transform .15s; }
-  .go:hover span { transform: translateX(3px); }
-
-  .fine { margin: 16px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--haze); }  .foot { margin-top: 16px; text-align: center; font: 10px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--rule-2); }
-
-  @media (prefers-reduced-motion: reduce) { .t1, .t2, .t3, .beacon { animation: none; } }
-</style></head><body>
-
-<div class="tide" aria-hidden="true">
-  <svg class="t3" viewBox="0 0 1200 150" preserveAspectRatio="none"><path stroke="#17343A" d="M0 90 Q150 60 300 90 T600 90 T900 90 T1200 90"/></svg>
-  <svg class="t2" viewBox="0 0 1200 150" preserveAspectRatio="none"><path stroke="#22474E" d="M0 100 Q150 75 300 100 T600 100 T900 100 T1200 100"/></svg>
-  <svg class="t1" viewBox="0 0 1200 150" preserveAspectRatio="none"><path stroke="rgba(86,224,184,.35)" d="M0 110 Q150 88 300 110 T600 110 T900 110 T1200 110"/></svg>
+*{box-sizing:border-box}
+body{margin:0;background:#0F0F10;color:#F4F4F5;font:14px/20px Urbanist,system-ui,sans-serif}
+main{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:48px 16px}
+.wrap{width:100%;max-width:420px;display:flex;flex-direction:column;gap:20px}
+.brand{display:flex;align-items:center;justify-content:center;gap:12px;font-size:24px;line-height:32px;font-weight:600}
+.mark{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:50%;background:#2C2C2F}
+form{display:flex;flex-direction:column;gap:20px;padding:28px;background:#161618;border-radius:32px}
+.lock{display:inline-flex;align-items:center;gap:8px;font-size:13px;line-height:18px;color:#A1A1AA}
+.lock i{width:8px;height:8px;border-radius:50%;background:#FFB84D}
+h1{margin:0;font-size:28px;line-height:34px;font-weight:600}
+p{margin:0;color:#A1A1AA}
+code{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;color:#F4F4F5}
+label{font-size:13px;line-height:18px;font-weight:600}
+.field{position:relative;display:flex}
+input{flex:1;min-width:0;height:52px;padding:0 56px 0 20px;border:1px solid ${line};border-radius:26px;background:#0F0F10;font:14px 'IBM Plex Mono',ui-monospace,monospace;color:#F4F4F5}
+input::placeholder{color:#8B8B93}
+input:focus-visible,button:focus-visible{outline:2px solid #D7F26B;outline-offset:2px}
+.eye{position:absolute;right:4px;top:4px;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border:0;border-radius:22px;background:transparent;color:#A1A1AA;cursor:pointer}
+.err{display:flex;gap:8px;font-size:13px;line-height:18px;color:#FF8170}
+.go{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:52px;padding:0 24px;border:0;border-radius:26px;background:#D7F26B;color:#161618;font:inherit;font-size:15px;font-weight:700;cursor:pointer}
+.go:hover{background:#E8FA9E}
+.fine{font-size:12px;line-height:17px}
+.foot{text-align:center;font-size:12px;line-height:17px;color:#8B8B93}
+</style></head><body><main><div class="wrap">
+<div class="brand"><span class="mark" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#A891FF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14c2.2 0 2.8-4 5-4s2.8 4 5 4 2.8-4 5-4 2.4 2.4 3 4"/></svg></span>Tidal</div>
+<form method="post" action="/login" aria-labelledby="signin-title">
+<div style="display:flex;flex-direction:column;gap:6px">
+<span class="lock"><i aria-hidden="true"></i>Dashboard locked</span>
+<h1 id="signin-title">Sign in</h1>
+<p>Paste the token set in <code>DASHBOARD_TOKEN</code> on the server.</p>
 </div>
-
-<main class="gate">
-  <div class="mark"><span class="mark-name">Tidal</span><span class="mark-sub">trading station</span></div>
-
-  <form class="panel" method="post" action="/login">
-    <p class="status"><span class="beacon"></span>Gateway terkunci<span class="chip">auth</span></p>
-
-    <label for="token">Gateway token</label>
-    <input id="token" type="password" name="token" placeholder="tempel token di sini" autocomplete="current-password" spellcheck="false" autofocus required>
-    ${error ? `<p class="error" role="alert">${error}</p>` : ""}
-
-    <button class="go" type="submit">Buka dashboard <span aria-hidden="true">→</span></button>
-
-    <p class="fine">Sesi tersimpan 30 hari di browser ini.</p>
-  </form>
-
-  <p class="foot">cookie httponly · samesite strict</p>
-</main>
-
-</body></html>`;
+<div style="display:flex;flex-direction:column;gap:8px">
+<label for="token">Dashboard token</label>
+<div class="field">
+<input id="token" name="token" type="password" autocomplete="current-password" spellcheck="false" placeholder="64-character token" required autofocus${wrong ? ' aria-invalid="true" aria-describedby="token-error"' : ""}>
+<button class="eye" type="button" aria-label="Show token" aria-pressed="false" onclick="var i=document.getElementById('token'),s=i.type==='password';i.type=s?'text':'password';this.setAttribute('aria-pressed',String(s))"><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</div>
+${wrong ? `<p id="token-error" class="err" role="alert">That token does not match. Check DASHBOARD_TOKEN on the server and paste it again.</p>` : ""}
+</div>
+<button class="go" type="submit">Open dashboard<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14 M13 6l6 6-6 6"/></svg></button>
+<p class="fine">You stay signed in on this browser for 30 days. Changing the token signs every browser out.</p>
+</form>
+<p class="foot">Serve the dashboard over HTTPS. Without it the token crosses the network in plain text.</p>
+</div></main></body></html>`;
 }

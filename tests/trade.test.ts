@@ -65,14 +65,15 @@ test("paper: buy books the plan, a TP sells 40% at a profit, the stop sells the 
   assert.equal(paperCash(DEFAULTS), 988);
 
   const tp = db.prepare("select id from exit_rules where position_id = ? and seq = 1").get(p.id) as { id: number };
-  assert.equal(await sell(p, 40, "tp", [tp.id]), null);
+  assert.equal(await sell(p.id, 40, "tp", [tp.id]), null);
   const t = db.prepare("select qty, usd, pnl_usd, exit_rule_id from trades where side = 'sell'").get() as Record<string, any>;
   assert.equal(t.qty, "400000000");
   assert.ok(Math.abs(t.usd - 7.68) < 1e-9 && Math.abs(t.pnl_usd - 2.88) < 1e-9);
   assert.equal(t.exit_rule_id, tp.id);
   assert.equal(openPositions()[0]!.qty, "600000000");
 
-  assert.equal(await sell(openPositions()[0]!, 100, "sl"), null);
+  assert.equal(await sell(p.id, 100, "sl"), null);
+  assert.equal(await sell(p.id, 100, "sl"), "the position is already closed");
   assert.equal(openPositions().length, 0);
   const closed = db.prepare("select status, close_reason, qty from positions").get() as Record<string, any>;
   assert.deepEqual({ ...closed }, { status: "closed", close_reason: "sl", qty: "0" });

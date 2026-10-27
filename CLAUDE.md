@@ -2,9 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Rebuild in progress** (branch `rebuild/agent-tidal`): the engine is rebuilt headless from the
-"Trading Agent Flow" design canvas (Flow page); the dashboard (`public/`, the canvas's Dashboard
-page) is not. `git log` / `main` has the old engine (`src/core/`) and dashboard.
+**Rebuild** (branch `rebuild/agent-tidal`): engine and dashboard rebuilt from the "Trading Agent
+Flow" design canvas (Flow and Dashboard pages). `git log` / `main` has the old `src/core/` engine.
 
 ## Runtime
 
@@ -18,7 +17,7 @@ Do not reach for Bun-specific APIs, and do not add npm dependencies without bein
 ## Commands
 
 ```bash
-npm start                                     # the engine, headless (loads .env)
+npm start                                     # engine + dashboard on HOST:PORT (loads .env)
 npm test                                      # node --test, all tests/**/*.test.ts
 node --test tests/agent/llm.test.ts           # one file
 npx tsc --noEmit                              # type check
@@ -29,8 +28,11 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
 ## The engine
 
 `src/index.ts` runs three timers: `entryCycle` (`entry.ts`, every 60s), `exitTick` (`exit.ts`,
-every 3s) and an equity row a minute. Config is the 'config' row in `settings` (`config.ts`:
-Settings-board defaults written on first start, every value clamped), re-read every cycle.
+every 3s) and an equity row a minute, and starts the dashboard. Config is the 'config' row in
+`settings` (`config.ts`: Settings-board defaults written on first start, every value clamped),
+re-read every cycle. Run control is the 'run' row (`control.ts`): every process starts stopped
+(both loops idle, open positions unwatched) until Start in the dashboard; `pausedAt` = daily-loss
+pause, buying only, lifted at midnight (`lossResume` auto) or by Resume.
 
 - Entry: GMGN 1h rank + signal (fetch filters applied) plus waits now due → `isDue` (new; wait
   over; bought and cooldown over; never skipped, held or blocked) → up to 10 snapshotted
@@ -43,7 +45,13 @@ Settings-board defaults written on first start, every value clamped), re-read ev
   (liquidity drain) → time stop → tp. A >3× jump is confirmed on GMGN first. Live positions are
   matched against the wallet every ~30s; tokens gone without a sell are booked `external`.
   The design's Helius `transactionSubscribe` stream needs a paid Helius plan — polling stands in.
-- `trade.ts` moves funds. Paper fills on a live Jupiter `/order` quote with no taker (real route,
+- Dashboard: `server.ts` (`node:http`, login via `auth.ts` when `DASHBOARD_TOKEN` is set, else a
+  Host allowlist against DNS rebinding; POSTs must be application/json) serves `public/` (vanilla
+  JS, polls `GET /api/state` every 3s) and reads through `view.ts`, the only place dashboard numbers
+  are computed. Writes: `/api/start|stop|resume|close|settings`. Everything from the ledger is
+  escaped in `app.js` — token names are deployer-written.
+- `trade.ts` moves funds. Every sell runs through one queue against the position re-read from the
+  ledger, so the exit loop, Close and Close-all never sell the same tokens twice. Paper fills on a live Jupiter `/order` quote with no taker (real route,
   impact and fee; nothing sent). Live swaps via `jupiter/client.ts`. Paper cash, equity and the
   daily loss pause are derived from `trades` / `equity`, never stored.
 
@@ -71,7 +79,7 @@ Settings-board defaults written on first start, every value clamped), re-read ev
 - `src/db.ts` — the ledger: `openDb(path?)` opens `data/tta.db` (`TTA_DB` overrides) and sets the
   module-level `db`; WAL, foreign keys on, STRICT tables. `insert(table, row)` and `tx(fn)`. The
   DDL is `schema.dbml` translated; change both together.
-- `src/auth.ts` — dashboard session/CSRF helpers, currently unused.
+- `src/auth.ts` — dashboard sign-in: token compare, session cookie, the sign-in page.
 
 ## Invariants worth knowing before you edit
 

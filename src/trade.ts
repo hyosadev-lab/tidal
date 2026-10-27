@@ -35,6 +35,9 @@ export async function solUsd(): Promise<number> {
   return sol.usd;
 }
 
+/** The last SOL price seen, 0 before the first. For display only. */
+export const lastSolUsd = (): number => sol.usd;
+
 export const noteSol = (usd: number | undefined): void => {
   if (usd && usd > 0) sol = { usd, at: Date.now() };
 };
@@ -87,13 +90,15 @@ export type Position = {
   peak_price_usd: number | null;
 };
 
+const POSITION = `select p.*, coalesce(t.symbol, substr(p.token, 1, 6)) symbol, t.decimals from positions p
+  join tokens t on t.address = p.token where p.status = 'open'`;
+
 export function openPositions(): Position[] {
-  return db
-    .prepare(
-      `select p.*, coalesce(t.symbol, substr(p.token, 1, 6)) symbol, t.decimals from positions p
-       join tokens t on t.address = p.token where p.status = 'open' order by p.id`,
-    )
-    .all() as Position[];
+  return db.prepare(`${POSITION} order by p.id`).all() as Position[];
+}
+
+export function openPosition(id: number): Position | undefined {
+  return db.prepare(`${POSITION} and p.id = ?`).get(id) as Position | undefined;
 }
 
 /** settings.paperStartUsd + Σ sells − Σ buys, over paper positions. */
@@ -226,12 +231,41 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
 
 export type SellReason = "tp" | "sl" | "time" | "health" | "manual";
 
+// Every sell and every external booking runs one at a time, against the position as it is in the
+// ledger right then: the exit loop, a Close from the dashboard and Close all can never sell the
+// same tokens twice.
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const run = queue.then(fn, fn);
+  queue = run.catch(() => {});
+  return run;
+}
+
 /**
  * Sells `pct` of the position's ORIGINAL qty (capped at what is left), records the fill with its
  * realised PnL, marks `ruleIds` filled, and closes the position when what is left is dust.
  * Returns an error, or null. A failed sell changes nothing, so the next event retries it.
  */
-export async function sell(p: Position, pct: number, reason: SellReason, ruleIds: number[] = []): Promise<string | null> {
+export function sell(positionId: number, pct: number, reason: SellReason, ruleIds: number[] = []): Promise<string | null> {
+  return serial(async () => {
+    const p = openPosition(positionId);
+    return p ? sellNow(p, pct, reason, ruleIds) : "the position is already closed";
+  });
+}
+
+/** Live: books what left the wallet without this process selling it, at the last price. */
+export function bookExternal(positionId: number, held: bigint): Promise<void> {
+  return serial(async () => {
+    const p = openPosition(positionId);
+    if (!p) return;
+    const gone = BigInt(p.qty) - held;
+    if (gone * 100n <= BigInt(p.original_qty)) return; // within 1%: rounding, not a sale
+    const price = p.last_price_usd ?? p.entry_price_usd;
+    recordSell(p, gone, (Number(gone) / 10 ** p.decimals) * price, "external", [], null);
+  });
+}
+
+async function sellNow(p: Position, pct: number, reason: SellReason, ruleIds: number[]): Promise<string | null> {
   const original = BigInt(p.original_qty);
   const held = BigInt(p.qty);
   let want = (original * BigInt(Math.round(pct * 100))) / 10_000n;
@@ -261,7 +295,7 @@ export async function sell(p: Position, pct: number, reason: SellReason, ruleIds
 }
 
 /** Books a sell that already happened: here, or outside the agent (`external`, at the last price). */
-export function recordSell(
+function recordSell(
   p: Position,
   soldRaw: bigint,
   usd: number,
@@ -292,7 +326,6 @@ export function recordSell(
     for (const id of ruleIds) db.prepare("update exit_rules set filled_at = ? where id = ?").run(now, id);
     if (closes) db.prepare("update positions set status = 'closed', closed_at = ?, close_reason = ? where id = ?").run(now, reason, p.id);
   });
-  p.qty = (left < 0n ? 0n : left).toString();
   const pctSold = Math.round((Number(soldRaw) / Number(original)) * 100);
   log("trade", `SELL ${p.symbol} ${pctSold}% $${usd.toFixed(2)} · PnL ${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)} · ${reason}${closes ? " · closed" : ""}`, signature ?? undefined);
   if (closes)

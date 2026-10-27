@@ -46,4 +46,8 @@ test("config: a fixed plan that does not exit fully falls back to the default", 
   assert.deepEqual(sanitize({ plan: [{ kind: "tp", at: 50, sell: 90 }, { kind: "sl", at: -20, sell: 100 }] }).plan, DEFAULTS.plan);
   assert.equal(sanitize({ maxOpenPositions: 999, mode: "yolo" }).maxOpenPositions, 20);
   assert.equal(sanitize({ mode: "yolo" }).mode, "paper");
+  // Agent limits: absent = the default, empty = no limit, anything else clamped.
+  assert.deepEqual([sanitize({}).toolCalls, sanitize({}).maxSteps], [12, 24]);
+  assert.deepEqual([sanitize({ toolCalls: "", maxSteps: null }).toolCalls, sanitize({ toolCalls: "", maxSteps: null }).maxSteps], [null, null]);
+  assert.deepEqual([sanitize({ toolCalls: 500, maxSteps: "7" }).toolCalls, sanitize({ toolCalls: 500, maxSteps: "7" }).maxSteps], [100, 7]);
 });

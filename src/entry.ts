@@ -1,11 +1,12 @@
-import { loadConfig, rankFilters, signalFilters, type Config } from "./config.ts";
+import { inFilters, loadConfig, rankFilters, signalFilters, type Config } from "./config.ts";
+import { lossPaused, status, type FeedRow } from "./control.ts";
 import { db, insert } from "./db.ts";
 import { decide, type Verdict } from "./decide.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import { log, short } from "./log.ts";
 import { takeSnapshot } from "./snapshot.ts";
-import { buy, buyingPaused, cashUsd, MIN_BUY_USD, openPositions, security, solUsd } from "./trade.ts";
+import { buy, cashUsd, MIN_BUY_USD, openPositions, security, solUsd } from "./trade.ts";
 
 /**
  * The entry loop, once per CYCLE_MS: fetch → keep what is due → snapshot it → one agent run →
@@ -20,27 +21,61 @@ const FEED_LIMIT = 40;
 /** smart-money buy, price spike, new all-time high. */
 const SIGNAL_TYPES = [12, 6, 7];
 
-/** GMGN 1h trending + signal, in that order, deduped. A feed that fails is logged and left out. */
+const num = (v: unknown): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+
+/**
+ * GMGN 1h trending + signal, in that order, deduped; each row kept with the feed's own numbers
+ * for the dashboard. Field names verified on live rows: the signal route carries no price change,
+ * and its 1h buys/sells are always 0, so they show as unknown.
+ */
+function feedRow(r: any, source: string, signal: boolean): FeedRow {
+  const created = num(signal ? (r.created_timestamp ?? r.open_timestamp) : (r.creation_timestamp ?? r.open_timestamp));
+  return {
+    address: String(r.address),
+    symbol: typeof r.symbol === "string" ? r.symbol.slice(0, 40) : null,
+    source,
+    mcap: num(r.market_cap),
+    liq: num(r.liquidity),
+    buys: signal ? null : num(r.buys),
+    sells: signal ? null : num(r.sells),
+    change1h: signal ? null : num(r.price_change_percent1h),
+    top10: num(r.top_10_holder_rate),
+    rug: num(r.rug_ratio),
+    createdAt: created ? created * 1000 : null,
+  };
+}
+
 async function fetchTokens(cfg: Config): Promise<string[]> {
   const c = gmgnClient();
   const [rank, signal] = await Promise.allSettled([
     c.getTrendingSwaps("sol", "1h", { order_by: "volume", limit: FEED_LIMIT, ...rankFilters(cfg) }),
     c.getTokenSignalV2("sol", [{ signal_type: SIGNAL_TYPES, ...signalFilters(cfg) }]),
   ]);
-  const out: string[] = [];
+  const rows = new Map<string, FeedRow>();
+  const failed = (feed: string, e: unknown) => {
+    log("warn", `${feed} feed failed: ${short(e)}`);
+    status.gmgn = { errorAt: Date.now(), error: `${feed}: ${short(e)}` };
+  };
   if (rank.status === "fulfilled") {
     // The rank route's data is itself an envelope: { code, data: { rank: [...] } }.
     const r: any = rank.value;
-    for (const row of r?.rank ?? r?.data?.rank ?? []) if (row?.address && !row.is_wash_trading) out.push(String(row.address));
-  } else log("warn", `Trending feed failed: ${short(rank.reason)}`);
+    for (const row of r?.rank ?? r?.data?.rank ?? [])
+      if (row?.address && !row.is_wash_trading && inFilters(row, cfg)) rows.set(String(row.address), feedRow(row, "1h trending", false));
+  } else failed("Trending", rank.reason);
   if (signal.status === "fulfilled") {
     const s: any = signal.value;
     for (const row of Array.isArray(s) ? s : (s?.list ?? [])) {
-      const a = row?.token_address ?? row?.data?.address;
-      if (a) out.push(String(a));
+      // cur_data: the fresher top 10 / holders / liquidity; ath: the all-time-high market cap.
+      // visiting_count is always 0 here, unlike on trending, so the viewers bound skips it.
+      const data = { ...row?.data, ...row?.cur_data, ath: row?.ath, visiting_count: null, address: row?.token_address ?? row?.data?.address };
+      if (!data.address || !inFilters(data, cfg)) continue;
+      const seen = rows.get(String(data.address));
+      if (seen) seen.source = "trending + signal";
+      else rows.set(String(data.address), feedRow(data, "signal", true));
     }
-  } else log("warn", `Signal feed failed: ${short(signal.reason)}`);
-  return [...new Set(out)];
+  } else failed("Signal", signal.reason);
+  status.fetch = { at: Date.now(), rows: [...rows.values()] };
+  return [...rows.keys()];
 }
 
 /** Waits whose recheck time has passed, whether or not a feed carried them this cycle. */
@@ -55,24 +90,38 @@ function waitsDue(now: number): string[] {
   ).map((r) => r.token);
 }
 
-/** New, or its wait is over, or bought and its cooldown is over. Never blocked, held or skipped. */
-export function isDue(token: string, cfg: Config, now: number): boolean {
-  const t = db.prepare("select blocked_at from tokens where address = ?").get(token) as { blocked_at: number | null } | undefined;
-  if (t?.blocked_at) return false;
-  if (db.prepare("select 1 from positions where token = ? and status = 'open'").get(token)) return false;
+export type TokenStatus = { status: "due" | "waiting" | "holding" | "cooldown" | "skipped"; note: string; until: number | null };
+
+/**
+ * Where a token stands with the entry loop. Due: new, its wait is over, or bought and its
+ * cooldown is over. Never due while held, blocked or skipped — skip is final.
+ */
+export function tokenStatus(token: string, cfg: Config, now: number): TokenStatus {
+  const held = db.prepare("select opened_at from positions where token = ? and status = 'open'").get(token) as { opened_at: number } | undefined;
+  if (held) return { status: "holding", note: "since", until: held.opened_at };
+  const t = db.prepare("select blocked_at, blocked_reason from tokens where address = ?").get(token) as
+    | { blocked_at: number | null; blocked_reason: string | null }
+    | undefined;
+  if (t?.blocked_at) return { status: "skipped", note: t.blocked_reason ?? "blocked", until: null };
   const d = db
     .prepare(
-      `select d.action, d.recheck_at, r.started_at from decisions d join agent_runs r on r.id = d.run_id
+      `select d.action, d.recheck_at, d.thesis, r.started_at from decisions d join agent_runs r on r.id = d.run_id
        where d.token = ? order by d.id desc limit 1`,
     )
-    .get(token) as { action: string; recheck_at: number | null; started_at: number } | undefined;
-  if (!d) return true;
-  if (d.action === "skip") return false;
-  if (d.action === "wait") return (d.recheck_at ?? 0) <= now;
+    .get(token) as { action: string; recheck_at: number | null; thesis: string | null; started_at: number } | undefined;
+  if (!d) return { status: "due", note: "new", until: null };
+  if (d.action === "skip") return { status: "skipped", note: d.thesis ?? "skipped", until: null };
+  if (d.action === "wait") {
+    const at = d.recheck_at ?? 0;
+    return at > now ? { status: "waiting", note: "until", until: at } : { status: "due", note: "wait ended", until: at };
+  }
   // A buy: the cooldown runs from the last close, or from the run if the buy never filled.
   const closed = (db.prepare("select max(closed_at) c from positions where token = ?").get(token) as { c: number | null }).c ?? 0;
-  return Math.max(closed, d.started_at) + cfg.cooldownMinutes * 60_000 <= now;
+  const at = Math.max(closed, d.started_at) + cfg.cooldownMinutes * 60_000;
+  return at > now ? { status: "cooldown", note: "until", until: at } : { status: "due", note: "cooldown over", until: null };
 }
+
+export const isDue = (token: string, cfg: Config, now: number): boolean => tokenStatus(token, cfg, now).status === "due";
 
 /** A risk-check refusal is a 'skip' row in the same run: final, like the agent's own skips. */
 function veto(v: Verdict, reason: string, block = false): void {
@@ -117,24 +166,24 @@ async function tryBuy(v: Verdict, cfg: Config): Promise<void> {
 }
 
 let running = false;
-let said = "";
 /** One line per reason the loop is idle, said once until the reason changes. */
 const idle = (why: string) => {
-  if (why !== said) log("info", why);
-  said = why;
+  if (why !== status.entry.note) log("info", why);
+  status.entry.note = why;
 };
 
 export async function entryCycle(): Promise<void> {
   if (running) return; // a cycle held up by the rate limiter is skipped, not stacked
   running = true;
+  status.entry.lastAt = Date.now();
   try {
     const cfg = loadConfig();
     if (!process.env.OPENROUTER_API_KEY) return idle("Buying off: OPENROUTER_API_KEY is not set.");
     if (cfg.mode === "live" && !jup.address()) return idle("Buying off: live mode needs SOLANA_PRIVATE_KEY.");
     const free = cfg.maxOpenPositions - openPositions().length;
     if (free <= 0) return idle(`Buying waits: ${cfg.maxOpenPositions} of ${cfg.maxOpenPositions} slots used.`);
-    if (buyingPaused(cfg)) return idle(`Buying paused: today's loss passed ${cfg.maxDailyLossPct}% of the day's start. Exits keep running.`);
-    said = "";
+    if (lossPaused(cfg)) return idle("Buying paused: max daily loss reached. Exits keep running.");
+    status.entry.note = "";
 
     const now = Date.now();
     const candidates = [...new Set([...waitsDue(now), ...(await fetchTokens(cfg))])];
