@@ -1,11 +1,11 @@
 import { inFilters, loadConfig, rankFilters, signalFilters, type Config } from "./config.ts";
 import { lossPaused, status, type FeedRow } from "./control.ts";
-import { db, insert } from "./db.ts";
+import { db, insert, tx } from "./db.ts";
 import { decide, type Verdict } from "./decide.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import { log, short } from "./log.ts";
-import { takeSnapshot } from "./snapshot.ts";
+import { takeSnapshot, writeSignal } from "./snapshot.ts";
 import { buy, cashUsd, MIN_BUY_USD, openPositions, security, solUsd } from "./trade.ts";
 
 /**
@@ -18,8 +18,12 @@ export const CYCLE_MS = 60_000;
 /** Due tokens per agent run, at most; the rest stay due for the next cycle. */
 const MAX_BRIEF = 10;
 const FEED_LIMIT = 40;
-/** smart-money buy, price spike, new all-time high. */
-const SIGNAL_TYPES = [12, 6, 7];
+/**
+ * One group each, as GMGN returns at most 50 rows a group: smart-money buy, KOL buy, price (spike,
+ * all-time high, market-cap key level), community takeover. The warnings (bundler sell, pump
+ * claim) are not fetched: every row's signal_times_by_type already counts them for the brief.
+ */
+const SIGNAL_GROUPS = [[12], [20], [6, 7, 8], [11]];
 
 const num = (v: unknown): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 
@@ -49,7 +53,7 @@ async function fetchTokens(cfg: Config): Promise<string[]> {
   const c = gmgnClient();
   const [rank, signal] = await Promise.allSettled([
     c.getTrendingSwaps("sol", "1h", { order_by: "volume", limit: FEED_LIMIT, ...rankFilters(cfg) }),
-    c.getTokenSignalV2("sol", [{ signal_type: SIGNAL_TYPES, ...signalFilters(cfg) }]),
+    c.getTokenSignalV2("sol", SIGNAL_GROUPS.map((signal_type) => ({ signal_type, ...signalFilters(cfg) }))),
   ]);
   const rows = new Map<string, FeedRow>();
   const failed = (feed: string, e: unknown) => {
@@ -64,15 +68,18 @@ async function fetchTokens(cfg: Config): Promise<string[]> {
   } else failed("Trending", rank.reason);
   if (signal.status === "fulfilled") {
     const s: any = signal.value;
-    for (const row of Array.isArray(s) ? s : (s?.list ?? [])) {
-      // cur_data: the fresher top 10 / holders / liquidity; ath: the all-time-high market cap.
-      // visiting_count is always 0 here, unlike on trending, so the viewers bound skips it.
-      const data = { ...row?.data, ...row?.cur_data, ath: row?.ath, visiting_count: null, address: row?.token_address ?? row?.data?.address };
-      if (!data.address || !inFilters(data, cfg)) continue;
-      const seen = rows.get(String(data.address));
-      if (seen) seen.source = "trending + signal";
-      else rows.set(String(data.address), feedRow(data, "signal", true));
-    }
+    tx(() => {
+      for (const row of Array.isArray(s) ? s : (s?.list ?? [])) {
+        // cur_data: the fresher top 10 / holders / liquidity; ath: the all-time-high market cap.
+        // visiting_count is always 0 here, unlike on trending, so the viewers bound skips it.
+        const data = { ...row?.data, ...row?.cur_data, ath: row?.ath, visiting_count: null, address: row?.token_address ?? row?.data?.address };
+        if (!data.address || !inFilters(data, cfg)) continue;
+        writeSignal(String(data.address), row);
+        const seen = rows.get(String(data.address));
+        if (seen) seen.source = seen.source === "signal" ? "signal" : "trending + signal";
+        else rows.set(String(data.address), feedRow(data, "signal", true));
+      }
+    });
   } else failed("Signal", signal.reason);
   status.fetch = { at: Date.now(), rows: [...rows.values()] };
   return [...rows.keys()];

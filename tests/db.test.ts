@@ -14,7 +14,7 @@ test("schema: all tables, constraints enforced, reopening keeps data", () => {
     assert.deepEqual(
       tables.map((r) => r.name),
       ["agent_runs", "decisions", "equity", "exit_rules", "logs", "positions", "settings",
-        "snapshot_flow", "token_snapshots", "tokens", "tool_calls", "trades"],
+        "snapshot_flow", "token_signals", "token_snapshots", "tokens", "tool_calls", "trades"],
     );
 
     db.prepare("insert into tokens (address, first_seen_at) values ('Mint', 1)").run();

@@ -34,7 +34,9 @@ re-read every cycle. Run control is the 'run' row (`control.ts`): every process 
 (both loops idle, open positions unwatched) until Start in the dashboard; `pausedAt` = daily-loss
 pause, buying only, lifted at midnight (`lossResume` auto) or by Resume.
 
-- Entry: GMGN 1h rank + signal (fetch filters applied) plus waits now due → `isDue` (new; wait
+- Entry: GMGN 1h rank + signal (four groups: smart money, KOL, price, CTO; fetch filters applied;
+  each event → token_signals, whose per-type tally — warnings like bundler sell included — the
+  brief shows as `signals`) plus waits now due → `isDue` (new; wait
   over; bought and cooldown over; never skipped, held or blocked) → up to 10 snapshotted
   (`snapshot.ts`, `/v1/token/info` → tokens / token_snapshots / snapshot_flow) → one agent run
   (`decide.ts`: brief, system prompt + operator prompt, `budgetedTools`, verdict JSON validated,
@@ -78,7 +80,7 @@ pause, buying only, lifted at midnight (`lossResume` auto) or by Resume.
   optional, `SOLANA_RPC_URL` overrides the public RPC. Base58 and ed25519 on `node:crypto`.
 - `src/db.ts` — the ledger: `openDb(path?)` opens `data/tta.db` (`TTA_DB` overrides) and sets the
   module-level `db`; WAL, foreign keys on, STRICT tables. `insert(table, row)` and `tx(fn)`. The
-  DDL is `schema.dbml` translated; change both together.
+  DDL is `schema.dbml` (local, gitignored) translated; change both together.
 - `src/auth.ts` — dashboard sign-in: token compare, session cookie, the sign-in page.
 
 ## Invariants worth knowing before you edit

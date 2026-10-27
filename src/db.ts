@@ -167,6 +167,18 @@ create table if not exists snapshot_flow (
   primary key (snapshot_id, span)
 ) strict;
 
+create table if not exists token_signals (
+  id text primary key,
+  token text not null,
+  signal_type integer not null,
+  trigger_at integer not null,
+  trigger_mc real,
+  first_trigger_mc real,
+  signal_times integer,
+  times_by_type text
+) strict;
+create index if not exists token_signals_token on token_signals(token, trigger_at);
+
 create table if not exists positions (
   id integer primary key,
   token text not null references tokens(address),

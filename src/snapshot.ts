@@ -170,6 +170,45 @@ export async function takeSnapshot(mint: string, kind: SnapshotKind): Promise<nu
   return writeSnapshot(await gmgnClient().getTokenInfo("sol", mint), kind);
 }
 
+// ── signals ───────────────────────────────────────────────────────────
+
+/** GMGN's signal types by number (gmgn-market SKILL.md), as the brief names them. The API refuses 14–16. */
+export const SIGNAL_NAMES: Record<number, string> = {
+  1: "kline_spike", 2: "dex_ad", 3: "dex_link_update", 4: "dex_trending_bar", 5: "dex_boost",
+  6: "price_spike", 7: "price_ath", 8: "mcap_key_level", 9: "live_stream", 10: "bundler_sell",
+  11: "cto", 12: "smart_money_buy", 13: "platform_call", 14: "large_buy", 15: "multi_buy",
+  16: "multi_large_buy", 17: "bags_claim", 18: "pump_claim", 19: "platform_call_v2", 20: "kol_buy",
+  21: "banker_claim",
+};
+const signalName = (t: unknown) => SIGNAL_NAMES[Number(t)] ?? `type_${t}`;
+
+/**
+ * One /v1/market/token_signal row: one event, keyed by GMGN's id. Seen again, only its counts
+ * move. signal_times_by_type is the token's tally over every type, warnings included.
+ */
+export function writeSignal(token: string, row: any): void {
+  const at = ms(row?.trigger_at);
+  const type = int(row?.signal_type);
+  if (!row?.id || !at || type === null) return;
+  db.prepare(
+    `insert into token_signals (id, token, signal_type, trigger_at, trigger_mc, first_trigger_mc, signal_times, times_by_type)
+     values (?, ?, ?, ?, ?, ?, ?, ?)
+     on conflict(id) do update set signal_times = excluded.signal_times, times_by_type = excluded.times_by_type`,
+  ).run(String(row.id), token, type, at, n(row.trigger_mc), n(row.first_trigger_mc), int(row.signal_times), JSON.stringify(row.signal_times_by_type ?? {}));
+}
+
+/** The token's signals up to `at`: counts per type (the highest tally seen), first-signal market cap, the latest five. */
+function signalBrief(token: string, at: number): Record<string, unknown> | undefined {
+  const rows = db.prepare("select * from token_signals where token = ? and trigger_at <= ? order by trigger_at desc").all(token, at) as Record<string, any>[];
+  if (!rows.length) return undefined;
+  const top = rows.reduce((a, b) => ((b.signal_times ?? 0) > (a.signal_times ?? 0) ? b : a)); // tallies only grow
+  return compact({
+    counts: Object.fromEntries(Object.entries(JSON.parse(top.times_by_type ?? "{}")).map(([k, v]) => [signalName(k), v])),
+    first_mc_usd: top.first_trigger_mc,
+    recent: rows.slice(0, 5).map((r) => compact({ type: signalName(r.signal_type), minutes_ago: Math.round((at - r.trigger_at) / 60_000), mc_usd: r.trigger_mc })),
+  });
+}
+
 // ── the brief row ─────────────────────────────────────────────────────
 
 const round = (v: unknown) => (typeof v === "number" && !Number.isInteger(v) ? Number(v.toPrecision(4)) : v);
@@ -195,6 +234,7 @@ export function briefRow(snapshotId: number): Record<string, unknown> {
     migrated: t.migrated_at != null,
     creator_address: t.creator_address,
     ...cols,
+    signals: signalBrief(t.address, taken_at),
     flow: Object.fromEntries(
       flow.map((f) => [
         f.span,
