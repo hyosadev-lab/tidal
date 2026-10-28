@@ -133,7 +133,7 @@ function paint(el, html) {
     const n = el.querySelector(`[data-scroll="${k}"]`);
     if (n) n.scrollTop = top;
   }
-  if (focus) el.querySelector(focus)?.focus();
+  if (focus) el.querySelector(focus)?.focus({ preventScroll: true }); // a repaint must never move the page
 }
 
 /** `force` repaints the settings form, which polls otherwise leave alone so typing is never lost. */
