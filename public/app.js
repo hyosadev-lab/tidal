@@ -65,6 +65,9 @@ const S = {
   draft: null,
   section: "mode",
   msg: null,
+  older: new Map(), // runId → its activity events, for runs paged in past the three /api/state carries
+  olderMore: null, // whether runs older than those remain; null until the first page comes back
+  loadingOlder: false,
 };
 const page = () => (["overview", "trading", "settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
 
@@ -80,7 +83,14 @@ async function call(path, body) {
 
 async function poll() {
   try {
-    S.data = await call(`/api/state?range=${S.range}`);
+    const next = await call(`/api/state?range=${S.range}`);
+    // Once older runs are paged in, a run that rolls out of the state's three stays in the list.
+    if (S.older.size && S.data) {
+      const live = new Set(next.trading.activity.map((e) => e.runId));
+      for (const e of S.data.trading.activity)
+        if (!live.has(e.runId)) S.older.has(e.runId) ? S.older.get(e.runId).push(e) : S.older.set(e.runId, [e]);
+    }
+    S.data = next;
     S.error = "";
     if (!S.draft) S.draft = structuredClone(S.data.config);
     followLatestRun();
@@ -150,6 +160,7 @@ function render(force = false) {
     paint($("#main"), p === "overview" ? overview(d) : p === "trading" ? trading(d) : settings(d));
   }
   paint($("#modal"), S.confirmStop ? stopDialog(d) : S.filtersOpen ? filtersDialog(d) : "");
+  nearEnd($('[data-scroll="agent"]')); // a list too short to scroll still pages in until it fills the box
 }
 
 // ── header, banners, stop dialog ──────────────────────────────────────
@@ -241,22 +252,22 @@ function overview(d) {
         <div class="seg light" role="group" aria-label="Time range">${[["7d", "7 days"], ["30d", "30 days"], ["all", "All time"]].map(([k, l]) => `<button data-a="range" data-v="${k}" aria-pressed="${S.range === k}">${l}</button>`).join("")}</div></div></div>
       ${S.view === "pnl" ? pnlChart(o.chart, d.now) : equityChart(o.chart, o.equity, d.now)}
     </section>
-    <section class="card" style="flex:2 1 380px" aria-labelledby="pos-title">
+    <section class="card" style="flex:2 1 380px;padding-bottom:0" aria-labelledby="pos-title">
       <div class="head"><span class="ico">${I.case}</span><div class="stack"><h2 id="pos-title">Open positions</h2><span class="sub">exits run by code on every price poll</span></div>
         <a class="btn sm line" href="#trading" style="margin-left:auto">Manage in Trading${I.arrow}</a></div>
-      ${o.positions.length ? o.positions.map(posCard).join("") : `<p class="empty">No open positions.</p>`}
+      ${o.positions.length ? `<div class="fill fade" data-scroll="pos" tabindex="0" role="region" aria-label="Open positions list" style="max-height:384px;display:flex;flex-direction:column;gap:12px">${o.positions.map(posCard).join("")}</div>` : `<p class="empty">No open positions.</p>`}
     </section>
   </div>
   <div class="row">
-    <section class="card flush" style="flex:2 1 340px" aria-labelledby="health-title">
+    <section class="card flush" style="flex:2 1 340px;padding-bottom:0" aria-labelledby="health-title">
       <div class="head"><span class="ico">${I.pulse}</span><h2 id="health-title">System health</h2><span class="s13 muted">loops and services</span></div>
-      <ul class="health">${healthRows(d).map((h) => `<li><span class="dot" style="background:${h.dot}"></span><div class="stack" style="flex:1 1 auto"><div class="inline" style="flex-wrap:wrap;align-items:baseline;gap:4px 10px"><span class="b">${h.name}</span><span class="s13 b" style="margin-left:auto;color:${h.ink ?? h.dot}">${esc(h.status)}</span></div><span class="s13 muted">${esc(h.detail)}</span></div></li>`).join("")}</ul>
+      <div class="hbody fade" data-scroll="health" tabindex="0" role="region" aria-label="System health and alerts"><ul class="health">${healthRows(d).map((h) => `<li><span class="dot" style="background:${h.dot}"></span><div class="stack" style="flex:1 1 auto"><div class="inline" style="flex-wrap:wrap;align-items:baseline;gap:4px 10px"><span class="b">${h.name}</span><span class="s13 b" style="margin-left:auto;color:${h.ink ?? h.dot}">${esc(h.status)}</span></div><span class="s13 muted">${esc(h.detail)}</span></div></li>`).join("")}</ul>
       <h3>Alerts today</h3>
-      <ol class="alerts">${d.health.alerts.length ? d.health.alerts.map((a) => `<li><span class="mono small muted">${hms(a.at)}</span><span class="tag ${esc(a.level)}">${esc(a.level)}</span><span>${esc(a.msg)}</span></li>`).join("") : `<li class="muted">None.</li>`}</ol>
+      <ol class="alerts">${d.health.alerts.length ? d.health.alerts.map((a) => `<li><span class="mono small muted">${hms(a.at)}</span><span class="tag ${esc(a.level)}">${esc(a.level)}</span><span>${esc(a.msg)}</span></li>`).join("") : `<li class="muted">None.</li>`}</ol></div>
     </section>
-    <section class="card flush" style="flex:3 1 560px" aria-labelledby="fills-title">
+    <section class="card flush" style="flex:3 1 560px;padding-bottom:0" aria-labelledby="fills-title">
       <div class="head"><span class="ico">${I.swap}</span><h2 id="fills-title">Fills</h2><span class="s13 muted">every swap today, newest first</span></div>
-      ${o.fills.length ? `<div class="scroll-x"><table style="min-width:620px"><thead><tr><th>Time</th><th>Side</th><th>Token</th><th class="r">Sold</th><th class="r">USD</th><th class="r">PnL</th><th>Reason</th></tr></thead><tbody>${o.fills.map(fillRow).join("")}</tbody></table></div>` : `<p class="empty">No fills today.</p>`}
+      ${o.fills.length ? `<div class="vscroll fade" data-scroll="fills" tabindex="0" role="region" aria-label="Fills list"><table style="min-width:620px"><thead><tr><th>Time</th><th>Side</th><th>Token</th><th class="r">Sold</th><th class="r">USD</th><th class="r">PnL</th><th>Reason</th></tr></thead><tbody>${o.fills.map(fillRow).join("")}</tbody></table></div>` : `<p class="empty">No fills today.</p>`}
     </section>
   </div>`;
 }
@@ -438,16 +449,16 @@ function trading(d) {
   ];
   return `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Entry loop · agent</span><h1>Trading</h1><p>The tokens the agent reads, what it decided and why, and the positions it holds.</p></div></div>
   <div class="row" style="align-items:flex-start">
-    <section class="card flush tall" style="flex:999 1 760px;gap:14px;padding-top:16px" aria-labelledby="feed-title">
+    <section class="card flush tall" style="flex:999 1 760px;gap:14px;padding-top:16px;padding-bottom:0" aria-labelledby="feed-title">
       <div class="head"><span class="ico">${I.eye}</span><div class="stack"><h2 id="feed-title" class="big">What the agent sees</h2><span class="s13 muted">${tr.fetchedAt ? `${plural(tr.feed.length, "token")} from the fetch at ${hms(tr.fetchedAt)}, plus waits now due` : "no fetch yet"}</span></div>
         <button class="btn sm light" style="margin-left:auto" data-a="openFilters" aria-label="Edit filters, ${active} active">${I.filter}<span>Filters</span>${active ? `<span class="cnt" aria-hidden="true">${active}</span>` : ""}</button></div>
-      <div class="fill" data-scroll="feed"><div style="min-width:840px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span><span class="r">Rug</span><span class="r">Age</span></div>
+      <div class="fill fade" data-scroll="feed"><div style="min-width:840px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span><span class="r">Rug</span><span class="r">Age</span></div>
         <ul class="feed" aria-label="Tokens the agent reads">${feedRows || `<li class="empty">Nothing fetched yet.</li>`}</ul></div></div>
     </section>
-    <section class="card flush tall" style="flex:1 1 400px;padding-top:16px" aria-labelledby="agent-title">
+    <section class="card flush tall" style="flex:1 1 400px;padding-top:16px;padding-bottom:0" aria-labelledby="agent-title">
       <div class="head"><span class="ico vio">${I.chat}</span><div class="stack"><h2 id="agent-title" class="big">Agent activity</h2><span class="s13 muted inline" style="gap:6px"><span class="dot" style="background:${d.health.run === "running" ? "var(--lime)" : "var(--dim)"}"></span>${d.health.run === "running" ? "cycle running" : d.health.run}${tr.runs[0] ? ` · last run #${tr.runs[0].id}` : ""}</span></div></div>
       <div class="seg sm" role="group" aria-label="Agent panel view" style="align-self:flex-start;margin:0 16px">${[["activity", "Activity"], ["runs", "Runs"]].map(([k, l]) => `<button data-a="tab" data-v="${k}" aria-pressed="${S.tab === k}">${l}</button>`).join("")}</div>
-      <div class="fill" data-scroll="agent" style="display:flex;flex-direction:column;gap:12px">${S.tab === "activity" ? activityPanel(tr) : runsPanel(tr)}</div>
+      <div class="fill fade" data-scroll="agent" style="display:flex;flex-direction:column;gap:12px">${S.tab === "activity" ? activityPanel(tr) : runsPanel(tr)}</div>
     </section>
   </div>
   <div style="display:flex;flex-direction:column;gap:12px">
@@ -471,7 +482,11 @@ function activityPanel(tr) {
       ${t.lookups.length ? `<div class="stack" style="gap:4px"><span class="small muted" style="padding:4px 2px">Lookups the agent made</span>${t.lookups.map((l) => `<div class="lookup"><span class="mono dim" style="font-size:11px">${hms(l.at)}</span><span class="mono small">${esc(l.name)}</span><span class="small muted" style="margin-left:auto">${esc(l.text)}</span></div>`).join("")}</div>` : ""}
     </div>`;
   }
-  const items = tr.activity
+  const live = new Set(tr.activity.map((e) => e.runId));
+  const older = [...S.older].filter(([id]) => !live.has(id)).flatMap(([, ev]) => ev);
+  const more = S.olderMore ?? tr.activityMore;
+  const items = [...tr.activity, ...older]
+    .sort((a, b) => b.at - a.at)
     .map((e) => {
       const who = e.kind === "run" || e.kind === "error"
         ? `<button class="link" data-a="openRun" data-v="${e.runId}" style="text-decoration:underline;text-underline-offset:3px">Run #${e.runId}</button>`
@@ -481,8 +496,8 @@ function activityPanel(tr) {
       return `<li><span class="t">${hms(e.at)}</span><span class="tag ${kind}">${kind}</span><span class="s13" style="flex:1 1 auto;min-width:0">${who} <span class="soft">${text}</span></span></li>`;
     })
     .join("");
-  return `<ol class="events" aria-label="Latest agent activity">${items || `<li class="muted s13">No runs yet.</li>`}
-    <li class="s13 muted" style="display:block;padding:12px 16px">Earlier runs are in the <button class="link" data-a="tab" data-v="runs">Runs</button> tab. Pick a token to see everything the agent did with it.</li></ol>`;
+  return `<ol class="events" aria-label="Agent activity">${items || `<li class="muted s13">No runs yet.</li>`}
+    <li class="s13 muted" style="display:block;padding:12px 16px">${more ? "Loading earlier runs…" : items ? "That is every run on record." : ""} Pick a token to see everything the agent did with it.</li></ol>`;
 }
 
 function runsPanel(tr) {
@@ -679,6 +694,28 @@ function setField(el) {
   const sol = document.querySelector("[data-sol]");
   if (sol && S.data.solUsd > 0) sol.textContent = `SOL ≈ ${usd(Number(c.sizeSol) * S.data.solUsd)}`;
 }
+
+/** Lazy load: pages in the five runs before the oldest one shown when the box nears its end. */
+async function nearEnd(box) {
+  const tr = S.data?.trading;
+  if (!box || !tr || S.tab !== "activity" || S.sel || S.loadingOlder || !(S.olderMore ?? tr.activityMore)) return;
+  if (box.scrollTop + box.clientHeight < box.scrollHeight - 200) return;
+  const before = Math.min(...tr.activity.map((e) => e.runId), ...S.older.keys());
+  if (!Number.isFinite(before)) return;
+  S.loadingOlder = true;
+  try {
+    const page = await call(`/api/activity?before=${before}`);
+    for (const e of page.activity) S.older.has(e.runId) ? S.older.get(e.runId).push(e) : S.older.set(e.runId, [e]);
+    S.olderMore = page.more;
+  } catch (e) {
+    S.msg = { ok: false, text: e.message };
+    S.olderMore = false; // no retry loop on a failing endpoint; the next page load tries again
+  } finally {
+    S.loadingOlder = false;
+  }
+  render();
+}
+document.addEventListener("scroll", (e) => e.target.dataset?.scroll === "agent" && nearEnd(e.target), true);
 
 // ── actions ───────────────────────────────────────────────────────────
 

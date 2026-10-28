@@ -123,6 +123,11 @@ export function startServer(o: { port: number; host: string; token?: string }): 
         const r = view.runDetail(Number(url.searchParams.get("id")));
         return r ? json(res, 200, r) : json(res, 404, { error: "no such run" });
       }
+      if (req.method === "GET" && path === "/api/activity") {
+        const before = Number(url.searchParams.get("before"));
+        if (!Number.isSafeInteger(before)) return json(res, 400, { error: "before must be a run id" });
+        return json(res, 200, view.activityBefore(before));
+      }
       if (req.method === "GET" && path === "/api/token")
         return json(res, 200, view.tokenDetail(String(url.searchParams.get("address") ?? ""), loadConfig(), Date.now()));
 

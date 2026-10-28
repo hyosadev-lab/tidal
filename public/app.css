@@ -58,7 +58,8 @@ a { color: var(--lime); } a:hover { color: #E8FA9E; }
 /* cards */
 .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
 .card { background: var(--card); border-radius: 24px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.card.flush { padding: 14px 0 8px; gap: 8px; }
+.card.flush { padding: 14px 0 8px; gap: 8px; overflow: clip; } /* rows run edge to edge: keep their borders inside the rounded corners */
+.card.flush > [tabindex]:focus-visible { outline-offset: -2px; } /* the clip would cut an outside ring */
 .card.flush > .head { padding: 0 16px; }
 .head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
 .head .tail { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -110,6 +111,10 @@ h2.big { font-size: 18px; line-height: 24px; font-weight: 600; }
 
 /* tables */
 .scroll-x { overflow-x: auto; }
+/* scroll boxes run to the card's bottom edge and fade out there instead of a hard cut; the padding lets the last row clear the fade */
+.fade { padding-bottom: 24px; -webkit-mask-image: linear-gradient(#000 calc(100% - 24px), transparent); mask-image: linear-gradient(#000 calc(100% - 24px), transparent); }
+.vscroll { max-height: 424px; overflow: auto; }
+.vscroll th { position: sticky; top: 0; z-index: 1; background: var(--card); border-bottom: 0; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; padding: 10px 12px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--dim); border-bottom: 1px solid var(--line); white-space: nowrap; }
 td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -134,7 +139,9 @@ th.r, td.r { text-align: right; }
 .meter > i { display: block; height: 100%; min-width: 4px; border-radius: 4px; background: var(--amber); }
 .slots { display: flex; gap: 6px; } .slots i { flex: 1 1 0; height: 8px; border-radius: 4px; background: rgba(22, 22, 24, 0.25); } .slots i.on { background: #161618; }
 .split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 6px; }
-.plot { position: relative; height: 220px; margin: 20px 4px 0 56px; }
+/* the chart grows with its card, so it fills the row when Open positions is taller */
+.card > figure { flex: 1 1 auto; display: flex; flex-direction: column; }
+.plot { position: relative; flex: 1 1 auto; min-height: 220px; margin: 20px 4px 0 56px; }
 .plot.eq { margin-right: 84px; margin-left: 64px; }
 .plot .yl { position: absolute; right: calc(100% + 12px); transform: translateY(-50%); font-size: 12px; line-height: 16px; color: var(--dim); white-space: nowrap; }
 .plot .gl { position: absolute; left: 0; right: 0; height: 1px; background: var(--line); }
@@ -155,6 +162,9 @@ th.r, td.r { text-align: right; }
 .health { list-style: none; margin: 0; padding: 0 8px; }
 .health li { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .health .dot { margin-top: 6px; }
+/* flex-basis 0: System health never sets the row's height; it fills what Fills leaves and scrolls, "Alerts today" sticking on top */
+.hbody { flex: 1 1 0; min-height: 320px; overflow-y: auto; display: flex; flex-direction: column; }
+.hbody h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 8px 20px; background: var(--card); }
 .alerts { list-style: none; margin: 0; padding: 0 0 4px; }
 .alerts li { display: flex; align-items: baseline; gap: 10px; padding: 9px 20px; font-size: 13px; line-height: 18px; }
 h3 { margin: 8px 0 0; padding: 0 20px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--muted); }

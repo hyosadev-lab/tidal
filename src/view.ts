@@ -262,6 +262,35 @@ function lookupTarget(args: string | null): string {
   return "";
 }
 
+type RunRow = { id: number; started_at: number; finished_at: number | null; status: string; error: string | null };
+
+/** Every event of these runs, newest first. Each carries its runId so pages can be merged. */
+function activityOf(runs: RunRow[]) {
+  const activity: Record<string, any>[] = [];
+  for (const r of runs) {
+    const brief = briefOf(r.id);
+    activity.push({ at: r.started_at, kind: "run", runId: r.id, text: brief ? `started · ${brief.length} due: ${brief.map((b) => b.symbol ?? shortAddr(b.address)).join(", ")}` : "started" });
+    for (const c of all<Record<string, any>>("select at, name, args, result from tool_calls where run_id = ? order by id", r.id)) {
+      const target = lookupTarget(c.args);
+      activity.push({ at: c.at, kind: "lookup", runId: r.id, token: symbolOf(target) ?? shortAddr(target), address: target, text: `${c.name} · ${toolSummary(c.name, c.result).text}` });
+    }
+    for (const d of all<Record<string, any>>(
+      `select d.token, d.action, d.conviction, d.recheck_at, d.thesis, coalesce(t.symbol, substr(d.token, 1, 6)) symbol from decisions d
+       join tokens t on t.address = d.token where d.run_id = ? order by d.id`,
+      r.id,
+    ))
+      activity.push({ at: r.finished_at ?? r.started_at, kind: "verdict", runId: r.id, token: d.symbol, address: d.token, action: d.action, conviction: d.conviction, until: d.recheck_at, veto: String(d.thesis ?? "").startsWith("risk check:") ? d.thesis : null });
+    if (r.status === "error") activity.push({ at: r.finished_at ?? r.started_at, kind: "error", runId: r.id, text: r.error });
+  }
+  return activity.sort((a, b) => b.at - a.at);
+}
+
+/** The dashboard's lazy load: the `n` runs before run `before`, and whether older ones remain. */
+export function activityBefore(before: number, n = 5) {
+  const runs = all<RunRow>("select id, started_at, finished_at, status, error from agent_runs where id < ? order by id desc limit ?", before, n + 1);
+  return { activity: activityOf(runs.slice(0, n)), more: runs.length > n };
+}
+
 export function trading(cfg: Config, now: number) {
   const runs = all<Record<string, any>>(
     "select id, started_at, finished_at, status, error, input_tokens, output_tokens from agent_runs order by id desc limit 50",
@@ -304,31 +333,14 @@ export function trading(cfg: Config, now: number) {
     };
   });
 
-  // Agent activity: the last three runs, event by event, newest first.
-  const activity: Record<string, any>[] = [];
-  for (const r of runs.slice(0, 3)) {
-    const brief = briefOf(r.id);
-    activity.push({ at: r.started_at, kind: "run", runId: r.id, text: brief ? `started · ${brief.length} due: ${brief.map((b) => b.symbol ?? shortAddr(b.address)).join(", ")}` : "started" });
-    for (const c of all<Record<string, any>>("select at, name, args, result from tool_calls where run_id = ? order by id", r.id)) {
-      const target = lookupTarget(c.args);
-      activity.push({ at: c.at, kind: "lookup", token: symbolOf(target) ?? shortAddr(target), address: target, text: `${c.name} · ${toolSummary(c.name, c.result).text}` });
-    }
-    for (const d of all<Record<string, any>>(
-      `select d.token, d.action, d.conviction, d.recheck_at, d.thesis, coalesce(t.symbol, substr(d.token, 1, 6)) symbol from decisions d
-       join tokens t on t.address = d.token where d.run_id = ? order by d.id`,
-      r.id,
-    ))
-      activity.push({ at: r.finished_at ?? r.started_at, kind: "verdict", token: d.symbol, address: d.token, action: d.action, conviction: d.conviction, until: d.recheck_at, veto: String(d.thesis ?? "").startsWith("risk check:") ? d.thesis : null });
-    if (r.status === "error") activity.push({ at: r.finished_at ?? r.started_at, kind: "error", runId: r.id, text: r.error });
-  }
-  activity.sort((a, b) => b.at - a.at);
-
   const midnight = startOfDay(now);
   return {
     feed,
     fetchedAt: status.fetch.at,
     filters: cfg.filters,
-    activity: activity.slice(0, 30),
+    // Agent activity: the last three runs here; older ones page in through activityBefore.
+    activity: activityOf(runs.slice(0, 3) as RunRow[]),
+    activityMore: runs.length > 3,
     runs: runs.map((r) => {
       const brief = briefOf(r.id);
       const counts = all<{ action: string; n: number }>("select action, count(*) n from decisions where run_id = ? group by action", r.id);
