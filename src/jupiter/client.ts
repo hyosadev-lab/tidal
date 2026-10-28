@@ -11,8 +11,9 @@ import type { KeyObject } from "node:crypto";
  * process and the wallet: there is no `GMGN_ALLOW_AUTOMATED_TRADES` check on this path — the
  * operator's decision. Don't extend that exemption to any other route.
  *
- * `JUPITER_API_KEY` is optional: without it requests go out keyless (30/min, and `/execute` has
- * its own bucket). `SOLANA_RPC_URL` overrides the public RPC the wallet reads use.
+ * `JUPITER_API_KEY` is optional. The plan allows 1 request a second (`/execute` has its own
+ * bucket), so every other request takes the next free slot, GAP_MS apart, in call order — the
+ * exit poll, quotes and swaps share it. `SOLANA_RPC_URL` overrides the public RPC the wallet reads use.
  */
 
 const API = "https://api.jup.ag/swap/v2";
@@ -115,7 +116,19 @@ export function signTransaction(txBase64: string, w: { key: KeyObject; pub: Buff
 
 // ── swap ──────────────────────────────────────────────────────────────
 
+/** One request a second, plus 100ms so jitter in transit cannot squeeze two into one. */
+const GAP_MS = 1_100;
+let nextSlot = 0;
+
+/** Books the next free slot synchronously (so call order is send order), then waits for it. */
+async function paced(): Promise<void> {
+  const at = Math.max(Date.now(), nextSlot);
+  nextSlot = at + GAP_MS;
+  if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now()));
+}
+
 async function http(url: string, o: { body?: string } = {}): Promise<Record<string, any>> {
+  if (!url.endsWith("/execute")) await paced();
   const key = process.env.JUPITER_API_KEY?.trim();
   const res = await fetch(url, {
     method: o.body ? "POST" : "GET",

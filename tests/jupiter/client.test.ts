@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { b58decode, b58encode, parseKey, signTransaction } from "../../src/jupiter/client.ts";
+import { b58decode, b58encode, parseKey, prices, signTransaction } from "../../src/jupiter/client.ts";
 
 // The signing half of the Jupiter route — everything that can be pinned without the network.
 // A wrong byte here is a transaction Jupiter refuses, or a signature for the wrong wallet.
@@ -57,4 +57,17 @@ test("signing fills this wallet's slot and no other, on v0 and legacy messages",
     const stranger = parseKey(b58encode(secretKey()));
     assert.throws(() => signTransaction(tx.toString("base64"), stranger), /does not ask for this wallet/);
   }
+});
+
+test("requests go out one slot apart, in call order: the plan allows 1 a second", async () => {
+  const sent: number[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => (sent.push(Date.now()), new Response("{}"))) as typeof fetch;
+  try {
+    await Promise.all([prices(["a"]), prices(["b"]), prices(["c"])]);
+  } finally {
+    globalThis.fetch = real;
+  }
+  assert.equal(sent.length, 3);
+  for (let i = 1; i < sent.length; i++) assert.ok(sent[i]! - sent[i - 1]! >= 1_090, `gap ${sent[i]! - sent[i - 1]!}ms`);
 });

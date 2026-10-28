@@ -12,13 +12,13 @@ import { bookExternal, noteSol, openPosition, openPositions, sell, type Position
  * (The board's Helius swap stream needs a paid Helius plan; this poll stands in for it.)
  */
 
-export const POLL_MS = 3000;
+export const POLL_MS = 1000;
 /** A reading this many times off the last price is confirmed on GMGN before anything acts on it. */
 const JUMP = 3;
 /** A failed sell is retried after this, not on every poll. */
 const RETRY_MS = 15_000;
-/** Live only: how often the wallet is read for sells made outside the agent, in polls. */
-const WALLET_EVERY = 10;
+/** Live only: how often the wallet is read for sells made outside the agent, in polls (~30s). */
+const WALLET_EVERY = 30;
 
 type RuleRow = { id: number; kind: "tp" | "sl"; at_pct: number; sell_pct: number; filled_at: number | null };
 export type ExitSignal = { reason: SellReason; pct: number; ruleIds: number[] };

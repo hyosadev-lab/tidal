@@ -27,7 +27,7 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
 
 ## The engine
 
-`src/index.ts` runs `exitTick` (`exit.ts`, every 3s) and an equity row a minute, and starts the
+`src/index.ts` runs `exitTick` (`exit.ts`, every 1s) and an equity row a minute, and starts the
 dashboard; Start runs `entryLoop` (`entry.ts`): cycles back to back, no timer, and a cycle that
 cannot buy (no free slot, paused) waits for `wake` (a close, Start, Resume, settings, 00:00 UTC). Config is the 'config' row in
 `settings` (`config.ts`: Settings-board defaults written on first start, every value clamped),
@@ -46,7 +46,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   → agent_runs / tool_calls / decisions) → per buy, best conviction first: exit plan, security
   (`/v1/token/security`), slot, size, cash, entry snapshot, `trade.buy`. A refusal on the token
   itself is a 'skip' row (final). No agent run while every slot is taken or buying is paused.
-- Exit: one Jupiter Price API read for every open position; `evaluate` (pure) fires sl → health
+- Exit: one Jupiter Price API read for every open position (Jupiter: 1 req/s, every request but
+  `/execute` takes the next slot of one queue in `jupiter/client.ts`); `evaluate` (pure) fires sl → health
   (liquidity drain) → time stop → tp. A >3× jump is confirmed on GMGN first. Live positions are
   matched against the wallet every ~30s; tokens gone without a sell are booked `external`.
   The design's Helius `transactionSubscribe` stream needs a paid Helius plan — polling stands in.
