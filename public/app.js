@@ -151,18 +151,18 @@ const release = () => {
 document.addEventListener("pointerup", release, true);
 document.addEventListener("pointercancel", release, true);
 
-/** Sets innerHTML only when it changed, keeping scroll of [data-scroll] boxes and keyboard focus. */
+/** Sets innerHTML only when it changed, keeping scroll (both axes) of [data-scroll] boxes and keyboard focus. */
 function paint(el, html) {
   if (!el || painted.get(el) === html) return;
   if (pressed) return void held.set(el, html);
-  const kept = [...el.querySelectorAll("[data-scroll]")].map((n) => [n.dataset.scroll, n.scrollTop]);
+  const kept = [...el.querySelectorAll("[data-scroll]")].map((n) => [n.dataset.scroll, n.scrollTop, n.scrollLeft]);
   const f = document.activeElement;
   const focus = f && el.contains(f) && f.dataset.a ? `[data-a="${f.dataset.a}"]${f.dataset.v ? `[data-v="${CSS.escape(f.dataset.v)}"]` : ""}` : null;
   el.innerHTML = html;
   painted.set(el, html);
-  for (const [k, top] of kept) {
+  for (const [k, top, left] of kept) {
     const n = el.querySelector(`[data-scroll="${k}"]`);
-    if (n) n.scrollTop = top;
+    if (n) (n.scrollTop = top), (n.scrollLeft = left);
   }
   if (focus) el.querySelector(focus)?.focus({ preventScroll: true }); // a repaint must never move the page
 }
@@ -565,7 +565,7 @@ function runsPanel(tr) {
 function positionsTable(d) {
   const pos = d.overview.positions;
   return `<section class="card flush" aria-labelledby="pos-title2"><div class="head"><span class="ico">${I.case}</span><h2 id="pos-title2">Open positions</h2><span class="s13 muted">exits run by code on every price poll · click a token to see why the agent bought it</span></div>
-    ${pos.length ? `<div class="scroll-x"><table style="min-width:920px"><thead><tr><th>Token</th><th class="r">PnL</th><th class="r">Now / entry, USD</th><th class="r">Held</th><th>Exit plan</th><th class="r">Time stop</th><th><span class="sr">Actions</span></th></tr></thead><tbody>${pos
+    ${pos.length ? `<div class="scroll-x" data-scroll="positions"><table style="min-width:920px"><thead><tr><th>Token</th><th class="r">PnL</th><th class="r">Now / entry, USD</th><th class="r">Held</th><th>Exit plan</th><th class="r">Time stop</th><th><span class="sr">Actions</span></th></tr></thead><tbody>${pos
       .map(
         (p, i) => `<tr><td class="nowrap"><div class="inline" style="gap:12px"><span class="av ${i % 2 ? "alt" : ""}" aria-hidden="true">${ini(p.symbol)}</span><span class="stack"><button class="namebtn" data-a="pick" data-v="${esc(p.token)}" aria-label="Show the agent's view of ${esc(p.symbol)}">${esc(p.symbol)}</button><span class="mono small muted">${esc(p.mint)} · held ${mins(p.heldMin)}${p.mode === "live" ? " · live" : ""}</span></span></div></td>
         <td class="r nowrap"><div class="${sign(p.pnlPct)}" style="font-size:18px;line-height:24px;font-weight:600">${pct(p.pnlPct)}</div><div class="small muted">${susd(p.pnlUsd)} · peak ${pct(p.peakPct)}</div></td>
@@ -587,7 +587,7 @@ function runDock(r, tr) {
       <div class="stats"><div><span class="small muted">Started</span><b>${hms(r.at)}</b></div><div><span class="small muted">Duration</span><b>${r.secs !== null ? r.secs.toFixed(1) + "s" : "—"}</b></div><div><span class="small muted">Steps</span><b>${r.steps}${tr.maxSteps === null ? "" : ` of ${tr.maxSteps}`}</b></div><div><span class="small muted">Tool calls</span><b>${used}${tr.toolBudget === null ? "" : ` of ${tr.toolBudget}`}</b></div><div><span class="small muted">Tokens in / out</span><b>${kn(r.tin ?? 0)} / ${kn(r.tout ?? 0)}</b></div></div>
       ${failed ? `<div class="banner red" role="status" style="border-radius:16px;font-size:13px;line-height:19px"><span><code class="mono small">agent_runs.error</code> ${esc(r.error)}</span></div>` : ""}</section>
     <section class="card flush" aria-labelledby="brief-title"><div class="head" style="padding:0 20px;align-items:baseline"><h2 id="brief-title">Brief</h2><span class="s13 muted">${plural(r.brief.length, "due token")} · the numbers the model saw, from token_snapshots</span></div>
-      <div class="scroll-x"><div style="min-width:820px"><div class="grid-brief ghead" style="padding:6px 20px 8px"><span>Token</span><span>Why due</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">Vol 1h</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span></div>
+      <div class="scroll-x" data-scroll="brief"><div style="min-width:820px"><div class="grid-brief ghead" style="padding:6px 20px 8px"><span>Token</span><span>Why due</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">Vol 1h</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span></div>
       ${r.brief.map((b) => `<div class="grid-brief" style="padding:10px 20px;border-bottom:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums"><span class="stack"><span class="b" style="overflow:hidden;text-overflow:ellipsis">${esc(b.symbol)}</span><span class="mono small muted">${esc(b.mint)}</span></span><span class="s13 soft">${esc(b.why)}</span><span class="r">${k$(b.mcap)}</span><span class="r">${k$(b.liq)}</span><span class="r">${k$(b.vol)}</span><span class="r">${kn(b.txs)}</span><span class="r ${sign(b.change1h)}">${pct(b.change1h)}</span><span class="r">${rate(b.top10)}</span></div>`).join("") || `<p class="empty">No brief on record.</p>`}</div></div></section>
   </div><div style="flex:1 1 460px;min-width:0;display:flex;flex-direction:column;gap:12px">
     <section class="card flush" aria-labelledby="verdicts-title"><div class="head" style="padding:0 20px;align-items:baseline"><h2 id="verdicts-title">Verdicts</h2><span class="s13 muted">saved to decisions · model-written, read as data</span></div>
@@ -692,7 +692,7 @@ function planStatus(c) {
 }
 
 function planEditor(c) {
-  return `<div style="display:flex;flex-direction:column;gap:18px"><div class="scroll-x"><table style="min-width:420px"><thead><tr><th style="padding-left:0">Rule</th><th>Fires at PnL</th><th>Sells, of original qty</th><th><span class="sr">Remove</span></th></tr></thead><tbody>${c.plan
+  return `<div style="display:flex;flex-direction:column;gap:18px"><div class="scroll-x" data-scroll="plan"><table style="min-width:420px"><thead><tr><th style="padding-left:0">Rule</th><th>Fires at PnL</th><th>Sells, of original qty</th><th><span class="sr">Remove</span></th></tr></thead><tbody>${c.plan
     .map(
       (r, i) => `<tr><td style="padding-left:0"><select class="inp" aria-label="Rule ${i + 1} kind" data-rule="${i}" data-k="kind"><option value="sl" ${r.kind === "sl" ? "selected" : ""}>Stop loss</option><option value="tp" ${r.kind === "tp" ? "selected" : ""}>Take profit</option></select></td>
       <td><div class="inline" style="gap:8px"><input class="inp narrow" type="number" step="any" aria-label="Rule ${i + 1} fires at" data-rule="${i}" data-k="at" value="${esc(r.at)}"><span class="muted">%</span></div></td>
