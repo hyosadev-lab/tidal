@@ -94,6 +94,8 @@ async function poll() {
         if (!live.has(e.runId)) S.older.has(e.runId) ? S.older.get(e.runId).push(e) : S.older.set(e.runId, [e]);
     }
     S.data = next;
+    S.skew = next.now - Date.now();
+    S.seenAt = Date.now();
     S.error = "";
     if (!S.draft) S.draft = structuredClone(S.data.config);
     followLatestRun();
@@ -149,12 +151,18 @@ function paint(el, html) {
   if (focus) el.querySelector(focus)?.focus({ preventScroll: true }); // a repaint must never move the page
 }
 
+/** Ticks on the server's clock, but freezes once polls stop landing, so a stuck clock still means a dead feed. */
+function tickClock() {
+  const d = S.data;
+  const now = !d ? Date.now() : Date.now() - S.seenAt < 10_000 ? Date.now() + S.skew : d.now;
+  $("#clock").textContent = `${dayLabel(now)} · ${hms(now)}`;
+}
+
 /** `force` repaints the settings form, which polls otherwise leave alone so typing is never lost. */
 function render(force = false) {
   const d = S.data;
   paint($("#hdr"), header(d));
-  const now = d ? d.now : Date.now();
-  $("#clock").textContent = `${dayLabel(now)} · ${hms(now)}`;
+  tickClock();
   if (!d) return paint($("#main"), `<p class="${S.error ? "neg" : "muted"}">${esc(S.error || "Loading…")}</p>`);
   paint($("#banner"), banners(d));
   const p = page();
@@ -831,3 +839,4 @@ window.addEventListener("hashchange", () => render(true));
 
 poll();
 setInterval(poll, 3000);
+setInterval(tickClock, 250); // a 1s timer drifts against the second boundary and skips a second now and then
