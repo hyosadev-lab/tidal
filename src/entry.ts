@@ -44,6 +44,7 @@ function feedRow(r: any, source: string, signal: boolean): FeedRow {
     sells: signal ? null : num(r.sells),
     change1h: signal ? null : num(r.price_change_percent1h),
     top10: num(r.top_10_holder_rate),
+    bundler: num(r.bundler_rate ?? r.bundler_trader_amount_rate), // trending, then signal
     rug: num(r.rug_ratio),
     createdAt: created ? created * 1000 : null,
   };

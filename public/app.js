@@ -462,7 +462,7 @@ function trading(d) {
         <span class="stack" style="align-items:flex-start"><span class="pill ${t.status}">${STATUS[t.status]}</span><span class="muted nowrap" style="font-size:11px;line-height:14px;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(statusNote(t))}</span></span>
         <span class="r">${k$(t.mcap)}</span><span class="r">${k$(t.liq)}</span>
         <span class="stack" style="align-items:flex-end"><span>${fin(t.buys) && fin(t.sells) ? (t.buys + t.sells).toLocaleString("en-US") : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${kn(t.buys)} / ${kn(t.sells)}</span></span>
-        <span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span><span class="r">${rate(t.top10)}</span>
+        <span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span><span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
         <span class="r" style="color:${fin(t.rug) && t.rug >= 0.7 ? "var(--red)" : "var(--ink)"}">${fin(t.rug) ? t.rug.toFixed(2) : "—"}</span><span class="r soft">${age}</span></button></li>`;
     })
     .join("");
@@ -479,7 +479,7 @@ function trading(d) {
     <section class="card flush tall" style="flex:999 1 760px;gap:14px;padding-top:16px;padding-bottom:0" aria-labelledby="feed-title">
       <div class="head"><span class="ico">${I.eye}</span><div class="stack"><h2 id="feed-title" class="big">What the agent sees</h2><span class="s13 muted">${tr.fetchedAt ? `${plural(tr.feed.length, "token")} from the fetch at ${hms(tr.fetchedAt)}, plus waits now due` : "no fetch yet"}</span></div>
         <button class="btn sm light" style="margin-left:auto" data-a="openFilters" aria-label="Edit filters, ${active} active">${I.filter}<span>Filters</span>${active ? `<span class="cnt" aria-hidden="true">${active}</span>` : ""}</button></div>
-      <div class="fill fade" data-scroll="feed"><div style="min-width:840px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span><span class="r">Rug</span><span class="r">Age</span></div>
+      <div class="fill fade" data-scroll="feed"><div style="min-width:910px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Rug</span><span class="r">Age</span></div>
         <ul class="feed" aria-label="Tokens the agent reads">${feedRows || `<li class="empty">Nothing fetched yet.</li>`}</ul></div></div>
     </section>
     <section class="card flush tall" style="flex:1 1 440px;padding-top:16px;padding-bottom:0;position:relative" aria-labelledby="agent-title">

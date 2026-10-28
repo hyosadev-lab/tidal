@@ -373,7 +373,7 @@ export function trading(cfg: Config, now: number, tz: string) {
   const feed = [...new Set([...fetched.keys(), ...waits])].map((address) => {
     const f = fetched.get(address);
     const s = one<Record<string, any>>(
-      `select s.id, s.market_cap_usd, s.liquidity_usd, s.top_10_holder_rate, s.price_usd, f.buys, f.sells, f.price_usd p1h
+      `select s.id, s.market_cap_usd, s.liquidity_usd, s.top_10_holder_rate, s.top_bundler_trader_percentage, s.price_usd, f.buys, f.sells, f.price_usd p1h
        from token_snapshots s left join snapshot_flow f on f.snapshot_id = s.id and f.span = '1h'
        where s.token = ? order by s.id desc limit 1`,
       address,
@@ -393,6 +393,7 @@ export function trading(cfg: Config, now: number, tz: string) {
       sells: f?.sells ?? s?.sells ?? null,
       change1h: f?.change1h ?? (s?.p1h > 0 ? (s!.price_usd / s!.p1h - 1) * 100 : null),
       top10: f?.top10 ?? s?.top_10_holder_rate ?? null,
+      bundler: f?.bundler ?? s?.top_bundler_trader_percentage ?? null,
       rug: f?.rug ?? null,
       createdAt: f?.createdAt ?? t?.created_at ?? null,
     };

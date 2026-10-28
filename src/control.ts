@@ -93,6 +93,7 @@ export type FeedRow = {
   sells: number | null;
   change1h: number | null;
   top10: number | null;
+  bundler: number | null;
   rug: number | null;
   createdAt: number | null;
 };
