@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sanitize } from "../src/config.ts";
 import { db, openDb } from "../src/db.ts";
-import { dayStart, overview, trading, zone } from "../src/view.ts";
+import { activityBefore, dayStart, overview, runsBefore, trading, zone } from "../src/view.ts";
 
 test("dayStart: the viewer's midnight, ahead of and behind UTC, across DST", () => {
   assert.equal(dayStart(Date.UTC(2026, 9, 28, 7, 58), "Asia/Jakarta"), Date.UTC(2026, 9, 27, 17)); // 14:58 WIB
@@ -32,16 +32,35 @@ test("the daily PnL chart buckets sells by the viewer's days", () => {
   assert.equal(overview(cfg, "7d", now, "Asia/Jakarta").today.sells, 1);
 });
 
-test("a failed run today stays in the runs list after 50 newer runs", () => {
+test("the Runs list pages through today's runs, All and Failed alike", () => {
   openDb(":memory:");
   const now = Date.UTC(2026, 9, 28, 12);
   const run = (at: number, status: string) =>
     db.prepare("insert into agent_runs (started_at, model, status) values (?, 'm', ?)").run(at, status);
-  run(Date.UTC(2026, 9, 27, 12), "error"); // yesterday: not today's failure, rolls out
+  run(Date.UTC(2026, 9, 27, 12), "error"); // yesterday: in no list
   run(now - 3_600_000, "error");
-  for (let i = 0; i < 60; i++) run(now - 3_000_000 + i * 1000, "ok");
+  for (let i = 0; i < 30; i++) run(now - 3_000_000 + i * 1000, "ok");
   const tr = trading(sanitize({}), now, "UTC");
   assert.equal(tr.runsToday?.failed, 1);
-  assert.deepEqual(tr.runs.filter((r) => r.status === "error").map((r) => r.at), [now - 3_600_000]);
-  assert.equal(tr.runs.length, 51);
+  assert.deepEqual([tr.runs.all.runs.length, tr.runs.all.more], [20, true]);
+  assert.deepEqual(tr.runs.failed.runs.map((r) => r.at), [now - 3_600_000]);
+  assert.equal(tr.runs.failed.more, false);
+  const next = runsBefore(tr.runs.all.runs.at(-1)!.id, tr.runsSince, false);
+  assert.deepEqual([next.runs.length, next.more], [11, false]); // the other 10 ok runs and today's failure
+  assert.equal(next.runs.at(-1)!.status, "error");
+  assert.equal(tr.lastRun, 32);
+});
+
+test("Agent activity pages through today's runs only, ten at a time", () => {
+  openDb(":memory:");
+  const now = Date.UTC(2026, 9, 28, 12);
+  const run = (at: number) => db.prepare("insert into agent_runs (started_at, model, status) values (?, 'm', 'ok')").run(at);
+  run(Date.UTC(2026, 9, 27, 23, 59)); // yesterday: never shown
+  for (let i = 0; i < 15; i++) run(now - 3_000_000 + i * 1000);
+  const tr = trading(sanitize({}), now, "UTC");
+  const ids = (a: Record<string, any>[]) => [...new Set(a.map((e) => e.runId))];
+  assert.deepEqual(ids(tr.activity), [16, 15, 14, 13, 12, 11, 10, 9, 8, 7]);
+  assert.equal(tr.activityMore, true);
+  const next = activityBefore(7, tr.runsSince);
+  assert.deepEqual([ids(next.activity), next.more], [[6, 5, 4, 3, 2], false]);
 });

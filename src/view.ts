@@ -314,23 +314,53 @@ function activityOf(runs: RunRow[]) {
   return activity.sort((a, b) => b.at - a.at);
 }
 
-/** The dashboard's lazy load: the `n` runs before run `before`, and whether older ones remain. */
-export function activityBefore(before: number, n = 5) {
-  const runs = all<RunRow>("select id, started_at, finished_at, status, error from agent_runs where id < ? order by id desc limit ?", before, n + 1);
+/** The Activity tab's lazy load: up to `n` runs started since `since`, before run `before`, and whether more remain. */
+export function activityBefore(before: number, since: number, n = 10) {
+  const runs = all<RunRow>(
+    "select id, started_at, finished_at, status, error from agent_runs where id < ? and started_at >= ? order by id desc limit ?",
+    before,
+    since,
+    n + 1,
+  );
   return { activity: activityOf(runs.slice(0, n)), more: runs.length > n };
+}
+
+const RUN_COLS = "id, started_at, finished_at, status, error, input_tokens, output_tokens";
+
+/** One row of the Runs list. */
+function runSummary(r: Record<string, any>) {
+  const brief = briefOf(r.id);
+  const counts = all<{ action: string; n: number }>("select action, count(*) n from decisions where run_id = ? group by action", r.id);
+  const tools = all<{ name: string; result: string | null }>("select name, result from tool_calls where run_id = ?", r.id);
+  return {
+    id: r.id,
+    at: r.started_at,
+    status: r.status,
+    due: brief?.length ?? null,
+    counts: Object.fromEntries(counts.map((c) => [c.action, c.n])),
+    toolsUsed: tools.filter((t) => toolSummary(t.name, t.result).ok).length,
+    tin: r.input_tokens,
+    tout: r.output_tokens,
+    secs: r.finished_at ? (r.finished_at - r.started_at) / 1000 : null,
+  };
+}
+
+/** The Runs list's lazy load: up to `n` runs started since `since`, before run `before`; `failed` keeps errors only. */
+export function runsBefore(before: number, since: number, failed: boolean, n = 20) {
+  const rows = all<Record<string, any>>(
+    `select ${RUN_COLS} from agent_runs where id < ? and started_at >= ?${failed ? " and status = 'error'" : ""} order by id desc limit ?`,
+    before,
+    since,
+    n + 1,
+  );
+  return { runs: rows.slice(0, n).map(runSummary), more: rows.length > n };
 }
 
 export function trading(cfg: Config, now: number, tz: string) {
   const midnight = dayStart(now, tz);
-  // The last 50 runs, plus every failure today, so each run in "Today: n failed" is in the list.
-  const cols = "id, started_at, finished_at, status, error, input_tokens, output_tokens";
-  const runs = all<Record<string, any>>(
-    `select * from (select ${cols} from agent_runs order by id desc limit 50)
-     union select ${cols} from agent_runs where status = 'error' and started_at >= ?
-     order by id desc`,
-    midnight,
-  );
+  const runs = all<Record<string, any>>(`select ${RUN_COLS} from agent_runs order by id desc limit 4`);
   const latest = runs.find((r) => r.status !== "running");
+  const act = activityBefore(Number.MAX_SAFE_INTEGER, midnight);
   const inLatest = new Set((latest ? (briefOf(latest.id) ?? []) : []).map((b) => b.address));
 
   // The feed: the last fetch's rows, plus waits now due that the fetch did not carry.
@@ -372,25 +402,14 @@ export function trading(cfg: Config, now: number, tz: string) {
     feed,
     fetchedAt: status.fetch.at,
     filters: cfg.filters,
-    // Agent activity: the last three runs here; older ones page in through activityBefore.
-    activity: activityOf(runs.slice(0, 3) as RunRow[]),
-    activityMore: runs.length > 3,
-    runs: runs.map((r) => {
-      const brief = briefOf(r.id);
-      const counts = all<{ action: string; n: number }>("select action, count(*) n from decisions where run_id = ? group by action", r.id);
-      const tools = all<{ name: string; result: string | null }>("select name, result from tool_calls where run_id = ?", r.id);
-      return {
-        id: r.id,
-        at: r.started_at,
-        status: r.status,
-        due: brief?.length ?? null,
-        counts: Object.fromEntries(counts.map((c) => [c.action, c.n])),
-        toolsUsed: tools.filter((t) => toolSummary(t.name, t.result).ok).length,
-        tin: r.input_tokens,
-        tout: r.output_tokens,
-        secs: r.finished_at ? (r.finished_at - r.started_at) / 1000 : null,
-      };
-    }),
+    // Agent activity: today's last ten runs; older ones of today page in through activityBefore.
+    activity: act.activity,
+    activityMore: act.more,
+    lastRun: runs[0]?.id ?? null,
+    lastDone: latest?.id ?? null,
+    // Today's runs, a page each for All and Failed; older pages come through runsBefore.
+    runsSince: midnight,
+    runs: { all: runsBefore(Number.MAX_SAFE_INTEGER, midnight, false), failed: runsBefore(Number.MAX_SAFE_INTEGER, midnight, true) },
     runsToday: one<{ n: number; failed: number; tin: number; tout: number }>(
       `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin,
          coalesce(sum(output_tokens), 0) tout from agent_runs where started_at >= ?`,

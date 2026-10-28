@@ -126,8 +126,15 @@ export function startServer(o: { port: number; host: string; token?: string }): 
       }
       if (req.method === "GET" && path === "/api/activity") {
         const before = Number(url.searchParams.get("before"));
-        if (!Number.isSafeInteger(before)) return json(res, 400, { error: "before must be a run id" });
-        return json(res, 200, view.activityBefore(before));
+        const since = Number(url.searchParams.get("since"));
+        if (!Number.isSafeInteger(before) || !Number.isSafeInteger(since)) return json(res, 400, { error: "before and since must be integers" });
+        return json(res, 200, view.activityBefore(before, since));
+      }
+      if (req.method === "GET" && path === "/api/runs") {
+        const before = Number(url.searchParams.get("before"));
+        const since = Number(url.searchParams.get("since"));
+        if (!Number.isSafeInteger(before) || !Number.isSafeInteger(since)) return json(res, 400, { error: "before and since must be integers" });
+        return json(res, 200, view.runsBefore(before, since, url.searchParams.get("failed") === "1"));
       }
       if (req.method === "GET" && path === "/api/token")
         return json(res, 200, view.tokenDetail(String(url.searchParams.get("address") ?? ""), loadConfig(), Date.now()));

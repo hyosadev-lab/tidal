@@ -38,6 +38,7 @@ const I = {
   chat: SVG("M5 5h14v10H10l-5 4z"),
   filter: SVG("M4 5h16l-6 7v6l-4 2v-8z"),
   x: `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
+  help: `<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5"/><path d="M12 18h.01"/></svg>`,
   check: `<svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round"><path d="M5 12l4 4 10-10"/></svg>`,
   arrow: `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M5 12h14 M13 6l6 6-6 6"/></svg>`,
   mode: SVG("M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7z M8 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"),
@@ -65,9 +66,12 @@ const S = {
   draft: null,
   section: "mode",
   msg: null,
-  older: new Map(), // runId → its activity events, for runs paged in past the three /api/state carries
-  olderMore: null, // whether runs older than those remain; null until the first page comes back
+  help: null, // id of the help tip opened by a tap or click; hover and focus open it without this
+  older: new Map(), // runId → its activity events, for today's runs paged in past the ten /api/state carries
+  olderMore: null, // whether older runs of today remain; null until the first page comes back
   loadingOlder: false,
+  runPages: { all: new Map(), failed: new Map() }, // runId → row, for today's runs paged in past the state's page
+  runsMore: { all: null, failed: null },
 };
 const page = () => (["overview", "trading", "settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
 
@@ -87,12 +91,24 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 async function poll() {
   try {
     const next = await call(`/api/state?range=${S.range}&tz=${encodeURIComponent(TZ)}`);
-    // Once older runs are paged in, a run that rolls out of the state's three stays in the list.
-    if (S.older.size && S.data) {
+    // Once older runs are paged in, a run that rolls out of the state's ten stays in the list.
+    if (S.older.size && S.data && S.data.trading.runsSince === next.trading.runsSince) {
       const live = new Set(next.trading.activity.map((e) => e.runId));
       for (const e of S.data.trading.activity)
         if (!live.has(e.runId)) S.older.has(e.runId) ? S.older.get(e.runId).push(e) : S.older.set(e.runId, [e]);
     }
+    const prev = S.data?.trading;
+    if (prev && prev.runsSince !== next.trading.runsSince) { // a new day: today's lists start over
+      S.runPages = { all: new Map(), failed: new Map() };
+      S.runsMore = { all: null, failed: null };
+      S.older = new Map();
+      S.olderMore = null;
+    } else if (prev)
+      for (const k of ["all", "failed"]) { // as with activity, a run that rolls out of the state's page stays listed
+        if (!S.runPages[k].size) continue;
+        const live = new Set(next.trading.runs[k].runs.map((r) => r.id));
+        for (const r of prev.runs[k].runs) if (!live.has(r.id)) S.runPages[k].set(r.id, r);
+      }
     S.data = next;
     S.skew = next.now - Date.now();
     S.seenAt = Date.now();
@@ -466,8 +482,8 @@ function trading(d) {
       <div class="fill fade" data-scroll="feed"><div style="min-width:840px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span><span class="r">Rug</span><span class="r">Age</span></div>
         <ul class="feed" aria-label="Tokens the agent reads">${feedRows || `<li class="empty">Nothing fetched yet.</li>`}</ul></div></div>
     </section>
-    <section class="card flush tall" style="flex:1 1 400px;padding-top:16px;padding-bottom:0" aria-labelledby="agent-title">
-      <div class="head"><span class="ico vio">${I.chat}</span><div class="stack"><h2 id="agent-title" class="big">Agent activity</h2><span class="s13 muted inline" style="gap:6px"><span class="dot" style="background:${d.health.run === "running" ? "var(--lime)" : "var(--dim)"}"></span>${d.health.run === "running" ? "cycle running" : d.health.run}${tr.runs[0] ? ` · last run #${tr.runs[0].id}` : ""}</span></div></div>
+    <section class="card flush tall" style="flex:1 1 440px;padding-top:16px;padding-bottom:0;position:relative" aria-labelledby="agent-title">
+      <div class="head"><span class="ico vio">${I.chat}</span><div class="stack"><div class="inline" style="gap:2px"><h2 id="agent-title" class="big">Agent activity</h2>${helpTip("agent-help", "About agent activity", AGENT_HELP)}</div><span class="s13 muted inline" style="gap:6px"><span class="dot" style="background:${d.health.run === "running" ? "var(--lime)" : "var(--dim)"}"></span>${d.health.run === "running" ? "cycle running" : d.health.run}${tr.lastRun ? ` · last run #${tr.lastRun}` : ""}</span></div></div>
       <div class="seg sm" role="group" aria-label="Agent panel view" style="align-self:flex-start;margin:0 16px">${[["activity", "Activity"], ["runs", "Runs"]].map(([k, l]) => `<button data-a="tab" data-v="${k}" aria-pressed="${S.tab === k}">${l}</button>`).join("")}</div>
       <div class="fill fade" data-scroll="agent" style="display:flex;flex-direction:column;gap:12px">${S.tab === "activity" ? activityPanel(tr) : runsPanel(tr)}</div>
     </section>
@@ -477,6 +493,17 @@ function trading(d) {
     ${dock === "positions" ? positionsTable(d) : dock === "run" ? runDock(S.run, tr) : transcriptDock(S.run)}
   </div>`;
 }
+
+/** A "?" beside a card title; its tip shows on hover or focus, and stays open after a tap until tapped again or Escape. */
+const helpTip = (id, label, html) =>
+  `<button class="helpbtn" data-a="help" data-v="${id}" aria-label="${label}" aria-describedby="${id}" aria-expanded="${S.help === id}"><span aria-hidden="true">${I.help}</span></button><div class="helptip" id="${id}" role="tooltip">${html}</div>`;
+
+const AGENT_HELP = `<b style="color:var(--ink)">What the agent does</b>
+  <span>Every minute the entry loop hands the agent the tokens that are due: new on GMGN's 1h list or signals, or a wait that has ended. Up to 10 tokens per run.</span>
+  <span>In a run it may look up holders, top traders, candles or the dev's earlier tokens, then gives each token a verdict:</span>
+  <span class="stack" style="gap:2px;padding-left:2px"><span><b class="pos">buy</b> · conviction 0–100; bought only if a slot, the security check and cash allow</span><span><b class="vio">wait</b> · looked at again at the time it sets</span><span><b class="soft">skip</b> · a hard refusal, final</span></span>
+  <span>No run starts while every slot is taken or buying is paused.</span>
+  <span class="muted" style="padding-top:6px;border-top:1px solid var(--line3)">Shows today, since 00:00 your time. Activity lists every step, newest first; scroll down for earlier runs. Runs shows one row per run. Pick a token on the left to see only what the agent did with it.</span>`;
 
 function activityPanel(tr) {
   if (S.sel && S.token && S.token.address === S.sel) {
@@ -507,17 +534,23 @@ function activityPanel(tr) {
       return `<li><span class="t">${hms(e.at)}</span><span class="tag ${kind}">${kind}</span><span class="s13" style="flex:1 1 auto;min-width:0">${who} <span class="soft">${text}</span></span></li>`;
     })
     .join("");
-  return `<ol class="events" aria-label="Agent activity">${items || `<li class="muted s13">No runs yet.</li>`}
-    <li class="s13 muted" style="display:block;padding:12px 16px">${more ? "Loading earlier runs…" : items ? "That is every run on record." : ""} Pick a token to see everything the agent did with it.</li></ol>`;
+  return `<ol class="events" aria-label="Agent activity today">${items || `<li class="muted s13">No runs today yet.</li>`}
+    <li class="s13 muted" style="display:block;padding:12px 16px">${more ? "Loading earlier runs…" : items ? "That is every run today." : ""} Pick a token to see everything the agent did with it.</li></ol>`;
+}
+
+/** Today's runs of one filter: the state's page plus pages loaded since, newest first. */
+function runList(tr, k) {
+  const live = new Set(tr.runs[k].runs.map((r) => r.id));
+  return [...tr.runs[k].runs, ...[...S.runPages[k].values()].filter((r) => !live.has(r.id))].sort((a, b) => b.id - a.id);
 }
 
 function runsPanel(tr) {
   const t = tr.runsToday;
-  const list = tr.runs.filter((r) => S.runFilter === "all" || r.status === "error");
-  const failed = tr.runs.filter((r) => r.status === "error").length;
+  const list = runList(tr, S.runFilter);
+  const more = S.runsMore[S.runFilter] ?? tr.runs[S.runFilter].more;
   return `<div style="display:flex;flex-direction:column;gap:10px;padding:0 12px 8px">
-    <div class="inline s13 muted" style="flex-wrap:wrap;gap:6px 10px;padding:0 4px"><span>Today: <b style="color:var(--ink)">${plural(t.n, "run")}</b> · <b class="neg">${t.failed} failed</b> · ${kn(t.tin)} / ${kn(t.tout)} tokens</span>
-      <div class="seg sm" role="group" aria-label="Filter runs" style="margin-left:auto;border:0;padding:0">${[["all", "All", tr.runs.length], ["failed", "Failed", failed]].map(([k, l, n]) => `<button data-a="runFilter" data-v="${k}" aria-pressed="${S.runFilter === k}" style="${S.runFilter === k ? "" : "background:var(--inner);color:var(--ink)"}">${l}<span class="n">${n}</span></button>`).join("")}</div></div>
+    <div class="inline s13 muted" style="gap:10px;padding:0 4px"><span style="flex:1 1 auto;min-width:0"><b style="color:var(--ink)">${plural(t.n, "run")}</b> · <b class="neg">${t.failed} failed</b> · <span style="white-space:nowrap">${kn(t.tin)} / ${kn(t.tout)} tokens</span></span>
+      <div class="seg sm" role="group" aria-label="Filter runs" style="flex:none;flex-wrap:nowrap;margin-left:auto;border:0;padding:0">${[["all", "All", t.n], ["failed", "Failed", t.failed]].map(([k, l, n]) => `<button data-a="runFilter" data-v="${k}" aria-pressed="${S.runFilter === k}" style="${S.runFilter === k ? "" : "background:var(--inner);color:var(--ink)"}">${l}<span class="n">${n}</span></button>`).join("")}</div></div>
     <div class="runs">${list
       .map((r) => {
         const counts = ["buy", "wait", "skip"].filter((a) => r.counts[a]).map((a) => `${r.counts[a]} ${a}`).join(" · ");
@@ -525,7 +558,8 @@ function runsPanel(tr) {
           <span class="s13">${r.due !== null ? plural(r.due, "due token") : "…"} · ${r.status === "error" ? "no verdicts" : counts || "—"}</span>
           <span class="mono small muted">${r.toolsUsed}${tr.toolBudget === null ? "" : `/${tr.toolBudget}`} tools · ${kn(r.tin ?? 0)} / ${kn(r.tout ?? 0)} · ${r.secs !== null ? r.secs.toFixed(1) + "s" : "—"}</span></button>`;
       })
-      .join("") || `<p class="empty">No runs.</p>`}</div></div>`;
+      .join("") || `<p class="empty">${S.runFilter === "failed" ? "No failed runs today." : "No runs today."}</p>`}</div>
+    ${list.length ? `<p class="s13 muted" style="margin:0;padding:4px">${more ? "Loading earlier runs…" : "That is every run today."}</p>` : ""}</div>`;
 }
 
 function positionsTable(d) {
@@ -706,21 +740,45 @@ function setField(el) {
   if (sol && S.data.solUsd > 0) sol.textContent = `SOL ≈ ${usd(Number(c.sizeSol) * S.data.solUsd)}`;
 }
 
-/** Lazy load: pages in the five runs before the oldest one shown when the box nears its end. */
+/** Lazy load: once the box nears its end, pages in today's older activity (ten runs) or, on the Runs tab, older runs. */
 async function nearEnd(box) {
   const tr = S.data?.trading;
-  if (!box || !tr || S.tab !== "activity" || S.sel || S.loadingOlder || !(S.olderMore ?? tr.activityMore)) return;
+  if (!box || !tr || S.loadingOlder) return;
   if (box.scrollTop + box.clientHeight < box.scrollHeight - 200) return;
+  if (S.tab === "runs") return moreRuns(tr);
+  if (S.sel || !(S.olderMore ?? tr.activityMore)) return;
   const before = Math.min(...tr.activity.map((e) => e.runId), ...S.older.keys());
   if (!Number.isFinite(before)) return;
   S.loadingOlder = true;
   try {
-    const page = await call(`/api/activity?before=${before}`);
-    for (const e of page.activity) S.older.has(e.runId) ? S.older.get(e.runId).push(e) : S.older.set(e.runId, [e]);
-    S.olderMore = page.more;
+    const page = await call(`/api/activity?before=${before}&since=${tr.runsSince}`);
+    if (S.data.trading.runsSince === tr.runsSince) { // a page from yesterday's list is dropped
+      for (const e of page.activity) S.older.has(e.runId) ? S.older.get(e.runId).push(e) : S.older.set(e.runId, [e]);
+      S.olderMore = page.more;
+    }
   } catch (e) {
     S.msg = { ok: false, text: e.message };
     S.olderMore = false; // no retry loop on a failing endpoint; the next page load tries again
+  } finally {
+    S.loadingOlder = false;
+  }
+  render();
+}
+/** The Runs tab's lazy load: the next page of today's runs under the current filter. */
+async function moreRuns(tr) {
+  const k = S.runFilter;
+  const last = runList(tr, k).at(-1);
+  if (!last || !(S.runsMore[k] ?? tr.runs[k].more)) return;
+  S.loadingOlder = true;
+  try {
+    const page = await call(`/api/runs?before=${last.id}&since=${tr.runsSince}${k === "failed" ? "&failed=1" : ""}`);
+    if (S.data.trading.runsSince === tr.runsSince) { // a page from yesterday's list is dropped
+      for (const r of page.runs) S.runPages[k].set(r.id, r);
+      S.runsMore[k] = page.more;
+    }
+  } catch (e) {
+    S.msg = { ok: false, text: e.message };
+    S.runsMore[k] = false; // no retry loop on a failing endpoint; the next page load tries again
   } finally {
     S.loadingOlder = false;
   }
@@ -734,7 +792,8 @@ async function openRun(id) {
   try {
     S.run = await call(`/api/run?id=${Number(id)}`);
     S.dock = "run";
-    S.runPicked = true;
+    // Picking the latest run (or the one still running) keeps following new runs; an older one stays put.
+    S.runPicked = Number(id) < (S.data?.trading.lastDone ?? 0);
   } catch (e) {
     S.msg = { ok: false, text: e.message };
   }
@@ -744,12 +803,14 @@ async function openRun(id) {
 /** As the design does: the dock carries the latest finished run until one is picked by hand. */
 let following = false;
 function followLatestRun() {
-  const latest = S.data?.trading.runs.find((r) => r.status !== "running");
-  if (!latest || S.runPicked || following || S.run?.id === latest.id) return;
+  const latest = S.data?.trading.lastDone;
+  if (!latest || S.runPicked || following) return;
+  // Already on it, or on a newer run still in progress: wait until that one is done.
+  if (S.run && (S.run.id > latest || (S.run.id === latest && S.run.status !== "running"))) return;
   following = true;
-  call(`/api/run?id=${latest.id}`)
+  call(`/api/run?id=${latest}`)
     .then((r) => {
-      if (S.runPicked) return;
+      if (S.runPicked || S.run?.id > latest) return; // picked by hand while this was loading
       S.run = r;
       render();
     })
@@ -792,6 +853,7 @@ const A = {
     render();
   },
   clearSel: () => ((S.sel = null), (S.token = null), render()),
+  help: (id) => ((S.help = S.help === id ? null : id), render()),
   close: (id) => {
     const p = S.data.overview.positions.find((x) => String(x.id) === String(id));
     if (p && confirm(`Close ${p.symbol} at market${p.mode === "live" ? " — a real, irreversible sell" : ""}?`)) act("/api/close", { id: Number(id) });
@@ -834,6 +896,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (S.confirmStop) A.cancelStop();
   else if (S.filtersOpen) A.closeFilters();
+  else if (S.help) A.help(S.help);
 });
 window.addEventListener("hashchange", () => render(true));
 
