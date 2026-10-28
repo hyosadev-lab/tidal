@@ -321,8 +321,14 @@ export function activityBefore(before: number, n = 5) {
 }
 
 export function trading(cfg: Config, now: number, tz: string) {
+  const midnight = dayStart(now, tz);
+  // The last 50 runs, plus every failure today, so each run in "Today: n failed" is in the list.
+  const cols = "id, started_at, finished_at, status, error, input_tokens, output_tokens";
   const runs = all<Record<string, any>>(
-    "select id, started_at, finished_at, status, error, input_tokens, output_tokens from agent_runs order by id desc limit 50",
+    `select * from (select ${cols} from agent_runs order by id desc limit 50)
+     union select ${cols} from agent_runs where status = 'error' and started_at >= ?
+     order by id desc`,
+    midnight,
   );
   const latest = runs.find((r) => r.status !== "running");
   const inLatest = new Set((latest ? (briefOf(latest.id) ?? []) : []).map((b) => b.address));
@@ -362,7 +368,6 @@ export function trading(cfg: Config, now: number, tz: string) {
     };
   });
 
-  const midnight = dayStart(now, tz);
   return {
     feed,
     fetchedAt: status.fetch.at,

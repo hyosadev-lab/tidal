@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sanitize } from "../src/config.ts";
 import { db, openDb } from "../src/db.ts";
-import { dayStart, overview, zone } from "../src/view.ts";
+import { dayStart, overview, trading, zone } from "../src/view.ts";
 
 test("dayStart: the viewer's midnight, ahead of and behind UTC, across DST", () => {
   assert.equal(dayStart(Date.UTC(2026, 9, 28, 7, 58), "Asia/Jakarta"), Date.UTC(2026, 9, 27, 17)); // 14:58 WIB
@@ -30,4 +30,18 @@ test("the daily PnL chart buckets sells by the viewer's days", () => {
   assert.deepEqual(days("Asia/Jakarta"), [[-3, 1], [-5, 1]]);
   assert.deepEqual(days("UTC"), [[-8, 2], [0, 0]]);
   assert.equal(overview(cfg, "7d", now, "Asia/Jakarta").today.sells, 1);
+});
+
+test("a failed run today stays in the runs list after 50 newer runs", () => {
+  openDb(":memory:");
+  const now = Date.UTC(2026, 9, 28, 12);
+  const run = (at: number, status: string) =>
+    db.prepare("insert into agent_runs (started_at, model, status) values (?, 'm', ?)").run(at, status);
+  run(Date.UTC(2026, 9, 27, 12), "error"); // yesterday: not today's failure, rolls out
+  run(now - 3_600_000, "error");
+  for (let i = 0; i < 60; i++) run(now - 3_000_000 + i * 1000, "ok");
+  const tr = trading(sanitize({}), now, "UTC");
+  assert.equal(tr.runsToday?.failed, 1);
+  assert.deepEqual(tr.runs.filter((r) => r.status === "error").map((r) => r.at), [now - 3_600_000]);
+  assert.equal(tr.runs.length, 51);
 });
