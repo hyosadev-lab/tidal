@@ -78,14 +78,15 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
 function state(url: URL) {
   const cfg = loadConfig();
   const now = Date.now();
+  const tz = view.zone(url.searchParams.get("tz"));
   return {
     now,
     config: cfg,
     liveAvailable: !!jup.address(),
     solUsd: lastSolUsd(),
-    health: view.health(cfg, now),
-    overview: view.overview(cfg, url.searchParams.get("range") ?? "7d", now),
-    trading: view.trading(cfg, now),
+    health: view.health(cfg, now, tz),
+    overview: view.overview(cfg, url.searchParams.get("range") ?? "7d", now, tz),
+    trading: view.trading(cfg, now, tz),
   };
 }
 

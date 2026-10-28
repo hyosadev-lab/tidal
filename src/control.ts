@@ -1,7 +1,7 @@
 import type { Config } from "./config.ts";
 import { db } from "./db.ts";
 import { log } from "./log.ts";
-import { buyingPaused, openPositions, sell } from "./trade.ts";
+import { buyingPaused, lossDay, openPositions, sell } from "./trade.ts";
 
 /**
  * Run control, as the dashboard's Start / Stop / Resume set it, stored in `settings` under 'run'.
@@ -28,16 +28,14 @@ function setRun(patch: Partial<RunState>): RunState {
   return next;
 }
 
-export const startOfDay = (now: number) => new Date(now).setHours(0, 0, 0, 0);
-
 /**
  * Whether buying is paused for the daily loss, moving `pausedAt` as days and the limit pass.
- * auto: a pause from an earlier day lifts at midnight. manual: only Resume lifts it. A Resume
+ * auto: a pause from an earlier day lifts at 00:00 UTC. manual: only Resume lifts it. A Resume
  * covers the rest of its day, so the same loss does not pause it again straight away.
  */
 export function lossPaused(cfg: Config, now = Date.now()): boolean {
   const r = getRun();
-  const midnight = startOfDay(now);
+  const midnight = lossDay(now);
   if (r.pausedAt !== null) {
     if (cfg.lossResume === "manual" || r.pausedAt >= midnight) return true;
     setRun({ pausedAt: null });

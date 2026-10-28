@@ -81,9 +81,12 @@ async function call(path, body) {
   return json;
 }
 
+// "Today" and the chart's days are this browser's; the daily loss limit runs on 00:00 UTC.
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 async function poll() {
   try {
-    const next = await call(`/api/state?range=${S.range}`);
+    const next = await call(`/api/state?range=${S.range}&tz=${encodeURIComponent(TZ)}`);
     // Once older runs are paged in, a run that rolls out of the state's three stays in the list.
     if (S.older.size && S.data) {
       const live = new Set(next.trading.activity.map((e) => e.runId));
@@ -199,8 +202,8 @@ function banners(d) {
   const msg = S.msg ? `<div class="banner ${S.msg.ok ? "grey" : "red"}" role="status"><div class="stack"><span class="b">${esc(S.msg.text)}</span></div><button class="btn sm ghost" data-a="dismiss">Dismiss</button></div>` : "";
   if (h.run === "paused")
     return msg + `<div class="banner amber" role="status">${I.pause}<div class="stack"><span class="b">Buying paused: max daily loss reached</span>
-      <span class="s13">Today's loss passed ${esc(d.config.maxDailyLossPct)}% of the day's starting equity. Exits keep running. ${
-        h.lossResume === "auto" ? "Buying resumes automatically at the next day start (00:00), or press Resume." : "Buying stays paused until you press Resume."
+      <span class="s13">The loss since 00:00 UTC passed ${esc(d.config.maxDailyLossPct)}% of that day's starting equity. Exits keep running. ${
+        h.lossResume === "auto" ? "Buying resumes automatically at the next day start (00:00 UTC), or press Resume." : "Buying stays paused until you press Resume."
       }</span></div></div>`;
   // The header already says Stopped; the banner only earns its place when positions sit unwatched.
   if (h.run === "stopped" && names)
@@ -236,7 +239,7 @@ function overview(d) {
         <span class="s13 muted"><span class="${sign(t.realised)} b">${susd(t.realised)}</span> realised, ${plural(t.sells, "sell")} · <span class="${sign(t.open)} b">${susd(t.open)}</span> open</span></div>
         <div class="in" style="gap:8px"><div class="inline small muted" style="justify-content:space-between"><span>Daily loss limit</span><span><span class="b" style="color:var(--ink)">${usd(t.usedUsd)}</span> of ${usd(t.limitUsd)}</span></div>
           <div class="meter" role="meter" aria-label="Daily loss used" aria-valuemin="0" aria-valuemax="${t.limitUsd.toFixed(2)}" aria-valuenow="${t.usedUsd.toFixed(2)}"><i style="width:${used.toFixed(1)}%"></i></div>
-          <span class="small muted">Buying pauses at ${MINUS}${esc(d.config.maxDailyLossPct)}% of the ${usd(t.dayStart)} day start</span></div></div>
+          <span class="small muted">Buying pauses at ${MINUS}${esc(d.config.maxDailyLossPct)}% of the ${usd(t.dayStart)} day start, 00:00 UTC</span></div></div>
       <div class="tile lime"><div class="inline"><span class="ico">${I.wallet}</span><span style="font-size:15px;font-weight:600">Cash &amp; slots</span></div>
         <div class="in"><span class="num">${usd(o.cash)}</span><span class="s13 muted">cash on hand · <b style="color:#161618">${usd(o.held)}</b> held in positions</span></div>
         <div class="in" style="gap:8px"><div class="slots" aria-hidden="true">${slots}</div>
@@ -308,7 +311,7 @@ function healthRows(d) {
   const today = a ? `${plural(a.today.n, "run")} today, ${a.today.failed} failed · ${kn(a.today.tin)} / ${kn(a.today.tout)} tokens` : "no runs yet";
   const rows = [];
   if (stopped) rows.push({ name: "Entry loop", status: "Stopped", detail: "no fetches, no buys", dot: OFF, ink: "var(--muted)" });
-  else if (h.run === "paused") rows.push({ name: "Entry loop", status: "Paused", detail: `max daily loss hit · resumes ${h.lossResume === "auto" ? "at 00:00 or " : ""}on Resume`, dot: WARN });
+  else if (h.run === "paused") rows.push({ name: "Entry loop", status: "Paused", detail: `max daily loss hit · resumes ${h.lossResume === "auto" ? "at 00:00 UTC or " : ""}on Resume`, dot: WARN });
   else
     rows.push({
       name: "Entry loop",
@@ -622,7 +625,7 @@ function settings(d) {
       <div class="fgrid three">${fieldNum("Longest wait", "maxWaitMinutes", c.maxWaitMinutes, "minutes", { step: 1, help: "A wait's recheck time is clamped to this." })}${fieldNum("Cooldown after close", "cooldownMinutes", c.cooldownMinutes, "minutes", { step: 1, help: "A sold token can come back after this." })}</div>`,
     risk: `<div class="note"><span class="small muted">Checked before every buy</span><span class="big">Token security, a free slot, a size above the floor and cash on hand. Any fail = no buy.</span></div>
       <div class="fgrid">${fieldNum("Position size", "sizeSol", c.sizeSol, `<span data-sol>${sol}</span>`, { step: 0.01 })}${fieldNum("Max open positions", "maxOpenPositions", c.maxOpenPositions, "", { step: 1 })}${fieldNum("Max daily loss", "maxDailyLossPct", c.maxDailyLossPct, "% of day start", { help: "Past this, buying pauses. Exits keep running." })}${fieldNum("Slippage", "slippagePct", Number(c.slippagePct) > 0 ? c.slippagePct : "", "%", { step: 0.1, placeholder: "Auto", help: "Empty = auto: Jupiter picks the tolerance per route." })}</div>
-      <fieldset style="display:flex;flex-direction:column;gap:8px"><legend style="padding:0 0 8px">After the daily loss limit</legend>${["auto", "manual"].map((v) => `<label class="choice thin ${c.lossResume === v ? "on" : ""}"><input type="radio" name="lossResume" value="${v}" data-f="lossResume" ${c.lossResume === v ? "checked" : ""}><span>${v === "auto" ? "Resume buying automatically at the next day start" : "Stay paused until I press Resume"}</span></label>`).join("")}</fieldset>`,
+      <fieldset style="display:flex;flex-direction:column;gap:8px"><legend style="padding:0 0 8px">After the daily loss limit</legend>${["auto", "manual"].map((v) => `<label class="choice thin ${c.lossResume === v ? "on" : ""}"><input type="radio" name="lossResume" value="${v}" data-f="lossResume" ${c.lossResume === v ? "checked" : ""}><span>${v === "auto" ? "Resume buying automatically at the next day start (00:00 UTC)" : "Stay paused until I press Resume"}</span></label>`).join("")}</fieldset>`,
     exit: `<p class="s13 muted" style="margin:0">Copied onto each position when it is booked. Editing it here never changes an open position.</p>
       <fieldset class="choices"><legend class="sr">Who sets take profit and stop loss</legend>${radio("exitMode", "fixed", c.exitMode === "fixed", "Fixed plan", "Every position gets the rules below.")}${radio("exitMode", "agent", c.exitMode === "agent", "Agent decides", "The agent sets TP/SL with each buy, inside your limits. Code still runs every exit.")}</fieldset>
       ${c.exitMode === "fixed" ? planEditor(c) : agentLimits(c)}

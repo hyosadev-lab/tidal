@@ -32,7 +32,9 @@ every 3s) and an equity row a minute, and starts the dashboard. Config is the 'c
 `settings` (`config.ts`: Settings-board defaults written on first start, every value clamped),
 re-read every cycle. Run control is the 'run' row (`control.ts`): every process starts stopped
 (both loops idle, open positions unwatched) until Start in the dashboard; `pausedAt` = daily-loss
-pause, buying only, lifted at midnight (`lossResume` auto) or by Resume.
+pause, buying only, lifted at 00:00 UTC (`lossResume` auto) or by Resume. The loss day is UTC
+(`lossDay` in `trade.ts`); everything else the dashboard calls "today", and the chart's days, are
+the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
 
 - Entry: GMGN 1h rank + signal (four groups: smart money, KOL, price, CTO; fetch filters applied;
   each event → token_signals, whose per-type tally — warnings like bundler sell included — the

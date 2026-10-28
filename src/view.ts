@@ -1,17 +1,51 @@
 import type { Config } from "./config.ts";
-import { getRun, startOfDay, status } from "./control.ts";
+import { getRun, status } from "./control.ts";
 import { db } from "./db.ts";
 import { CYCLE_MS, tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
-import { openPositions, paperCash } from "./trade.ts";
+import { lossDay, openPositions, paperCash } from "./trade.ts";
 
 /**
  * What the dashboard shows, read off the ledger. Reads only; every number the dashboard prints
  * comes from here, so it never disagrees with what the loops did. Times are epoch ms, money USD.
+ * "Today" and the chart's days are the viewer's (`tz`, an IANA zone the browser sends); only the
+ * daily loss limit runs on the engine's day, 00:00 UTC.
  */
 
 const DAY = 86_400_000;
+
+// ── days in the viewer's zone ─────────────────────────────────────────
+
+const zones = new Map<string, Intl.DateTimeFormat>(); // bounded: only valid IANA names get in
+
+/** How far `tz` runs ahead of UTC at `at`, in ms. Throws a RangeError on an unknown zone. */
+function offset(at: number, tz: string): number {
+  let f = zones.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+    });
+    zones.set(tz, f);
+  }
+  const p = Object.fromEntries(f.formatToParts(at).map((x) => [x.type, Number(x.value)]));
+  return Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!, p.second!) - (at - (at % 1000));
+}
+
+/** The browser's zone if it is one, else the server's. */
+export function zone(tz: string | null): string {
+  try {
+    if (tz) return (offset(0, tz), tz);
+  } catch {}
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/** Epoch ms of the midnight that starts `at`'s day in `tz`, DST included. */
+export function dayStart(at: number, tz: string): number {
+  const local = at + offset(at, tz);
+  const midnight = local - (local % DAY);
+  return midnight - offset(midnight - offset(at, tz), tz);
+}
 const shortAddr = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
 const one = <T>(sql: string, ...p: (string | number)[]) => db.prepare(sql).get(...p) as T | undefined;
 const all = <T>(sql: string, ...p: (string | number)[]) => db.prepare(sql).all(...p) as T[];
@@ -64,23 +98,23 @@ function cashNow(cfg: Config): number {
   return one<{ c: number }>("select cash_usd c from equity order by at desc limit 1")?.c ?? 0;
 }
 
-function dayStartEquity(now: number): number | null {
-  const midnight = startOfDay(now);
+function equityAt(midnight: number): number | null {
   return (
     one<{ e: number }>("select equity_usd e from equity where at >= ? order by at limit 1", midnight) ??
     one<{ e: number }>("select equity_usd e from equity where at < ? order by at desc limit 1", midnight)
   )?.e ?? null;
 }
 
-export function overview(cfg: Config, range: string, now: number) {
+export function overview(cfg: Config, range: string, now: number, tz: string) {
   const pos = positions(cfg, now);
   const held = pos.reduce((t, p) => t + p.valueUsd, 0);
   const cash = cashNow(cfg);
   const equity = cash + held;
   const first = one<EquityRow>("select at, equity_usd e from equity order by at limit 1");
   const start = first?.e ?? (cfg.mode === "paper" ? cfg.paperStartUsd : equity);
-  const dayStart = dayStartEquity(now) ?? equity;
-  const midnight = startOfDay(now);
+  const midnight = dayStart(now, tz);
+  const todayStart = equityAt(midnight) ?? equity;
+  const lossStart = equityAt(lossDay(now)) ?? equity; // the engine's day, so the meter matches the pause
   const today = one<{ pnl: number; n: number }>(
     "select coalesce(sum(pnl_usd), 0) pnl, count(*) n from trades where side = 'sell' and at >= ?",
     midnight,
@@ -107,43 +141,38 @@ export function overview(cfg: Config, range: string, now: number) {
     held,
     sinceStart: { usd: equity - start, pct: start > 0 ? (equity / start - 1) * 100 : 0, at: first?.at ?? now },
     today: {
-      usd: equity - dayStart,
-      pct: dayStart > 0 ? (equity / dayStart - 1) * 100 : 0,
+      usd: equity - todayStart,
+      pct: todayStart > 0 ? (equity / todayStart - 1) * 100 : 0,
       realised: today.pnl,
       sells: today.n,
       open: pos.reduce((t, p) => t + p.openPnl, 0),
-      dayStart,
-      limitUsd: (dayStart * cfg.maxDailyLossPct) / 100,
-      usedUsd: Math.max(0, dayStart - equity),
+      dayStart: lossStart,
+      limitUsd: (lossStart * cfg.maxDailyLossPct) / 100,
+      usedUsd: Math.max(0, lossStart - equity),
     },
     slots: { used: pos.length, max: cfg.maxOpenPositions },
     winRate: { won: closed.filter((c) => c.pnl > 0).length, closed: closed.length },
     drawdown: dd,
-    chart: chart(range, now),
+    chart: chart(range, now, tz),
     positions: pos,
     fills: fills(midnight),
   };
 }
 
-function chart(range: string, now: number) {
-  const today = startOfDay(now);
+function chart(range: string, now: number, tz: string) {
+  const today = dayStart(now, tz);
   const firstAt =
     one<{ at: number }>("select min(at) at from (select min(at) at from trades union all select min(at) at from equity)")?.at ?? now;
-  const days = range === "30d" ? 30 : range === "all" ? Math.min(120, Math.max(1, Math.ceil((today - startOfDay(firstAt)) / DAY) + 1)) : 7;
-  const from = today - (days - 1) * DAY;
-  const byDay = new Map(
-    all<{ day: string; pnl: number; n: number }>(
-      `select date(at / 1000, 'unixepoch', 'localtime') day, sum(pnl_usd) pnl, count(*) n from trades
-       where side = 'sell' and at >= ? group by day`,
-      from,
-    ).map((r) => [r.day, r]),
-  );
-  const pnl = Array.from({ length: days }, (_, i) => {
-    const d = new Date(from + i * DAY + 12 * 3_600_000); // midday: DST never moves it off its date
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const r = byDay.get(key);
-    return { at: startOfDay(d.getTime()), pnl: r?.pnl ?? 0, sells: r?.n ?? 0 };
-  });
+  const days = range === "30d" ? 30 : range === "all" ? Math.min(120, Math.max(1, Math.round((today - dayStart(firstAt, tz)) / DAY) + 1)) : 7;
+  // Midday of each day back from today: a DST hour never moves it off its date.
+  const pnl = Array.from({ length: days }, (_, i) => ({ at: dayStart(today - (days - 1 - i) * DAY + DAY / 2, tz), pnl: 0, sells: 0 }));
+  const from = pnl[0]!.at;
+  let d = 0;
+  for (const s of all<{ at: number; pnl: number | null }>("select at, pnl_usd pnl from trades where side = 'sell' and at >= ? order by at", from)) {
+    while (d + 1 < days && s.at >= pnl[d + 1]!.at) d++;
+    pnl[d]!.pnl += s.pnl ?? 0;
+    pnl[d]!.sells++;
+  }
   // Equity samples arrive once a minute; a chart needs a few hundred points, not thousands.
   const rows = all<EquityRow>("select at, equity_usd e from equity where at >= ? order by at", from);
   const step = Math.max(1, Math.ceil(rows.length / 240));
@@ -173,11 +202,11 @@ function fills(since: number) {
 
 // ── health ────────────────────────────────────────────────────────────
 
-export function health(cfg: Config, now: number) {
+export function health(cfg: Config, now: number, tz: string) {
   const run = getRun();
   const stopped = run.state === "stopped";
   const paused = run.pausedAt !== null;
-  const midnight = startOfDay(now);
+  const midnight = dayStart(now, tz);
   const last = one<Record<string, any>>("select id, status, started_at, finished_at, error from agent_runs order by id desc limit 1");
   const day = one<{ n: number; failed: number; tin: number; tout: number }>(
     `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin,
@@ -291,7 +320,7 @@ export function activityBefore(before: number, n = 5) {
   return { activity: activityOf(runs.slice(0, n)), more: runs.length > n };
 }
 
-export function trading(cfg: Config, now: number) {
+export function trading(cfg: Config, now: number, tz: string) {
   const runs = all<Record<string, any>>(
     "select id, started_at, finished_at, status, error, input_tokens, output_tokens from agent_runs order by id desc limit 50",
   );
@@ -333,7 +362,7 @@ export function trading(cfg: Config, now: number) {
     };
   });
 
-  const midnight = startOfDay(now);
+  const midnight = dayStart(now, tz);
   return {
     feed,
     fetchedAt: status.fetch.at,
