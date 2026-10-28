@@ -11,6 +11,9 @@ import { takeSnapshot } from "./snapshot.ts";
  * with SOLANA_PRIVATE_KEY. Raw token amounts stay bigint strings end to end.
  */
 
+/** Fires "close" when a position closes: a slot is free, so the idle entry loop wakes. */
+export const positionClosed = new EventTarget();
+
 /** SOL kept in a live wallet for fees; never spent on a buy. */
 const GAS_RESERVE_SOL = 0.02;
 /** A buy under this many USD is refused — fees would eat it. */
@@ -330,6 +333,7 @@ function recordSell(
   });
   const pctSold = Math.round((Number(soldRaw) / Number(original)) * 100);
   log("trade", `SELL ${p.symbol} ${pctSold}% $${usd.toFixed(2)} · PnL ${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)} · ${reason}${closes ? " · closed" : ""}`, signature ?? undefined);
+  if (closes) positionClosed.dispatchEvent(new Event("close"));
   if (closes)
     void takeSnapshot(p.token, "exit")
       .then((id) => db.prepare("update positions set exit_snapshot_id = ? where id = ?").run(id, p.id))

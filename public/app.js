@@ -340,7 +340,7 @@ function healthRows(d) {
     rows.push({
       name: "Entry loop",
       status: "Running",
-      detail: `cycle every ${h.entry.cycleMs / 1000}s${h.entry.lastAt ? ` · last ${hms(h.entry.lastAt)} · next ${hms(h.entry.nextAt)}` : ""}${h.entry.note ? ` · ${h.entry.note}` : ""}`,
+      detail: `cycle after cycle${h.entry.lastAt ? ` · last ${hms(h.entry.lastAt)}` : ""}${h.entry.note ? ` · ${h.entry.note}` : ""}`,
       dot: OK,
     });
   if (!a) rows.push({ name: "Agent", status: "Idle", detail: today, dot: OFF, ink: "var(--muted)" });

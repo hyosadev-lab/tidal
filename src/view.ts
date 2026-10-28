@@ -1,7 +1,7 @@
 import type { Config } from "./config.ts";
 import { getRun, status } from "./control.ts";
 import { db } from "./db.ts";
-import { CYCLE_MS, tokenStatus } from "./entry.ts";
+import { tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { lossDay, openPositions, paperCash } from "./trade.ts";
@@ -219,7 +219,7 @@ export function health(cfg: Config, now: number, tz: string) {
     run: stopped ? "stopped" : paused ? "paused" : "running",
     lossResume: cfg.lossResume,
     openPositions: open,
-    entry: { lastAt: status.entry.lastAt, nextAt: status.entry.lastAt ? status.entry.lastAt + CYCLE_MS : 0, note: status.entry.note, cycleMs: CYCLE_MS },
+    entry: { lastAt: status.entry.lastAt, note: status.entry.note },
     agent: last
       ? {
           id: last.id,

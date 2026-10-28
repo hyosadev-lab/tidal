@@ -27,8 +27,9 @@ Tests live under `tests/`, mirroring `src/`. `npm test` loads `.env`.
 
 ## The engine
 
-`src/index.ts` runs three timers: `entryCycle` (`entry.ts`, every 60s), `exitTick` (`exit.ts`,
-every 3s) and an equity row a minute, and starts the dashboard. Config is the 'config' row in
+`src/index.ts` runs `exitTick` (`exit.ts`, every 3s) and an equity row a minute, and starts the
+dashboard; Start runs `entryLoop` (`entry.ts`): cycles back to back, no timer, and a cycle that
+cannot buy (no free slot, paused) waits for `wake` (a close, Start, Resume, settings, 00:00 UTC). Config is the 'config' row in
 `settings` (`config.ts`: Settings-board defaults written on first start, every value clamped),
 re-read every cycle. Run control is the 'run' row (`control.ts`): every process starts stopped
 (both loops idle, open positions unwatched) until Start in the dashboard; `pausedAt` = daily-loss

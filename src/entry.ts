@@ -1,20 +1,20 @@
 import { inFilters, loadConfig, rankFilters, signalFilters, type Config } from "./config.ts";
-import { lossPaused, status, type FeedRow } from "./control.ts";
+import { getRun, lossPaused, status, type FeedRow } from "./control.ts";
 import { db, insert, tx } from "./db.ts";
 import { decide, type Verdict } from "./decide.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import { log, short } from "./log.ts";
 import { takeSnapshot, writeSignal } from "./snapshot.ts";
-import { buy, cashUsd, MIN_BUY_USD, openPositions, security, solUsd } from "./trade.ts";
+import { buy, cashUsd, lossDay, MIN_BUY_USD, openPositions, positionClosed, security, solUsd } from "./trade.ts";
 
 /**
- * The entry loop, once per CYCLE_MS: fetch → keep what is due → snapshot it → one agent run →
- * save verdicts → risk check and buy, best conviction first. Skip is final, a wait returns when
- * its time is up, a token bought and sold returns after the cooldown.
+ * The entry loop, cycle after cycle with no pause between: fetch → keep what is due → snapshot it
+ * → one agent run → save verdicts → risk check and buy, best conviction first. Skip is final, a
+ * wait returns when its time is up, a token bought and sold returns after the cooldown. With no
+ * free slot (or buying paused) it waits, with no fetch and no agent run, until something wakes it.
  */
 
-export const CYCLE_MS = 60_000;
 /** Due tokens per agent run, at most; the rest stay due for the next cycle. */
 const MAX_BRIEF = 10;
 const FEED_LIMIT = 40;
@@ -58,8 +58,9 @@ async function fetchTokens(cfg: Config): Promise<string[]> {
   ]);
   const rows = new Map<string, FeedRow>();
   const failed = (feed: string, e: unknown) => {
-    log("warn", `${feed} feed failed: ${short(e)}`);
-    status.gmgn = { errorAt: Date.now(), error: `${feed}: ${short(e)}` };
+    const error = `${feed}: ${short(e)}`;
+    if (error !== status.gmgn.error) log("warn", `${feed} feed failed: ${short(e)}`); // once, not every cycle
+    status.gmgn = { errorAt: Date.now(), error };
   };
   if (rank.status === "fulfilled") {
     // The rank route's data is itself an envelope: { code, data: { rank: [...] } }.
@@ -173,16 +174,46 @@ async function tryBuy(v: Verdict, cfg: Config): Promise<void> {
   if (err) log("warn", `Buy ${name} failed: ${err}`);
 }
 
-let running = false;
 /** One line per reason the loop is idle, said once until the reason changes. */
-const idle = (why: string) => {
+const idle = (why: string): false => {
   if (why !== status.entry.note) log("info", why);
   status.entry.note = why;
+  return false;
 };
 
-export async function entryCycle(): Promise<void> {
-  if (running) return; // a cycle held up by the rate limiter is skipped, not stacked
-  running = true;
+let wakeUp: (() => void) | null = null;
+
+/** Ends an idle wait: a close, Start, Resume or saved settings may let the loop buy again. */
+export function wake(): void {
+  const w = wakeUp;
+  wakeUp = null;
+  w?.();
+}
+positionClosed.addEventListener("close", wake);
+
+let looping = false;
+
+/**
+ * Runs cycles back to back while the run is started. A cycle that cannot buy waits for `wake`,
+ * or for 00:00 UTC, when a daily-loss pause lifts on its own. Called while running, it wakes it.
+ */
+export async function entryLoop(): Promise<void> {
+  if (looping) return wake();
+  looping = true;
+  try {
+    while (getRun().state === "running")
+      if (!(await entryCycle()))
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(wake, lossDay(Date.now()) + 86_400_000 - Date.now());
+          wakeUp = () => (clearTimeout(t), resolve());
+        });
+  } finally {
+    looping = false;
+  }
+}
+
+/** One cycle. False when it could not buy and fetched nothing: the loop then waits for a wake. */
+async function entryCycle(): Promise<boolean> {
   status.entry.lastAt = Date.now();
   try {
     const cfg = loadConfig();
@@ -196,7 +227,7 @@ export async function entryCycle(): Promise<void> {
     const now = Date.now();
     const candidates = [...new Set([...waitsDue(now), ...(await fetchTokens(cfg))])];
     const due = candidates.filter((t) => isDue(t, cfg, now)).slice(0, MAX_BRIEF);
-    if (!due.length) return;
+    if (!due.length) return true;
 
     const snaps: { token: string; snapshotId: number }[] = [];
     for (const token of due) {
@@ -206,15 +237,14 @@ export async function entryCycle(): Promise<void> {
         log("warn", `Snapshot ${token.slice(0, 6)}… failed: ${short(e)} — asked again next cycle.`);
       }
     }
-    if (!snaps.length) return;
+    if (!snaps.length) return true;
 
     const verdicts = await decide(snaps, cfg, free, cfg.sizeSol * (await solUsd()));
-    if (!verdicts) return;
+    if (!verdicts) return true;
     const buys = verdicts.filter((v) => v.action === "buy").sort((a, b) => (b.conviction ?? 0) - (a.conviction ?? 0));
     for (const v of buys) await tryBuy(v, cfg);
   } catch (e) {
     log("error", `Entry cycle failed: ${short(e)}`);
-  } finally {
-    running = false;
   }
+  return true;
 }

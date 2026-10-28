@@ -2,16 +2,16 @@ import { authProblem } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { bootStopped, getRun } from "./control.ts";
 import { openDb } from "./db.ts";
-import { CYCLE_MS, entryCycle } from "./entry.ts";
 import { exitTick, POLL_MS } from "./exit.ts";
 import { log, short } from "./log.ts";
 import { startServer } from "./server.ts";
 import { openPositions, sampleEquity } from "./trade.ts";
 
 /**
- * The engine and its dashboard, one process: the entry loop every minute, the exit loop every
- * POLL_MS, an equity row every minute. The process starts stopped and both loops idle until Start
- * is pressed in the dashboard. Config is the 'config' row in `settings`, re-read every cycle.
+ * The engine and its dashboard, one process: the entry loop (cycle after cycle, started by Start
+ * in the dashboard, see entry.ts), the exit loop every POLL_MS, an equity row every minute. The
+ * process starts stopped and both loops idle until Start. Config is the 'config' row in
+ * `settings`, re-read every cycle.
  */
 
 const PORT = Number(process.env.PORT ?? 3712);
@@ -37,7 +37,6 @@ const running = () => getRun().state === "running";
 const equity = () => sampleEquity(loadConfig()).catch((e) => log("warn", `Equity sample failed: ${short(e)}`));
 const timers = [
   setInterval(() => void (running() && exitTick(loadConfig())), POLL_MS),
-  setInterval(() => void (running() && entryCycle()), CYCLE_MS),
   setInterval(() => void equity(), 60_000),
 ];
 void equity();
