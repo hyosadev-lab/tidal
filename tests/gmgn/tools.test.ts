@@ -28,7 +28,7 @@ test("tools: clamp what the model asks for, send sol, cut rows to the listed fie
   const k = seen.at(-1)!.searchParams;
   assert.equal(k.get("chain"), "sol");
   const span = Number(k.get("to")) - Number(k.get("from"));
-  assert.equal(span, 300 * 300_000, "300 candles max, in milliseconds");
+  assert.equal(span, 100 * 300_000, "100 candles max, in milliseconds");
   assert.ok(Number(k.get("to")) >= before);
 
   const [w] = (await tools.gmgn_token_top_holders!.run({ address: "M", limit: 0, tag: "sniper" })) as any[];

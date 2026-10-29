@@ -67,7 +67,8 @@ const WALLET_ROW =
   "• timing — start_holding_at, end_holding_at (null = still holding), last_active_timestamp. In at launch and out " +
   "minutes later is the sniper pattern the snapshot's rates only count.";
 
-const KLINE_SECS: Record<string, number> = { "1s": 1, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
+// 1s exists but is Pro-only (403 PRO_PLAN_REQUIRED on Free/Plus).
+const KLINE_SECS: Record<string, number> = { "30s": 30, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
 
 const CREATED_FIELDS = [
   "token_address", "symbol", "create_timestamp", "is_open", "market_cap", "token_ath_mc", "pool_liquidity",
@@ -136,13 +137,13 @@ export const tools: Record<string, Tool> = {
       properties: {
         address: MINT,
         resolution: { type: "string", enum: Object.keys(KLINE_SECS), description: "candle size" },
-        limit: { type: "integer", description: "how many candles back from now (default 30, max 300)" },
+        limit: { type: "integer", description: "how many candles back from now (default 30, max 100 — GMGN returns at most 100; a candle with no trades is left out, so fewer can come back)" },
       },
       required: ["address", "resolution"],
     },
     run: async ({ address, resolution, limit }: { address: string; resolution: string; limit?: number }) => {
       const to = Date.now();
-      const from = to - clamp(limit, 30, 300) * (KLINE_SECS[resolution] ?? 60) * 1000;
+      const from = to - clamp(limit, 30, 100) * (KLINE_SECS[resolution] ?? 60) * 1000;
       const r: any = await gmgnClient().getTokenKline(CHAIN, address, resolution, from, to);
       return r?.list ?? [];
     },
