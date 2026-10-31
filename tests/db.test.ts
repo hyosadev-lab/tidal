@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../src/db.ts";
 
 test("schema: all tables, constraints enforced, reopening keeps data", () => {
@@ -13,8 +14,9 @@ test("schema: all tables, constraints enforced, reopening keeps data", () => {
     const tables = db.prepare("select name from sqlite_master where type = 'table' order by name").all();
     assert.deepEqual(
       tables.map((r) => r.name),
-      ["agent_runs", "decisions", "equity", "exit_rules", "logs", "positions", "settings",
-        "snapshot_flow", "token_signals", "token_snapshots", "tokens", "tool_calls", "trades"],
+      ["agent_runs", "config_history", "decisions", "equity", "exit_rules", "hypotheses", "logs",
+        "positions", "settings", "shadow_tracks", "snapshot_flow", "token_signals", "token_snapshots",
+        "tokens", "tool_calls", "trades"],
     );
 
     db.prepare("insert into tokens (address, first_seen_at) values ('Mint', 1)").run();
@@ -32,7 +34,42 @@ test("schema: all tables, constraints enforced, reopening keeps data", () => {
 
     db = openDb(path);
     assert.equal(db.prepare("select price_usd from token_snapshots").get()?.price_usd, 0.5);
+
+    // A decision track needs its decision; a track from another feed must not have one.
+    const track = "insert into shadow_tracks (token, source, decision_id, features, started_at) values ('Mint', ?, ?, '{}', 1)";
+    assert.throws(() => db.prepare(track).run("decision", null), /CHECK/);
+    assert.throws(() => db.prepare(track).run("rank", 1), /CHECK/);
+    db.prepare(track).run("rank", null);
     db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("schema: a ledger from before the new columns gains them, old rows keep their values", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tta-db-"));
+  const path = join(dir, "tta.db");
+  try {
+    const old = new DatabaseSync(path);
+    old.exec(`
+      create table agent_runs (id integer primary key, started_at integer not null, finished_at integer,
+        model text not null, status text not null, error text, input_tokens integer, output_tokens integer,
+        messages text) strict;
+      create table trades (id integer primary key, position_id integer not null, exit_rule_id integer,
+        at integer not null, side text not null, qty text not null, price_usd real not null, usd real not null,
+        pnl_usd real, reason text not null, tx_signature text unique) strict;
+      create table equity (at integer primary key, equity_usd real not null, cash_usd real not null) strict;
+      insert into agent_runs (started_at, model, status) values (1, 'm', 'ok');
+      insert into equity values (1, 1000, 1000);`);
+    old.close();
+
+    for (let i = 0; i < 2; i++) {
+      const db = openDb(path); // the second open finds every column and changes nothing
+      assert.equal(db.prepare("select kind from agent_runs").get()?.kind, "entry");
+      assert.equal(db.prepare("select mode from equity").get()?.mode, "paper");
+      assert.ok(db.prepare("select 1 from pragma_table_info('trades') where name = 'quote_price_usd'").get());
+      db.close();
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

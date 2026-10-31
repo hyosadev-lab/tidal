@@ -48,7 +48,8 @@ create table if not exists agent_runs (
   error text,
   input_tokens integer,
   output_tokens integer,
-  messages text
+  messages text,
+  kind text not null default 'entry' check (kind in ('entry', 'research'))
 ) strict;
 
 create table if not exists tool_calls (
@@ -226,7 +227,8 @@ create table if not exists trades (
   usd real not null,
   pnl_usd real,
   reason text not null,
-  tx_signature text unique
+  tx_signature text unique,
+  quote_price_usd real
 ) strict;
 create index if not exists trades_at on trades(at);
 create index if not exists trades_position on trades(position_id);
@@ -245,7 +247,61 @@ create table if not exists logs (
   msg text not null,
   detail text
 ) strict;
+
+-- Edge research: code captures and judges, a model only proposes (schema.dbml has the notes).
+create table if not exists shadow_tracks (
+  id integer primary key,
+  token text not null,
+  source text not null check (source in ('decision', 'rank', 'migration')),
+  decision_id integer unique references decisions(id),
+  features text not null,
+  started_at integer not null,
+  start_price_usd real,
+  ended_at integer,
+  path text,
+  ret_1m real,
+  ret_5m real,
+  ret_15m real,
+  ret_30m real,
+  ret_60m real,
+  max_pct real,
+  max_at integer,
+  min_pct real,
+  min_at integer,
+  check ((source = 'decision') = (decision_id is not null))
+) strict;
+create index if not exists shadow_tracks_started on shadow_tracks(started_at);
+
+create table if not exists config_history (
+  at integer primary key,
+  value text not null
+) strict;
+
+create table if not exists hypotheses (
+  id integer primary key,
+  created_at integer not null,
+  author text not null,
+  parent_id integer references hypotheses(id),
+  rule text not null,
+  conditions text not null,
+  exit text not null,
+  need_pct real not null check (need_pct between 0 and 100),
+  backtest text,
+  result text,
+  status text not null check (status in ('testing', 'passed', 'failed', 'paper', 'live', 'kept', 'dropped')),
+  paper_config_at integer references config_history(at),
+  live_config_at integer references config_history(at),
+  decided_at integer,
+  decay_at integer,
+  notes text
+) strict;
 `;
+
+/** Adds a column to a table created before the column was in SCHEMA. Idempotent. */
+function addColumn(table: string, column: string, def: string): void {
+  if (!db.prepare("select 1 from pragma_table_info(?) where name = ?").get(table, column))
+    db.exec(`alter table ${table} add column ${column} ${def}`);
+}
 
 /** The process's ledger, set by the last `openDb`. One per process: tests reopen it on ":memory:". */
 export let db!: DatabaseSync;
@@ -256,8 +312,9 @@ export function openDb(path = process.env.TTA_DB || DEFAULT_PATH): DatabaseSync 
   db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = on;");
   db.exec(SCHEMA);
-  if (!db.prepare("select 1 from pragma_table_info('equity') where name = 'mode'").get())
-    db.exec("alter table equity add column mode text not null default 'paper' check (mode in ('paper', 'live'))");
+  addColumn("equity", "mode", "text not null default 'paper' check (mode in ('paper', 'live'))");
+  addColumn("agent_runs", "kind", "text not null default 'entry' check (kind in ('entry', 'research'))");
+  addColumn("trades", "quote_price_usd", "real");
   return db;
 }
 
