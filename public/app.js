@@ -499,7 +499,7 @@ const helpTip = (id, label, html) =>
   `<button class="helpbtn" data-a="help" data-v="${id}" aria-label="${label}" aria-describedby="${id}" aria-expanded="${S.help === id}"><span aria-hidden="true">${I.help}</span></button><div class="helptip" id="${id}" role="tooltip">${html}</div>`;
 
 const AGENT_HELP = `<b style="color:var(--ink)">What the agent does</b>
-  <span>Every minute the entry loop hands the agent the tokens that are due: new on GMGN's 1h list or signals, or a wait that has ended. Up to 10 tokens per run.</span>
+  <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h list or signals, or a wait that has ended. Up to 10 tokens per run.</span>
   <span>In a run it may look up holders, top traders, candles or the dev's earlier tokens, then gives each token a verdict:</span>
   <span class="stack" style="gap:2px;padding-left:2px"><span><b class="pos">buy</b> · conviction 0–100; bought only if a slot, the security check and cash allow</span><span><b class="vio">wait</b> · looked at again at the time it sets</span><span><b class="soft">skip</b> · a hard refusal, final</span></span>
   <span>No run starts while every slot is taken or buying is paused.</span>
