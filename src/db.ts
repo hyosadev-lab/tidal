@@ -12,8 +12,8 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_PATH = fileURLToPath(new URL("../data/tta.db", import.meta.url));
 
-// ponytail: `if not exists` never alters a table that is already there. The first schema change
-// after real data lands needs a `pragma user_version` step in openDb.
+// ponytail: `if not exists` never alters a table that is already there; a column added after real
+// data landed gets its own idempotent step in openDb.
 const SCHEMA = `
 create table if not exists settings (
   key text primary key,
@@ -234,7 +234,8 @@ create index if not exists trades_position on trades(position_id);
 create table if not exists equity (
   at integer primary key,
   equity_usd real not null,
-  cash_usd real not null
+  cash_usd real not null,
+  mode text not null default 'paper' check (mode in ('paper', 'live'))
 ) strict;
 
 create table if not exists logs (
@@ -255,6 +256,8 @@ export function openDb(path = process.env.TTA_DB || DEFAULT_PATH): DatabaseSync 
   db = new DatabaseSync(path);
   db.exec("pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = on;");
   db.exec(SCHEMA);
+  if (!db.prepare("select 1 from pragma_table_info('equity') where name = 'mode'").get())
+    db.exec("alter table equity add column mode text not null default 'paper' check (mode in ('paper', 'live'))");
   return db;
 }
 

@@ -126,11 +126,11 @@ export async function cashUsd(cfg: Config): Promise<number> {
 
 const value = (p: Position) => (Number(p.qty) / 10 ** p.decimals) * (p.last_price_usd ?? p.entry_price_usd);
 
-/** One equity row: cash plus open positions at their last price. Called about once a minute. */
+/** One equity row for the current mode: its cash plus its open positions at their last price. About once a minute. */
 export async function sampleEquity(cfg: Config): Promise<void> {
   const cash = await cashUsd(cfg);
-  const held = openPositions().reduce((t, p) => t + value(p), 0);
-  db.prepare("insert or replace into equity (at, equity_usd, cash_usd) values (?, ?, ?)").run(Date.now(), cash + held, cash);
+  const held = openPositions().filter((p) => p.mode === cfg.mode).reduce((t, p) => t + value(p), 0);
+  db.prepare("insert or replace into equity (at, equity_usd, cash_usd, mode) values (?, ?, ?, ?)").run(Date.now(), cash + held, cash, cfg.mode);
 }
 
 /** The start of the daily-loss day: 00:00 UTC, whatever zone the server or the viewer is in. */
@@ -142,9 +142,9 @@ export const lossDay = (now: number) => now - (now % 86_400_000);
  */
 export function buyingPaused(cfg: Config, now = Date.now()): boolean {
   const midnight = lossDay(now);
-  const start = (db.prepare("select equity_usd e from equity where at >= ? order by at limit 1").get(midnight) ??
-    db.prepare("select equity_usd e from equity where at < ? order by at desc limit 1").get(midnight)) as { e: number } | undefined;
-  const last = db.prepare("select equity_usd e from equity order by at desc limit 1").get() as { e: number } | undefined;
+  const start = (db.prepare("select equity_usd e from equity where mode = ? and at >= ? order by at limit 1").get(cfg.mode, midnight) ??
+    db.prepare("select equity_usd e from equity where mode = ? and at < ? order by at desc limit 1").get(cfg.mode, midnight)) as { e: number } | undefined;
+  const last = db.prepare("select equity_usd e from equity where mode = ? order by at desc limit 1").get(cfg.mode) as { e: number } | undefined;
   return !!start && !!last && start.e > 0 && ((last.e - start.e) / start.e) * 100 <= -cfg.maxDailyLossPct;
 }
 

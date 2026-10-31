@@ -8,7 +8,7 @@ import * as control from "./control.ts";
 import { entryLoop, wake } from "./entry.ts";
 import * as jup from "./jupiter/client.ts";
 import { log } from "./log.ts";
-import { lastSolUsd } from "./trade.ts";
+import { lastSolUsd, sampleEquity } from "./trade.ts";
 import * as view from "./view.ts";
 
 /**
@@ -69,6 +69,8 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
     const cfg = sanitize({ ...before, ...input });
     if (cfg.mode === "live" && !jup.address()) return { ok: false, error: "Live stays off while SOLANA_PRIVATE_KEY is unset." };
     saveConfig(cfg);
+    // The new mode's curve starts now, not at the next minute's sample; a failure waits for that one.
+    if (cfg.mode !== before.mode) void sampleEquity(cfg).catch(() => {});
     wake(); // more slots, a looser loss limit or a new mode may let an idle loop buy
     log("info", `Settings saved${cfg.mode !== before.mode ? ` — mode is now ${cfg.mode}` : ""}.`);
     return { ok: true, config: cfg };

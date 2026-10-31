@@ -92,29 +92,30 @@ export function positions(cfg: Config, now: number) {
 
 type EquityRow = { at: number; e: number; c: number };
 
-/** Paper cash is derived; live cash is the wallet's, as the last equity sample read it. */
+/** Paper cash is derived; live cash is the wallet's, as the last live equity sample read it. */
 function cashNow(cfg: Config): number {
   if (cfg.mode === "paper") return paperCash(cfg);
-  return one<{ c: number }>("select cash_usd c from equity order by at desc limit 1")?.c ?? 0;
+  return one<{ c: number }>("select cash_usd c from equity where mode = 'live' order by at desc limit 1")?.c ?? 0;
 }
 
-function equityAt(midnight: number): number | null {
+/** Equity rows are per mode: a switch starts a fresh curve, never one carried over from the other book. */
+function equityAt(mode: string, midnight: number): number | null {
   return (
-    one<{ e: number }>("select equity_usd e from equity where at >= ? order by at limit 1", midnight) ??
-    one<{ e: number }>("select equity_usd e from equity where at < ? order by at desc limit 1", midnight)
+    one<{ e: number }>("select equity_usd e from equity where mode = ? and at >= ? order by at limit 1", mode, midnight) ??
+    one<{ e: number }>("select equity_usd e from equity where mode = ? and at < ? order by at desc limit 1", mode, midnight)
   )?.e ?? null;
 }
 
 export function overview(cfg: Config, range: string, now: number, tz: string) {
   const pos = positions(cfg, now);
-  const held = pos.reduce((t, p) => t + p.valueUsd, 0);
+  const held = pos.filter((p) => p.mode === cfg.mode).reduce((t, p) => t + p.valueUsd, 0);
   const cash = cashNow(cfg);
   const equity = cash + held;
-  const first = one<EquityRow>("select at, equity_usd e from equity order by at limit 1");
+  const first = one<EquityRow>("select at, equity_usd e from equity where mode = ? order by at limit 1", cfg.mode);
   const start = first?.e ?? (cfg.mode === "paper" ? cfg.paperStartUsd : equity);
   const midnight = dayStart(now, tz);
-  const todayStart = equityAt(midnight) ?? equity;
-  const lossStart = equityAt(lossDay(now)) ?? equity; // the engine's day, so the meter matches the pause
+  const todayStart = equityAt(cfg.mode, midnight) ?? equity;
+  const lossStart = equityAt(cfg.mode, lossDay(now)) ?? equity; // the engine's day, so the meter matches the pause
   const today = one<{ pnl: number; n: number }>(
     "select coalesce(sum(pnl_usd), 0) pnl, count(*) n from trades where side = 'sell' and at >= ?",
     midnight,
@@ -128,7 +129,7 @@ export function overview(cfg: Config, range: string, now: number, tz: string) {
   // Max drawdown off every equity sample: the deepest fall from a running peak.
   let peak = 0;
   let dd = { pct: 0, usd: 0, at: 0 };
-  for (const r of all<EquityRow>("select at, equity_usd e from equity order by at")) {
+  for (const r of all<EquityRow>("select at, equity_usd e from equity where mode = ? order by at", cfg.mode)) {
     peak = Math.max(peak, r.e);
     const pct = peak > 0 ? (r.e / peak - 1) * 100 : 0;
     if (pct < dd.pct) dd = { pct, usd: r.e - peak, at: r.at };
@@ -153,13 +154,13 @@ export function overview(cfg: Config, range: string, now: number, tz: string) {
     slots: { used: pos.length, max: cfg.maxOpenPositions },
     winRate: { won: closed.filter((c) => c.pnl > 0).length, closed: closed.length },
     drawdown: dd,
-    chart: chart(range, now, tz),
+    chart: chart(range, now, tz, cfg.mode),
     positions: pos,
     fills: fills(midnight),
   };
 }
 
-function chart(range: string, now: number, tz: string) {
+function chart(range: string, now: number, tz: string, mode: string) {
   const today = dayStart(now, tz);
   const firstAt =
     one<{ at: number }>("select min(at) at from (select min(at) at from trades union all select min(at) at from equity)")?.at ?? now;
@@ -174,7 +175,7 @@ function chart(range: string, now: number, tz: string) {
     pnl[d]!.sells++;
   }
   // Equity samples arrive once a minute; a chart needs a few hundred points, not thousands.
-  const rows = all<EquityRow>("select at, equity_usd e from equity where at >= ? order by at", from);
+  const rows = all<EquityRow>("select at, equity_usd e from equity where mode = ? and at >= ? order by at", mode, from);
   const step = Math.max(1, Math.ceil(rows.length / 240));
   const equity = rows.filter((_, i) => i % step === 0 || i === rows.length - 1).map((r) => ({ at: r.at, e: r.e }));
   return { range, from, pnl, equity };

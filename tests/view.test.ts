@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sanitize } from "../src/config.ts";
 import { db, openDb } from "../src/db.ts";
+import { buyingPaused } from "../src/trade.ts";
 import { activityBefore, dayStart, overview, runsBefore, trading, zone } from "../src/view.ts";
 
 test("dayStart: the viewer's midnight, ahead of and behind UTC, across DST", () => {
@@ -30,6 +31,23 @@ test("the daily PnL chart buckets sells by the viewer's days", () => {
   assert.deepEqual(days("Asia/Jakarta"), [[-3, 1], [-5, 1]]);
   assert.deepEqual(days("UTC"), [[-8, 2], [0, 0]]);
   assert.equal(overview(cfg, "7d", now, "Asia/Jakarta").today.sells, 1);
+});
+
+test("live equity never reads the paper curve", () => {
+  openDb(":memory:");
+  const now = Date.UTC(2026, 9, 28, 12);
+  const row = (at: number, e: number, mode: string) =>
+    db.prepare("insert into equity (at, equity_usd, cash_usd, mode) values (?, ?, ?, ?)").run(at, e, e, mode);
+  row(now - 3_600_000, 795, "paper");
+  const live = sanitize({ mode: "live" });
+  assert.equal(overview(live, "7d", now, "UTC").equity, 0); // no live sample yet: not the paper 795
+  assert.equal(buyingPaused(live, now), false);
+  row(now - 60_000, 20, "live");
+  const o = overview(live, "7d", now, "UTC");
+  assert.deepEqual([o.equity, o.sinceStart.usd, o.today.usd, o.drawdown.pct], [20, 0, 0, 0]);
+  assert.deepEqual(o.chart.equity.map((r) => r.e), [20]);
+  assert.equal(buyingPaused(live, now), false); // 795 → 20 is a mode switch, not a −97% day
+  assert.equal(overview(sanitize({}), "7d", now, "UTC").chart.equity[0]!.e, 795);
 });
 
 test("the Runs list pages through today's runs, All and Failed alike", () => {
