@@ -258,6 +258,7 @@ create table if not exists shadow_tracks (
   started_at integer not null,
   start_price_usd real,
   ended_at integer,
+  end_reason text check (end_reason in ('done', 'rug', 'restart', 'unreadable')) check ((ended_at is null) = (end_reason is null)),
   path text,
   ret_1m real,
   ret_5m real,
@@ -315,6 +316,8 @@ export function openDb(path = process.env.TTA_DB || DEFAULT_PATH): DatabaseSync 
   addColumn("equity", "mode", "text not null default 'paper' check (mode in ('paper', 'live'))");
   addColumn("agent_runs", "kind", "text not null default 'entry' check (kind in ('entry', 'research'))");
   addColumn("trades", "quote_price_usd", "real");
+  addColumn("shadow_tracks", "end_reason",
+    "text check (end_reason in ('done', 'rug', 'restart', 'unreadable')) check ((ended_at is null) = (end_reason is null))");
   return db;
 }
 

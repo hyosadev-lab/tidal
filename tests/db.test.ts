@@ -40,6 +40,13 @@ test("schema: all tables, constraints enforced, reopening keeps data", () => {
     assert.throws(() => db.prepare(track).run("decision", null), /CHECK/);
     assert.throws(() => db.prepare(track).run("rank", 1), /CHECK/);
     db.prepare(track).run("rank", null);
+
+    // A track ends with its reason, and only a known one.
+    const end = db.prepare("update shadow_tracks set ended_at = ?, end_reason = ?");
+    assert.throws(() => end.run(2, null), /CHECK/);
+    assert.throws(() => end.run(null, "done"), /CHECK/);
+    assert.throws(() => end.run(2, "sold"), /CHECK/);
+    end.run(2, "rug");
     db.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -59,6 +66,8 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
         at integer not null, side text not null, qty text not null, price_usd real not null, usd real not null,
         pnl_usd real, reason text not null, tx_signature text unique) strict;
       create table equity (at integer primary key, equity_usd real not null, cash_usd real not null) strict;
+      create table shadow_tracks (id integer primary key, token text not null, source text not null,
+        decision_id integer unique, features text not null, started_at integer not null, ended_at integer) strict;
       insert into agent_runs (started_at, model, status) values (1, 'm', 'ok');
       insert into equity values (1, 1000, 1000);`);
     old.close();
@@ -68,6 +77,8 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
       assert.equal(db.prepare("select kind from agent_runs").get()?.kind, "entry");
       assert.equal(db.prepare("select mode from equity").get()?.mode, "paper");
       assert.ok(db.prepare("select 1 from pragma_table_info('trades') where name = 'quote_price_usd'").get());
+      // The added column brings its checks: an end needs a reason.
+      assert.throws(() => db.prepare("insert into shadow_tracks (token, source, features, started_at, ended_at) values ('M', 'rank', '{}', 1, 2)").run(), /CHECK/);
       db.close();
     }
   } finally {
