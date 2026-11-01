@@ -46,11 +46,16 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   → agent_runs / tool_calls / decisions) → per buy, best conviction first: exit plan, security
   (`/v1/token/security`), slot, size, cash, entry snapshot, `trade.buy`. A refusal on the token
   itself is a 'skip' row (final). No agent run while every slot is taken or buying is paused.
-- Exit: one Jupiter Price API read for every open position (Jupiter: 1 req/s, every request but
-  `/execute` takes the next slot of one queue in `jupiter/client.ts`); `evaluate` (pure) fires sl → health
-  (liquidity drain) → time stop → tp. A >3× jump is confirmed on GMGN first. Live positions are
-  matched against the wallet every ~30s; tokens gone without a sell are booked `external`.
-  The design's Helius `transactionSubscribe` stream needs a paid Helius plan — polling stands in.
+- Exit: prices off each pool's reserves on-chain (`jupiter/pools.ts`, pool from the latest
+  `token_snapshots.pool_address`): pump curve and PumpSwap only. A Solana RPC WebSocket
+  (`accountSubscribe`, standard RPC) pushes every change and checks that position at once; one
+  `getMultipleAccounts` read backs it up (resync 10s, every 1s while the socket is down). The 1s
+  tick checks every position off the same prices and writes them to the ledger. Jupiter's Price API
+  only prices SOL / quote tokens (30s) and pools the feed can't read (2s, those mints) — Jupiter is
+  1 req/s, and every request but `/execute` takes the next slot of one queue in `jupiter/client.ts`.
+  `evaluate` (pure) fires sl → health (liquidity drain, baseline = first reading after the buy) →
+  time stop → tp. A >3× jump is confirmed on GMGN first. No price for 30s: time stops only. Live
+  positions are matched against the wallet every ~30s; tokens gone without a sell are booked `external`.
 - Dashboard: `server.ts` (`node:http`, login via `auth.ts` when `DASHBOARD_TOKEN` is set, else a
   Host allowlist against DNS rebinding; POSTs must be application/json) serves `public/` (vanilla
   JS, polls `GET /api/state` every 3s) and reads through `view.ts`, the only place dashboard numbers
@@ -82,6 +87,9 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   with `SOLANA_PRIVATE_KEY` → `/execute`, which confirms itself), plus RPC reads `solBalance`,
   `decimals`, `tokenBalance`. GMGN is no longer the swap route (rate limits); `JUPITER_API_KEY`
   optional, `SOLANA_RPC_URL` overrides the public RPC. Base58 and ed25519 on `node:crypto`.
+  `pools.ts`: the exit loop's on-chain price feed (layouts, vaults paired by slot, the socket with
+  a `slotSubscribe` heartbeat, the backup poll); `SOLANA_WS_URL` overrides the socket address,
+  else it is the RPC's over ws(s)://.
 - `src/db.ts` — the ledger: `openDb(path?)` opens `data/tta.db` (`TTA_DB` overrides) and sets the
   module-level `db`; WAL, foreign keys on, STRICT tables. `insert(table, row)` and `tx(fn)`. The
   DDL is `schema.dbml` (local, gitignored) translated; change both together.

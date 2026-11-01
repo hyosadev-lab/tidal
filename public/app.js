@@ -355,11 +355,9 @@ function healthRows(d) {
   else
     rows.push({
       name: "Exit loop",
-      status: h.exit.priceError ? "Prices down" : "Polling",
-      detail: h.exit.priceError
-        ? `Jupiter: ${h.exit.priceError} · only time stops run`
-        : `Jupiter price every ${h.exit.pollMs / 1000}s · ${plural(h.exit.mints, "mint")}${h.exit.lastAt && d.now - h.exit.lastAt > 15_000 ? ` · last poll ${hms(h.exit.lastAt)}, stale` : ""}`,
-      dot: h.exit.priceError ? WARN : OK,
+      status: h.exit.priceError ? "Prices down" : "Watching",
+      detail: `${h.exit.priceError ? `${h.exit.priceError}, only time stops run for it · ` : ""}${h.exit.onChain} on-chain${h.exit.onJupiter ? ` · ${h.exit.onJupiter} on Jupiter` : ""}${h.exit.onChain ? ` · socket ${h.exit.socket ? "up" : "down, pools read every 1s"}` : ""}${h.exit.lastAt && d.now - h.exit.lastAt > 15_000 ? ` · last tick ${hms(h.exit.lastAt)}, stale` : ""}`,
+      dot: h.exit.priceError || (h.exit.onChain && !h.exit.socket) ? WARN : OK,
     });
   rows.push(h.gmgn ? { name: "GMGN", status: "Errors", detail: `last ${hms(h.gmgn.errorAt)} · ${h.gmgn.error}`, dot: WARN } : { name: "GMGN", status: "OK", detail: "free plan · no errors today", dot: OK });
   rows.push(

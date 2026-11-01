@@ -101,7 +101,7 @@ export type FeedRow = {
 export const status = {
   startedAt: Date.now(),
   entry: { lastAt: 0, note: "" },
-  exit: { lastAt: 0, mints: 0, priceError: "" },
+  exit: { lastAt: 0, mints: 0, priceError: "", socket: false, onChain: 0, onJupiter: 0 },
   gmgn: { errorAt: 0, error: "" },
   fetch: { at: 0, rows: [] as FeedRow[] },
 };

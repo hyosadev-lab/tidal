@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluate } from "../src/exit.ts";
+import { evaluate, pickPrice } from "../src/exit.ts";
 
 const cfg = { timeStopMinutes: 30, liquidityDrainPct: 55 };
 const p = { opened_at: 0, entry_price_usd: 1, entry_liquidity_usd: 10_000 };
@@ -24,4 +24,13 @@ test("exit rules: health and the clock sell everything, the clock even with no p
   assert.equal(evaluate(p, rules, 1.1, 4_600, 60_000, cfg), null);
   assert.deepEqual(evaluate(p, rules, null, null, 30 * 60_000, cfg), { reason: "time", pct: 100, ruleIds: [] });
   assert.equal(evaluate(p, rules, null, null, 60_000, cfg), null);
+});
+
+test("prices: the pool's in USD first, Jupiter's when the pool has none, nothing once stale", () => {
+  const r = { price: 0.00005, liquidity: 100, quoteMint: "SOL", slot: 1, at: 1_000 };
+  const jup = { usd: 9, liquidityUsd: 1, at: 1_000, source: "Jupiter" as const };
+  assert.deepEqual(pickPrice(r, 200, jup, 2_000), { usd: 0.01, liquidityUsd: 20_000, at: 1_000, source: "pool" });
+  assert.equal(pickPrice(r, undefined, jup, 2_000)?.source, "Jupiter", "no USD for the quote token yet");
+  assert.equal(pickPrice(null, undefined, undefined, 2_000), null);
+  assert.equal(pickPrice(r, 200, jup, 31_001), null, "30 s without a reading is no price");
 });

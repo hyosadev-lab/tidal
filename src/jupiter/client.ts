@@ -3,7 +3,8 @@ import type { KeyObject } from "node:crypto";
 
 /**
  * Jupiter Swap V2 transport — Solana token swaps, plus the three Solana RPC reads a swap needs.
- * The counterpart of `src/gmgn/`: nothing else in the repo speaks to Jupiter or a Solana RPC.
+ * The counterpart of `src/gmgn/`: nothing outside `src/jupiter/` speaks to Jupiter or a Solana
+ * RPC (`pools.ts` beside this reads pool reserves for the exit loop).
  *
  * Unlike a GMGN swap, nothing here is custodial. `/order` hands back an unsigned transaction,
  * this process signs it with the wallet's own key (`SOLANA_PRIVATE_KEY`, base58 or JSON byte
@@ -226,8 +227,11 @@ export async function prices(mints: string[]): Promise<Map<string, Price>> {
 
 // ── wallet reads (Solana RPC) ─────────────────────────────────────────
 
-async function rpc(method: string, params: unknown[]): Promise<any> {
-  const res = await fetch(process.env.SOLANA_RPC_URL?.trim() || RPC, {
+export const rpcUrl = (): string => process.env.SOLANA_RPC_URL?.trim() || RPC;
+
+/** One JSON-RPC call; the RPC's own error is thrown. Not paced: the RPC is not Jupiter's queue. */
+export async function rpc(method: string, params: unknown[]): Promise<any> {
+  const res = await fetch(rpcUrl(), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),

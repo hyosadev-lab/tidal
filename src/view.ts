@@ -230,7 +230,7 @@ export function health(cfg: Config, now: number, tz: string) {
           today: day,
         }
       : null,
-    exit: { lastAt: status.exit.lastAt, mints: open, pollMs: POLL_MS, priceError: status.exit.priceError },
+    exit: { ...status.exit, mints: open, pollMs: POLL_MS },
     gmgn: status.gmgn.errorAt >= midnight ? status.gmgn : null,
     swaps: { mode: cfg.mode, wallet: wallet ? shortAddr(wallet) : null },
     alerts: all<{ at: number; level: string; msg: string }>(

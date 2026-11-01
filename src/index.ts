@@ -2,7 +2,7 @@ import { authProblem } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { bootStopped, getRun } from "./control.ts";
 import { openDb } from "./db.ts";
-import { exitTick, POLL_MS } from "./exit.ts";
+import { exitIdle, exitTick, POLL_MS } from "./exit.ts";
 import { log, short } from "./log.ts";
 import { startServer } from "./server.ts";
 import { openPositions, sampleEquity } from "./trade.ts";
@@ -36,7 +36,7 @@ log(
 const running = () => getRun().state === "running";
 const equity = () => sampleEquity(loadConfig()).catch((e) => log("warn", `Equity sample failed: ${short(e)}`));
 const timers = [
-  setInterval(() => void (running() && exitTick(loadConfig())), POLL_MS),
+  setInterval(() => void (running() ? exitTick(loadConfig()) : exitIdle()), POLL_MS),
   setInterval(() => void equity(), 60_000),
 ];
 void equity();

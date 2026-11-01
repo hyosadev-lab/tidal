@@ -188,7 +188,6 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
   const entryPrice = costUsd / qty;
   // Live has no USD values off /execute: measured against GMGN's market price instead.
   friction = Math.min(0.9, Math.max(0, friction ?? 1 - snap.price_usd / entryPrice));
-  const liquidity = (await jup.prices([token]).catch(() => new Map<string, jup.Price>())).get(token)?.liquidityUsd ?? null;
 
   try {
     tx(() => {
@@ -206,7 +205,7 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
         original_qty: qtyRaw,
         qty: qtyRaw,
         breakeven_pct: (1 / (1 - friction) - 1) * 100,
-        entry_liquidity_usd: liquidity,
+        entry_liquidity_usd: null, // the exit loop's first reading, off the same source it then watches
         entry_market_cap_usd: snap.market_cap_usd !== null ? (snap.market_cap_usd * entryPrice) / snap.price_usd : null,
         last_price_usd: snap.price_usd,
         peak_price_usd: snap.price_usd,

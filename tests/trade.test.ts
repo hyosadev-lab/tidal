@@ -61,7 +61,8 @@ test("paper: buy books the plan, a TP sells 40% at a profit, the stop sells the 
   assert.equal(await buy({ token: MINT, decisionId, entrySnapshotId: snap, plan: DEFAULTS.plan, cfg: DEFAULTS }), null);
   const [p] = openPositions();
   assert.ok(p);
-  assert.deepEqual([p.qty, p.cost_usd, p.entry_price_usd, p.entry_liquidity_usd], ["1000000000", 12, 0.012, 50_000]);
+  // No liquidity baseline yet: the exit loop's first reading sets it, off the source it then watches.
+  assert.deepEqual([p.qty, p.cost_usd, p.entry_price_usd, p.entry_liquidity_usd], ["1000000000", 12, 0.012, null]);
   assert.equal(paperCash(DEFAULTS), 988);
 
   const tp = db.prepare("select id from exit_rules where position_id = ? and seq = 1").get(p.id) as { id: number };
