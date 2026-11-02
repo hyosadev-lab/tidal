@@ -199,10 +199,12 @@ function stats(trades: { at: number; pnl: number }[], fr: number | null, base: n
 }
 
 const pools = new Map<string, number[]>();
+let poolsOf: unknown = null;
 
 /** Every readable track of the window replayed with the setup: what a random pick would have made. Kept per window and setup. */
 function poolOf(tracks: Track[], s: Setup): number[] {
   const key = `${tracks[0]?.id}-${tracks.at(-1)?.id}-${tracks.length}-${JSON.stringify(s)}`;
+  if (poolsOf !== db) (pools.clear(), (poolsOf = db));
   if (!pools.has(key)) {
     if (pools.size > 50) pools.clear();
     pools.set(key, tracks.map((t) => tradeOn(t, s)?.pnl).filter((p): p is number => p !== undefined));
@@ -536,3 +538,11 @@ export function runCli(cmd: "judge" | "agent", maxMs: number): boolean {
 }
 
 export const cliRunning = (cmd: "judge" | "agent"): boolean => children.has(cmd);
+
+/** On the engine's exit: a child would outlive its kill timer, and an agent run would keep spending. */
+export function stopCli(): void {
+  for (const c of children.values()) c.kill();
+}
+
+/** Whether `judge` has anything to do: an idea testing, on paper, live or kept. */
+export const judgeDue = (): boolean => !!db.prepare("select 1 from hypotheses where status in ('testing', 'paper', 'live', 'kept') limit 1").get();

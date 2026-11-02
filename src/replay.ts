@@ -74,46 +74,51 @@ export const replay = (points: Point[], from: number, plan: ExitPlan, sizeSol: n
 
 export type Calibration = { n: number; agree: number; gapPct: number | null };
 
-let cache: { key: string; value: Calibration } | null = null;
+/** Each closed position's replay against its real result, computed once: neither ever changes. Per ledger. */
+const sims = new Map<number, { sim: number; real: number } | null>();
+let simsOf: unknown = null;
 
 /**
  * Every position closed by its own exit rules, replayed on its decision's track with the plan it
  * ran (its exit_rules) and the config in force when it opened. `agree` counts the same sign of
- * result; `gapPct` is the mean of replay − real, the friction every test then charges. Recomputed
- * only when a position closes.
+ * result; `gapPct` is the mean of replay − real, the friction every test then charges. Each
+ * position is replayed once, so the dashboard's read stays cheap as trades pile up.
  */
 export function calibration(): Calibration {
   const rows = db
     .prepare(
-      `select p.id, p.opened_at, p.cost_usd, s.started_at, s.path, s.end_reason,
-         (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
-       from positions p join shadow_tracks s on s.decision_id = p.decision_id
+      `select p.id from positions p join shadow_tracks s on s.decision_id = p.decision_id
        where p.status = 'closed' and p.close_reason in ('tp', 'sl', 'time', 'health')
          and s.end_reason in ('done', 'rug') and s.path is not null
        order by p.id`,
     )
-    .all() as { id: number; opened_at: number; cost_usd: number; started_at: number; path: string; end_reason: string; pnl: number | null }[];
-  const key = rows.map((r) => r.id).join(",");
-  if (cache?.key === key) return cache.value;
-
+    .all() as { id: number }[];
+  const one = db.prepare(
+    `select p.id, p.opened_at, p.cost_usd, s.started_at, s.path, s.end_reason,
+       (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
+     from positions p join shadow_tracks s on s.decision_id = p.decision_id where p.id = ?`,
+  );
+  if (simsOf !== db) (sims.clear(), (simsOf = db));
   const configAt = db.prepare("select value from config_history where at <= ? order by at desc limit 1");
   const rulesOf = db.prepare("select kind, at_pct at, sell_pct sell from exit_rules where position_id = ? order by seq");
   const now = loadConfig();
   let agree = 0;
   let n = 0;
   let gap = 0;
-  for (const r of rows) {
-    const c = (configAt.get(r.opened_at) as { value: string } | undefined)?.value;
-    const cfg = c ? { ...now, ...JSON.parse(c) } : now;
-    const plan = { rules: rulesOf.all(r.id) as Rule[], timeMin: cfg.timeStopMinutes, drainPct: cfg.liquidityDrainPct };
-    const sim = replay(JSON.parse(r.path), Math.round((r.opened_at - r.started_at) / STEP_MS), plan, cfg.sizeSol, r.end_reason === "rug");
-    if (sim === null || !(r.cost_usd > 0)) continue;
-    const real = ((r.pnl ?? 0) / r.cost_usd) * 100;
+  for (const { id } of rows) {
+    if (!sims.has(id)) {
+      const r = one.get(id) as { opened_at: number; cost_usd: number; started_at: number; path: string; end_reason: string; pnl: number | null };
+      const c = (configAt.get(r.opened_at) as { value: string } | undefined)?.value;
+      const cfg = c ? { ...now, ...JSON.parse(c) } : now;
+      const plan = { rules: rulesOf.all(id) as Rule[], timeMin: cfg.timeStopMinutes, drainPct: cfg.liquidityDrainPct };
+      const sim = replay(JSON.parse(r.path), Math.round((r.opened_at - r.started_at) / STEP_MS), plan, cfg.sizeSol, r.end_reason === "rug");
+      sims.set(id, sim === null || !(r.cost_usd > 0) ? null : { sim, real: ((r.pnl ?? 0) / r.cost_usd) * 100 });
+    }
+    const x = sims.get(id);
+    if (!x) continue;
     n++;
-    if (sim > 0 === real > 0) agree++;
-    gap += sim - real;
+    if (x.sim > 0 === x.real > 0) agree++;
+    gap += x.sim - x.real;
   }
-  const value = { n, agree, gapPct: n ? gap / n : null };
-  cache = { key, value };
-  return value;
+  return { n, agree, gapPct: n ? gap / n : null };
 }

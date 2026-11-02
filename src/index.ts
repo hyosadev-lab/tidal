@@ -5,7 +5,7 @@ import { openDb } from "./db.ts";
 import { exitIdle, exitTick, POLL_MS } from "./exit.ts";
 import { log, short } from "./log.ts";
 import { startServer } from "./server.ts";
-import { runCli, seedTries } from "./research.ts";
+import { judgeDue, runCli, seedTries, stopCli } from "./research.ts";
 import { endRestarted, sampleMigrations, shadowTick, STEP_MS } from "./shadow.ts";
 import { openPositions, sampleEquity } from "./trade.ts";
 
@@ -45,14 +45,17 @@ const timers = [
   setInterval(() => void equity(), 60_000),
   // Shadow tracks run whether trading is started or not: a stop must not cut their 60 minutes.
   setInterval(() => void shadowTick(), STEP_MS),
-  setInterval(() => void sampleMigrations(), 60_000), // fresh PumpSwap migrations, never bought
-  setInterval(() => runCli("judge", 5 * 60_000), 10 * 60_000), // hypotheses judged in a child process
+  // Fresh PumpSwap migrations, never bought: while running only. A stopped process spends no
+  // GMGN budget, which the same key may be spending on another host.
+  setInterval(() => void (running() ? sampleMigrations() : undefined), 60_000),
+  setInterval(() => void (judgeDue() && runCli("judge", 5 * 60_000)), 10 * 60_000), // in a child process
 ];
 void equity();
 startServer({ port: PORT, host: HOST, token: TOKEN });
 
 function stop(signal: string): void {
   for (const t of timers) clearInterval(t);
+  stopCli();
   log("info", `Stopped (${signal}). Open positions are not watched until the next start.`);
   db.close();
   process.exit(0);
