@@ -56,6 +56,12 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   `evaluate` (pure) fires sl → health (liquidity drain, baseline = first reading after the buy) →
   time stop → tp. A >3× jump is confirmed on GMGN first. No price for 30s: time stops only. Live
   positions are matched against the wallet every ~30s; tokens gone without a sell are booked `external`.
+- Shadow tracks (`shadow.ts`, edge research capture): every verdict in `decide` starts a 60-min
+  track of its token, `features` = the brief row exactly as sent (never rebuilt later: look-ahead).
+  Its own `getMultipleAccounts` read every 2s off `pools.resolvePool` / `poolReading`, not the
+  exit loop's watches (an unwatch would cut a held position's feed); SOL-quoted pump curve and
+  PumpSwap only, a completed curve follows GMGN's next pool. Runs started or stopped; a restart
+  ends open tracks as 'restart'. Every `saveConfig` also appends to `config_history`.
 - Dashboard: `server.ts` (`node:http`, login via `auth.ts` when `DASHBOARD_TOKEN` is set, else a
   Host allowlist against DNS rebinding; POSTs must be application/json) serves `public/` (vanilla
   JS, polls `GET /api/state` every 3s) and reads through `view.ts`, the only place dashboard numbers

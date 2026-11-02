@@ -5,6 +5,7 @@ import { openDb } from "./db.ts";
 import { exitIdle, exitTick, POLL_MS } from "./exit.ts";
 import { log, short } from "./log.ts";
 import { startServer } from "./server.ts";
+import { endRestarted, shadowTick, STEP_MS } from "./shadow.ts";
 import { openPositions, sampleEquity } from "./trade.ts";
 
 /**
@@ -26,6 +27,8 @@ if (problem) {
 const db = openDb();
 const cfg = loadConfig();
 bootStopped();
+const cut = endRestarted();
+if (cut) log("info", `${cut} shadow track(s) cut by the restart — left out of every count.`);
 const open = openPositions().length;
 log(
   "info",
@@ -38,6 +41,8 @@ const equity = () => sampleEquity(loadConfig()).catch((e) => log("warn", `Equity
 const timers = [
   setInterval(() => void (running() ? exitTick(loadConfig()) : exitIdle()), POLL_MS),
   setInterval(() => void equity(), 60_000),
+  // Shadow tracks run whether trading is started or not: a stop must not cut their 60 minutes.
+  setInterval(() => void shadowTick(), STEP_MS),
 ];
 void equity();
 startServer({ port: PORT, host: HOST, token: TOKEN });

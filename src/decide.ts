@@ -3,6 +3,7 @@ import { cleanPlan, type Config, type Rule } from "./config.ts";
 import { db, insert, tx } from "./db.ts";
 import { tools } from "./gmgn/tools.ts";
 import { log, short } from "./log.ts";
+import { track } from "./shadow.ts";
 import { briefRow } from "./snapshot.ts";
 
 /**
@@ -209,6 +210,14 @@ export async function decide(due: Due[], cfg: Config, freeSlots: number, sizeUsd
     }),
   );
   finish("ok", res.usage, res.messages);
+  const briefOf = new Map(due.map((d, i) => [d.token, brief[i]!]));
+  for (const v of saved) {
+    try {
+      track(v.decisionId, v.token, briefOf.get(v.token)!);
+    } catch (e) {
+      log("warn", `Shadow track for ${v.token.slice(0, 6)}… not started: ${short(e)}`); // never fails the run
+    }
+  }
   const count = (a: string) => saved.filter((v) => v.action === a).length;
   log("model", `Run #${runId}: ${count("buy")} buy · ${count("wait")} wait · ${count("skip")} skip`);
   return saved;

@@ -113,26 +113,43 @@ export const quoteMints = (): string[] => [...new Set([...watches.values()].filt
 
 export const socketUp = (): boolean => up;
 
+/** Where a pool keeps `mint`'s reserves, with their contents as just read at `slot`. */
+export type Resolved = { kind: "curve" | "amm"; quoteMint: string; decimals: number[]; accounts: string[]; slot: number; data: Buffer[] };
+
+/** Reads a pool once and finds its reserve accounts, or says why it is not read on-chain. Network errors throw. */
+export async function resolvePool(mint: string, pool: string): Promise<Resolved | string> {
+  const first = await accounts([pool]);
+  const acc = first.list[0];
+  const layout = acc && decodePool(acc.owner, acc.data);
+  if (!layout) return acc ? `pool owned by ${acc.owner.slice(0, 8)}…, not read on-chain` : "pool account not found";
+  if (layout.kind === "curve") {
+    const m = (await accounts([mint])).list[0];
+    if (!m) return "mint account not found";
+    return { kind: "curve", quoteMint: WSOL, decimals: [mintDecimals(m.data)], accounts: [pool], slot: first.slot, data: [acc!.data] };
+  }
+  const tokenIsBase = layout.baseMint === mint;
+  if (!tokenIsBase && layout.quoteMint !== mint) return "pool does not hold this token";
+  const other = tokenIsBase ? layout.quoteMint : layout.baseMint;
+  const vaults = tokenIsBase ? [layout.baseVault, layout.quoteVault] : [layout.quoteVault, layout.baseVault];
+  const r = await accounts([mint, other, ...vaults]);
+  if (r.list.some((a) => !a)) return "a pool account is missing";
+  const [m, q, ...v] = r.list.map((a) => a!.data);
+  return { kind: "amm", quoteMint: other, decimals: [mintDecimals(m!), mintDecimals(q!)], accounts: vaults, slot: r.slot, data: v };
+}
+
+/** Price (quote per token) and liquidity (the quote reserve) off one read of a pool's reserve accounts, all from one slot. */
+export function poolReading(r: Pick<Resolved, "kind" | "decimals">, data: Buffer[]): { price: number; liquidity: number } | "complete" | null {
+  if (r.kind === "curve") return curveReading(data[0]!, r.decimals[0]!);
+  const token = Number(tokenAmount(data[0]!)) / 10 ** r.decimals[0]!;
+  const quote = Number(tokenAmount(data[1]!)) / 10 ** r.decimals[1]!;
+  return token > 0 ? { price: quote / token, liquidity: quote } : null;
+}
+
 async function resolve(w: Watch): Promise<void> {
   try {
-    let first = await accounts([w.pool]);
-    const pool = first.list[0];
-    const layout = pool && decodePool(pool.owner, pool.data);
-    if (!layout) return off(w, pool ? `pool owned by ${pool.owner.slice(0, 8)}…, not read on-chain` : "pool account not found");
-    if (layout.kind === "curve") {
-      const mint = (await accounts([w.mint])).list[0];
-      if (!mint) return off(w, "mint account not found");
-      Object.assign(w, { kind: "curve", quoteMint: WSOL, decimals: [mintDecimals(mint.data)], accounts: [w.pool] });
-    } else {
-      const tokenIsBase = layout.baseMint === w.mint;
-      if (!tokenIsBase && layout.quoteMint !== w.mint) return off(w, "pool does not hold this token");
-      const other = tokenIsBase ? layout.quoteMint : layout.baseMint;
-      const vaults = tokenIsBase ? [layout.baseVault, layout.quoteVault] : [layout.quoteVault, layout.baseVault];
-      const r = await accounts([w.mint, other, ...vaults]);
-      if (r.list.some((a) => !a)) return off(w, "a pool account is missing");
-      Object.assign(w, { kind: "amm", quoteMint: other, decimals: [mintDecimals(r.list[0]!.data), mintDecimals(r.list[1]!.data)], accounts: vaults });
-      first = { slot: r.slot, list: r.list.slice(2) };
-    }
+    const r = await resolvePool(w.mint, w.pool);
+    if (typeof r === "string") return off(w, r);
+    Object.assign(w, { kind: r.kind, quoteMint: r.quoteMint, decimals: r.decimals, accounts: r.accounts });
     if (watches.get(w.mint) !== w) return; // unwatched or replaced meanwhile
     w.state = "live";
     w.seen = w.accounts.map(() => null);
@@ -140,7 +157,7 @@ async function resolve(w: Watch): Promise<void> {
       byAccount.set(acc, { w, i });
       subscribe(acc);
     });
-    first.list.forEach((a, i) => a && apply(w, i, a.data, first.slot));
+    r.data.forEach((d, i) => apply(w, i, d, r.slot));
   } catch (e) {
     off(w, `pool read failed: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200), true);
   }
@@ -190,7 +207,8 @@ function onAccount(acc: string, data: Buffer, slot: number): void {
   if (at) apply(at.w, at.i, data, slot);
 }
 
-async function accounts(keys: string[]): Promise<{ slot: number; list: ({ owner: string; data: Buffer } | null)[] }> {
+/** One `getMultipleAccounts` read (at most 100 keys); a missing account is null. */
+export async function accounts(keys: string[]): Promise<{ slot: number; list: ({ owner: string; data: Buffer } | null)[] }> {
   const r = await rpc("getMultipleAccounts", [keys, { encoding: "base64", commitment: COMMITMENT }]);
   const list = (r?.value ?? []).map((a: any) => (a?.data?.[0] !== undefined ? { owner: String(a.owner), data: Buffer.from(a.data[0], "base64") } : null));
   return { slot: Number(r?.context?.slot) || 0, list };

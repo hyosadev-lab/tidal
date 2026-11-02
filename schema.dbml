@@ -321,14 +321,14 @@ Table shadow_tracks {
   id integer [pk, increment]
   token text [not null, note: 'mint; no ref: rank and migration tracks may never have been snapshotted']
   source text [not null, note: 'decision | rank | migration — rank and migration are tracked, never bought']
-  decision_id integer [unique, ref: - decisions.id, note: 'set exactly when source is decision (a check): buy, wait and skip alike']
+  decision_id integer [unique, ref: - decisions.id, note: "set exactly when source is decision (a check): the agent's own buy, wait and skip alike. A risk-check skip after a buy shares that buy's track"]
   features text [not null, note: 'JSON: the brief row exactly as the agent got it (decision), or the feed row (rank, migration). Copied at the start, never rebuilt: briefRow reads tokens.migrated_at and token_signals, which are overwritten later']
   started_at integer [not null]
-  start_price_usd real [note: 'first price off the pool; every % below is against this']
+  start_price_usd real [note: "the first price off the pool, in USD at that moment's SOL price. Every % below is against that first price in SOL"]
   ended_at integer [note: 'null = still tracking; set together with end_reason (a check)']
-  end_reason text [note: "done (the full 60 min) | rug (the pool drained: a result, counted) | restart (the process stopped: the only reason left out of every count) | unreadable (a pool the feed cannot price: shown as coverage)"]
-  path text [note: 'JSON [[seconds since start, price_usd, liquidity_usd], …], a point every 2s off the pool reserves']
-  ret_1m real [note: '% vs start_price_usd at 1 min; null if cut short before it']
+  end_reason text [note: "done (the full 60 min) | rug (the quote reserve fell under 5% of its first reading: a result, counted, −100% from then) | restart (the process stopped: the only reason left out of every count) | unreadable (no pool on record, not a SOL-quoted pump curve or PumpSwap pool, or a completed curve whose next pool GMGN did not name: shown as coverage)"]
+  path text [note: "JSON [[pct, liquidity_sol] | null, …]: point i is i × 2s after started_at; pct vs the first price, liquidity the pool's SOL reserve (real reserves on a curve), 2 decimals; null where no read landed. ~25 KB a track"]
+  ret_1m real [note: '% at 1 min: the last point in the 30s before it; null with no such point (cut short, or a gap). −100 at and after a rug']
   ret_5m real
   ret_15m real
   ret_30m real
@@ -349,7 +349,8 @@ Table shadow_tracks {
     outcome of every candidate, bought or not: the scorecard, replays and hypotheses read this, never
     GMGN klines. ret_*, max_* and min_* are written once, when the window closes. Other feeds are
     sampled to fit the budget. These are prices, not fills: replays add the size impact off
-    liquidity_usd at the configured position size, then the measured friction, the PnL gap left
+    the SOL reserve at the configured sizeSol (a curve's virtual reserve is ~30 SOL above its
+    real one), then the measured friction, the PnL gap left
     when every real trade is replayed on its own decision track (positions.decision_id).
     Win/loss must agree on ≥ 90% of real trades before any replay is trusted. Counted 1 track per token.
   '''
