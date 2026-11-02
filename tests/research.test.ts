@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
-import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, register, seedTries, tries, validate, type Idea } from "../src/research.ts";
+import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, register, researchDue, RESEARCH_EVERY_MS, seedTries, tries, validate, type Idea } from "../src/research.ts";
 import { query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
@@ -219,4 +219,42 @@ test("proposed change: a prompt written from the conditions, and the exit fields
   insert("hypotheses", { id: 1, created_at: 1, author: "m", rule: "r", conditions: "[]", exit: JSON.stringify({ sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30 }), source: "rank", need_pct: 95, status: "passed", decided_at: 1 });
   insert("config_history", { at: 2, value: "{}" });
   assert.match(move(1, "paper")!, /does not brief rank or migration tokens/);
+});
+
+test("paper line: passed ideas take the one test in the order they passed, never on another test's version", () => {
+  openDb(":memory:");
+  const exit = JSON.stringify({ sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30, drain: 55, slots: 2, size_sol: 0.1 });
+  for (const [id, at] of [[1, 20], [2, 10]]) // #2 passed first
+    insert("hypotheses", { id, created_at: 1, author: "m", rule: "r", conditions: "[]", exit, need_pct: 95, status: "passed", decided_at: at, result: "{}" });
+  saveConfig({ ...loadConfig(), plan: [{ kind: "sl", at: -30, sell: 100 }, { kind: "tp", at: 15, sell: 100 }] }); // saved after both passed
+  const save = (db.prepare("select max(at) at from config_history").get() as { at: number }).at;
+
+  assert.match(move(1, "paper")!, /#2 passed first and goes on paper first: drop it to let #1 go ahead/);
+  assert.equal(move(2, "paper"), null);
+  assert.match(move(1, "paper")!, /#2 is on paper: one test at a time, #1 waits its turn/);
+  db.prepare("update hypotheses set status = 'live', result = '{}' where id = 2").run(); // its live stake, no verdict yet
+  assert.match(move(1, "paper")!, /#2 is on its live stake/);
+  assert.equal(move(2, "drop"), null);
+  assert.match(move(1, "paper")!, /the version #2 was tested on/); // its prompt, not #1's
+  insert("config_history", { at: save + 1, value: JSON.stringify(loadConfig()) }); // the operator saves #1's prompt
+  assert.equal(move(1, "paper"), null);
+});
+
+test("daily research: due a day after the last research run starts, button runs included, never without a model key", () => {
+  openDb(":memory:");
+  const key = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "k";
+  try {
+    const t0 = Date.UTC(2026, 10, 2, 8, 0);
+    assert.equal(researchDue(t0), true); // never ran
+    insert("agent_runs", { started_at: t0, model: "m", status: "ok", kind: "research" });
+    insert("agent_runs", { started_at: t0 + 3_600_000, model: "m", status: "ok" }); // a trading run does not count
+    assert.equal(researchDue(t0 + RESEARCH_EVERY_MS - 1), false);
+    assert.equal(researchDue(t0 + RESEARCH_EVERY_MS), true);
+    delete process.env.OPENROUTER_API_KEY;
+    assert.equal(researchDue(t0 + RESEARCH_EVERY_MS), false);
+  } finally {
+    if (key === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = key;
+  }
 });

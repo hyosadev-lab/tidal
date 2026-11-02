@@ -77,7 +77,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   it judge it; `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
   seeded random picks). `research-cli.ts` is the one door: `list | test | register | judge | agent`.
   The engine runs `judge` every 10 min (when an idea is testing, on paper, live or kept) and
-  `agent` from the Research page's button as child processes (`runCli`, killed on the engine's
+  `agent` once a day while running (`researchDue`, a day after the last research run started) and
+  from the Research page's button, as child processes (`runCli`, killed on the engine's
   exit): their SQLite reads are synchronous and must never hold up the exit loop. The page shows
   the last research run's closing message as its report (model-written: escaped).
   The research agent has `ledger_query` (one select on a read-only connection), `test_rule`
@@ -86,7 +87,9 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   Code: `.claude/skills/edge-research/SKILL.md`.
 - Proving an idea (phase 3, `research.move` via `POST /api/research/move`): every step is the
   operator's and nothing edits Settings. passed → paper (a decided-tokens idea, paper mode, Settings
-  saved after it passed holding its exit — `exitFields`; one at a time) → live (it held on paper; live mode, saved after that) → kept; cancel and
+  saved after it passed holding its exit — `exitFields`, never a version another idea was tested on —
+  `usedBy`; one test at a time, paper or a live stake before its verdict — `inTest`; passed ideas
+  take it in the order they passed — `paperLine`) → live (it held on paper; live mode, saved after that) → kept; cancel and
   drop/undrop. `judge` scores a paper or live test on the first 30 positions opened while the
   tested version was in force (a later save pauses it), on real fills, by the forward test's bar;
   it fades → dropped by code. It also logs agent vs. rule picks: buys go through the prompt, never

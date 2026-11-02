@@ -6,7 +6,7 @@ import { tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
-import { BAR_N, cliRunning, exitFields, friction, promptOf, tries } from "./research.ts";
+import { BAR_N, cliRunning, exitFields, friction, inTest, paperLine, promptOf, tries, usedBy } from "./research.ts";
 import { SAMPLE_MAX, tracking, type Source } from "./shadow.ts";
 import { lossDay, openPositions, paperCash } from "./trade.ts";
 
@@ -593,6 +593,9 @@ export function research(now: number, tz: string) {
     barN: BAR_N,
     friction: friction().pct,
     mode: loadConfig().mode,
+    // One test at a time: the idea in it, and the passed ideas waiting, in the order they passed.
+    inTest: inTest() ?? null,
+    line: paperLine(),
     // A passed idea carries its proposed change: the prompt, and the exit fields as Settings hold them now.
     hypotheses: tries(50).map((h) =>
       h.status !== "passed" ? h : {
@@ -601,6 +604,7 @@ export function research(now: number, tz: string) {
           prompt: promptOf(h.conditions),
           fields: exitFields(loadConfig(), h.exit),
           savedAfter: (marks.at(-1)?.at ?? 0) > (h.decided_at ?? 0),
+          usedBy: marks.length ? usedBy(marks.at(-1)!.at, h.id) : null,
           decision: h.source === "decision",
         },
       }),

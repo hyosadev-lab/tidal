@@ -772,7 +772,7 @@ function hypothesesList(r, sel) {
   return `<section class="card" style="flex:3 1 640px" aria-labelledby="hyp-title">
     <div class="head"><span class="ico">${SVG(R_ICON.list)}</span><div class="stack" style="flex:1 1 0"><h2 id="hyp-title">Hypotheses</h2>
       <span class="sub">${all.length} ${all.length === 1 ? "try" : "tries"} · each row is one try, kept forever · every rule and SL/TP variant counts, and each try raises the bar · judged only on tracks after it was registered</span>
-      <span class="sub">Own research agent · ${last} · ${ink(a.week.n)} runs in 7 days · ${ink(a.registered)} ${a.registered === 1 ? "try" : "tries"} registered · ${ink(a.week.failed)} errors · ${kn(a.week.tin + a.week.tout)} tokens</span></div>
+      <span class="sub">Own research agent, daily while running · ${last} · ${ink(a.week.n)} runs in 7 days · ${ink(a.registered)} ${a.registered === 1 ? "try" : "tries"} registered · ${ink(a.week.failed)} errors · ${kn(a.week.tin + a.week.tout)} tokens</span></div>
       <div class="tail"><button class="btn sm lime" data-a="researchRun" ${a.running ? "disabled" : ""}>${a.running ? "Researching…" : "Run research"}</button></div></div>
     ${agentReport(a)}
     <div class="seg light" role="group" aria-label="Filter by status" style="align-self:flex-start">${HYP_FILTERS.map(([k, l]) =>
@@ -826,6 +826,9 @@ function ideaStage(h, r) {
     const held = t.verdict === "holds";
     const ver = r.versions.find((v) => v.at === h[`${s}_config_at`])?.label;
     const a = t.agreement;
+    const line = r.line.length ? ` In line: ${r.line.map((id) => `#${id}`).join(", ")}.` : "";
+    const waits = s === "paper" ? `One paper test at a time: an idea that passes meanwhile waits its turn, in the order they passed.${line}`
+      : !held ? `Ideas that pass meanwhile wait until this stake has its verdict, in the order they passed.${line}` : "";
     return `<div class="stagebox ${s}">
       <span class="b">#${h.id} ${s === "paper" ? "testing on paper" : "live, small stake"}${ver ? ` · Settings ${esc(ver)}` : ""}</span>
       ${meter(Math.min(n, r.barN), r.barN, "", s === "paper" ? "Paper trades toward a verdict" : "Live trades toward a verdict")}
@@ -837,7 +840,7 @@ function ideaStage(h, r) {
       <span class="s13">${s === "paper"
         ? held ? "A small live stake is your call: switch Settings to live at a small size, save, then press Go live." : "If it holds, a small live stake comes next: 30 trades, with the fill gap against the paper quote measured. Switching it on, and full size, stay your call in Settings."
         : held ? "Held live. Keep it to leave it as the prompt; full size stays your call in Settings, and the decay watch then follows it." : "Full size, and keeping it, stay your call in Settings."}</span>
-      ${s === "paper" ? `<span class="small">One paper test at a time: an idea that passes meanwhile waits its turn, in the order they passed.</span>` : ""}
+      ${waits ? `<span class="small">${waits}</span>` : ""}
       <div class="inline" style="flex-wrap:wrap;gap:8px">${held ? mv(h, s === "paper" ? "live" : "keep", s === "paper" ? "Go live" : "Keep", "lime") : mv(h, "cancel", "Cancel test", "amberline")}${mv(h, "drop", "Drop", "stop")}</div>
     </div>`;
   }
@@ -854,11 +857,16 @@ function ideaStage(h, r) {
   const p = h.proposal;
   const cur = r.versions.find((v) => v.current);
   const fieldsOk = p.fields.every((f) => f.from === f.to);
-  const ready = p.decision && r.mode === "paper" && p.savedAfter && fieldsOk;
+  const pos = r.line.indexOf(h.id);
+  const place = `#${h.id} is ${pos + 1} of ${r.line.length} in line, in the order they passed.`;
+  const ready = p.decision && !r.inTest && pos === 0 && r.mode === "paper" && p.savedAfter && !p.usedBy && fieldsOk;
   const [dot, guard] = !p.decision
     ? ["amber", `This idea's tokens come from ${SOURCE[h.source]}, which the engine does not brief to the agent: it cannot be tested on paper yet.`]
+    : r.inTest ? ["amber", `#${r.inTest.id} is ${r.inTest.status === "paper" ? "on paper" : "on its live stake"}: one test at a time. ${place}`]
+    : pos > 0 ? ["amber", `#${r.line[0]} passed first and goes on paper first. ${place} Drop #${r.line[0]} to let this one go ahead.`]
     : r.mode !== "paper" ? ["amber", "Settings are in live mode. Switch them to paper, paste the prompt, set the exit fields above and save them together first."]
     : !p.savedAfter ? ["amber", `Settings still hold ${cur?.label ?? "an older version"}${cur ? ` from ${when(cur.at)}` : ""}, older than this result. Paste the prompt, set the exit fields above and save them together first.`]
+    : p.usedBy ? ["amber", `Settings ${cur?.label ?? ""} are the version #${p.usedBy} was tested on. Paste this prompt, set the exit fields above and save them together first.`]
     : !fieldsOk ? ["amber", `Settings ${cur.label} were saved after #${h.id} passed, but the exit fields above still differ: set them and save again.`]
     : ["lime", `Saved in Settings as ${cur.label}, ${when(cur.at)}, after #${h.id} passed: the prompt and the exit fields together.`];
   return `<div class="stack" style="gap:12px"><span class="small dim">Proposed change · never applied by itself · you make it in Settings and save both parts together</span>

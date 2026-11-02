@@ -5,7 +5,7 @@ import { openDb } from "./db.ts";
 import { exitIdle, exitTick, POLL_MS } from "./exit.ts";
 import { log, short } from "./log.ts";
 import { startServer } from "./server.ts";
-import { judgeDue, runCli, seedTries, stopCli } from "./research.ts";
+import { judgeDue, researchDue, runCli, seedTries, stopCli } from "./research.ts";
 import { endRestarted, sampleMigrations, shadowTick, STEP_MS } from "./shadow.ts";
 import { openPositions, sampleEquity } from "./trade.ts";
 
@@ -49,6 +49,8 @@ const timers = [
   // GMGN budget, which the same key may be spending on another host.
   setInterval(() => void (running() ? sampleMigrations() : undefined), 60_000),
   setInterval(() => void (judgeDue() && runCli("judge", 5 * 60_000)), 10 * 60_000), // in a child process
+  // The research agent once a day, while running only: a stopped process spends no model budget.
+  setInterval(() => void (running() && researchDue() && runCli("agent", 15 * 60_000)), 10 * 60_000),
 ];
 void equity();
 startServer({ port: PORT, host: HOST, token: TOKEN });

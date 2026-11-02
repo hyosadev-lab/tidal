@@ -331,10 +331,26 @@ const resultOf = (h: Full): Record<string, any> => (h.result ? JSON.parse(h.resu
 const lastSave = () => (db.prepare("select max(at) at from config_history").get() as { at: number | null }).at;
 const nextSave = (at: number) => (db.prepare("select min(at) at from config_history where at > ?").get(at) as { at: number | null }).at;
 
+/** The idea whose paper test, or live stake before its verdict, is running: Settings hold its version, so the rest wait. */
+export const inTest = (except = 0) =>
+  db
+    .prepare(
+      `select id, status from hypotheses where id != ?
+       and (status = 'paper' or (status = 'live' and json_extract(result, '$.live.verdict') is null)) order by id limit 1`,
+    )
+    .get(except) as { id: number; status: "paper" | "live" } | undefined;
+/** Passed ideas on decided tokens, in the order they passed: the line for the one paper test. */
+export const paperLine = (): number[] =>
+  (db.prepare("select id from hypotheses where status = 'passed' and source = 'decision' order by decided_at, id").all() as { id: number }[]).map((r) => r.id);
+/** Another idea whose paper or live test ran on the Settings version saved at `at`: then that version is not this idea's. */
+export const usedBy = (at: number, id: number): number | null =>
+  (db.prepare("select id from hypotheses where id != ? and ? in (paper_config_at, live_config_at)").get(id, at) as { id: number } | undefined)?.id ?? null;
+
 /**
  * The operator's move on an idea, checked against where it stands; an error, or null. Nothing
  * here edits Settings: a test runs on the version the operator saved, from when they press it.
- *   passed → paper (paper mode, saved after it passed; one paper test at a time)
+ *   passed → paper (paper mode, saved after it passed, a version no other test ran on; one test
+ *     at a time, and passed ideas take their turn in the order they passed)
  *   paper → live (it held on paper; live mode, saved after that; one at a time)
  *   live → kept (it held on live fills) · paper or live → cancel (back one step)
  *   any → drop · a drop made here → undrop
@@ -361,13 +377,17 @@ export function move(id: number, to: Move, now = Date.now()): string | null {
   }
   if (to === "paper") {
     if (h.status !== "passed") return "only an idea that passed goes to paper";
-    if (mode !== "paper") return "switch Settings to paper mode first";
     if (h.source !== "decision") return "only an idea on decided tokens goes on paper: the engine does not brief rank or migration tokens to the agent";
+    const other = inTest(id);
+    if (other) return `#${other.id} is ${other.status === "paper" ? "on paper" : "on its live stake"}: one test at a time, #${id} waits its turn`;
+    const head = paperLine()[0];
+    if (head !== id) return `#${head} passed first and goes on paper first: drop it to let #${id} go ahead`;
+    if (mode !== "paper") return "switch Settings to paper mode first";
     if (save <= (h.decided_at ?? 0)) return "save the rule and its exit in Settings first: the test runs on that version";
+    const used = usedBy(save, id);
+    if (used) return `Settings still hold the version #${used} was tested on: save #${id}'s prompt and exits first`;
     const off = exitFields(cfg, JSON.parse(h.exit)).filter((f) => f.from !== f.to);
     if (off.length) return `set the exit fields in Settings first: ${off.map((f) => f.label.toLowerCase()).join(", ")}`;
-    const other = busy("paper");
-    if (other) return `#${other} is on paper: one paper test at a time`;
     return set("paper", { paper_config_at: save }, { ...r, paper: { n: 0 } });
   }
   if (to === "live") {
@@ -380,8 +400,9 @@ export function move(id: number, to: Move, now = Date.now()): string | null {
   }
   if (to === "keep") return h.status === "live" && r["live"]?.verdict === "holds" ? set("kept") : "only an idea that held on live fills is kept";
   if (to === "cancel") {
-    if (h.status === "paper") return set("passed", { paper_config_at: null }, { ...r, paper: undefined });
-    if (h.status === "live" && !r["live"]?.verdict) return set("paper", { live_config_at: null }, { ...r, live: undefined });
+    // The version stays marked as this idea's test, so no other idea is tested on it.
+    if (h.status === "paper") return set("passed", {}, { ...r, paper: undefined });
+    if (h.status === "live" && !r["live"]?.verdict) return set("paper", {}, { ...r, live: undefined });
     return "only a running paper or live test can be cancelled";
   }
   return "unknown move";
@@ -454,7 +475,8 @@ function prove(h: Full, mode: "paper" | "live", fr: { pct: number | null }, now:
   const result = { ...r, [mode]: { ...base, ...st, friction_pct: null, rnd_pct: rnd, draws, pool_n: pool.length, verdict } };
   if (verdict === "fades") {
     db.prepare("update hypotheses set status = 'dropped', decided_at = ?, result = ? where id = ?").run(now, JSON.stringify({ ...result, dropped_from: mode, dropped_by: "code" }), h.id);
-    log("warn", `Research: #${h.id} faded on ${mode} fills (${st.avg_pct!.toFixed(1)}% a trade over ${BAR_N}) — dropped.`);
+    const next = paperLine()[0];
+    log("warn", `Research: #${h.id} faded on ${mode} fills (${st.avg_pct!.toFixed(1)}% a trade over ${BAR_N}) — dropped.${next ? ` #${next} is next in line for paper.` : ""}`);
   } else {
     db.prepare("update hypotheses set result = ? where id = ?").run(JSON.stringify(result), h.id);
     log("info", `Research: #${h.id} held on ${mode} fills (${st.avg_pct!.toFixed(1)}% a trade over ${BAR_N})${mode === "paper" ? " — a small live stake is your call." : " — keeping it is your call."}`);
@@ -563,6 +585,7 @@ const children = new Map<string, ChildProcess>();
  */
 export function runCli(cmd: "judge" | "agent", maxMs: number): boolean {
   if (children.has(cmd)) return false;
+  if (cmd === "agent") agentStartedAt = Date.now();
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", CLI, cmd], { stdio: ["ignore", "ignore", "pipe"], env: process.env });
   children.set(cmd, child);
   let err = "";
@@ -586,3 +609,15 @@ export function stopCli(): void {
 
 /** Whether `judge` has anything to do: an idea testing, on paper, live or kept. */
 export const judgeDue = (): boolean => !!db.prepare("select 1 from hypotheses where status in ('testing', 'paper', 'live', 'kept') limit 1").get();
+
+/** The research agent runs on its own this often; the Research page's button runs it any time. */
+export const RESEARCH_EVERY_MS = 86_400_000;
+/** When this process last started an agent run: a run that dies before its agent_runs row must not be retried every check. */
+let agentStartedAt = 0;
+
+/** Whether the daily research run is due: a day since the last one started (the button's included), and a model key to run it. */
+export function researchDue(now = Date.now()): boolean {
+  if (!process.env.OPENROUTER_API_KEY) return false;
+  const last = (db.prepare("select max(started_at) at from agent_runs where kind = 'research'").get() as { at: number | null }).at ?? 0;
+  return Math.max(last, agentStartedAt) <= now - RESEARCH_EVERY_MS;
+}
