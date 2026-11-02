@@ -70,6 +70,7 @@ test("layouts: a PumpSwap pool names its vaults, a curve prices off virtual rese
   // 1,000,000 tokens (6 decimals) against 30 virtual SOL: 0.00003 SOL each; 5 real SOL is the liquidity.
   assert.deepEqual(pools.curveReading(curve(1_000_000_000_000n, 30_000_000_000n, 5_000_000_000n), 6), { price: 0.00003, liquidity: 5 });
   assert.equal(pools.curveReading(curve(1n, 1n, 1n, true), 6), "complete");
+  assert.equal(pools.curveQuote(curve(1n, 1n, 1n)), WSOL); // an empty quote field: a SOL launch
 });
 
 test("PumpSwap: priced on first read, then only when both vaults agree on a slot", async () => {
@@ -139,6 +140,24 @@ test("a curve that completes is off, and so is a pool no one can read", async ()
   await pools.watch(MINT, key(9));
   assert.match(pools.offReason(MINT) ?? "", /pool account not found/);
 
+  for (const m of pools.watching()) pools.unwatch(m);
+  pools.tick();
+});
+
+test("a curve quoted in another token is priced in that token, with its decimals", async () => {
+  const [QUOTE, QCURVE, QMINT] = [key(11), key(12), key(13)];
+  const d = curve(1_000_000_000_000n, 30_000_000n, 5_000_000n); // 30 and 5 of a 6-decimal quote
+  b58decode(QUOTE).copy(d, 83);
+  chain.set(QCURVE, { owner: pools.PUMP_CURVE, data: d });
+  chain.set(QMINT, { owner: "token", data: mint(6) });
+  chain.set(QUOTE, { owner: "token", data: mint(6) });
+  const r = await pools.resolvePool(QMINT, QCURVE);
+  assert.ok(typeof r !== "string");
+  assert.deepEqual([r.quoteMint, r.decimals], [QUOTE, [6, 6]]);
+  assert.deepEqual(pools.poolReading(r, r.data), { price: 0.00003, liquidity: 5 });
+
+  await pools.watch(QMINT, QCURVE); // the exit loop's feed: priced in QUOTE, turned into USD by the caller
+  assert.deepEqual([pools.reading(QMINT)?.price, pools.reading(QMINT)?.quoteMint], [0.00003, QUOTE]);
   for (const m of pools.watching()) pools.unwatch(m);
   pools.tick();
 });

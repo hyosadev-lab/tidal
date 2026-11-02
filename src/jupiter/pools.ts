@@ -39,12 +39,21 @@ export function decodePool(owner: string, d: Buffer): PoolLayout | null {
   return { kind: "amm", baseMint: key(43), quoteMint: key(75), baseVault: key(139), quoteVault: key(171) };
 }
 
-/** A bonding curve's price (SOL per token) and liquidity (real SOL), or "complete" once it has migrated. */
-export function curveReading(d: Buffer, decimals: number): { price: number; liquidity: number } | "complete" | null {
+/**
+ * A bonding curve's price (quote per token) and liquidity (real quote reserve), or "complete" once
+ * it has migrated. The reserves are named SOL in pump's layout but are in the curve's quote token.
+ */
+export function curveReading(d: Buffer, decimals: number, quoteDecimals = 9): { price: number; liquidity: number } | "complete" | null {
   if (d[48]) return "complete";
   const tokens = Number(d.readBigUInt64LE(8)) / 10 ** decimals; // virtual token reserves
-  const sol = Number(d.readBigUInt64LE(16)) / 1e9; // virtual SOL reserves
-  return tokens > 0 ? { price: sol / tokens, liquidity: Number(d.readBigUInt64LE(32)) / 1e9 } : null;
+  const quote = Number(d.readBigUInt64LE(16)) / 10 ** quoteDecimals; // virtual quote reserves
+  return tokens > 0 ? { price: quote / tokens, liquidity: Number(d.readBigUInt64LE(32)) / 10 ** quoteDecimals } : null;
+}
+
+/** A curve's quote mint: SOL when the field is empty (every SOL launch), else the mint written at byte 83. */
+export function curveQuote(d: Buffer): string {
+  const at = d.subarray(83, 115);
+  return at.length < 32 || at.every((b) => b === 0) ? WSOL : b58encode(at);
 }
 
 /** An SPL token account's raw amount — the same offset in Token and Token-2022. */
@@ -65,7 +74,7 @@ type Watch = {
   retryAt: number;
   kind: "curve" | "amm";
   quoteMint: string;
-  decimals: number[]; // curve: [token]; amm: [token, quote]
+  decimals: number[]; // [token, quote]
   accounts: string[]; // curve: [pool]; amm: [token vault, quote vault]
   seen: ({ amount: number; slot: number } | null)[];
   reading: Reading | null;
@@ -123,9 +132,12 @@ export async function resolvePool(mint: string, pool: string): Promise<Resolved 
   const layout = acc && decodePool(acc.owner, acc.data);
   if (!layout) return acc ? `pool owned by ${acc.owner.slice(0, 8)}…, not read on-chain` : "pool account not found";
   if (layout.kind === "curve") {
-    const m = (await accounts([mint])).list[0];
+    const quoteMint = curveQuote(acc!.data);
+    const [m, q] = (await accounts(quoteMint === WSOL ? [mint] : [mint, quoteMint])).list;
     if (!m) return "mint account not found";
-    return { kind: "curve", quoteMint: WSOL, decimals: [mintDecimals(m.data)], accounts: [pool], slot: first.slot, data: [acc!.data] };
+    if (quoteMint !== WSOL && !q) return "quote mint account not found";
+    const decimals = [mintDecimals(m.data), q ? mintDecimals(q.data) : 9];
+    return { kind: "curve", quoteMint, decimals, accounts: [pool], slot: first.slot, data: [acc!.data] };
   }
   const tokenIsBase = layout.baseMint === mint;
   if (!tokenIsBase && layout.quoteMint !== mint) return "pool does not hold this token";
@@ -139,7 +151,7 @@ export async function resolvePool(mint: string, pool: string): Promise<Resolved 
 
 /** Price (quote per token) and liquidity (the quote reserve) off one read of a pool's reserve accounts, all from one slot. */
 export function poolReading(r: Pick<Resolved, "kind" | "decimals">, data: Buffer[]): { price: number; liquidity: number } | "complete" | null {
-  if (r.kind === "curve") return curveReading(data[0]!, r.decimals[0]!);
+  if (r.kind === "curve") return curveReading(data[0]!, r.decimals[0]!, r.decimals[1]);
   const token = Number(tokenAmount(data[0]!)) / 10 ** r.decimals[0]!;
   const quote = Number(tokenAmount(data[1]!)) / 10 ** r.decimals[1]!;
   return token > 0 ? { price: quote / token, liquidity: quote } : null;
@@ -185,7 +197,7 @@ function unindex(w: Watch): void {
 function apply(w: Watch, i: number, data: Buffer, slot: number): void {
   if (w.state !== "live" || (w.seen[i]?.slot ?? -1) > slot) return;
   if (w.kind === "curve") {
-    const r = curveReading(data, w.decimals[0]!);
+    const r = curveReading(data, w.decimals[0]!, w.decimals[1]);
     if (r === "complete") return off(w, "curve complete");
     w.seen[i] = { amount: 0, slot };
     if (r) commit(w, r.price, r.liquidity, slot);
