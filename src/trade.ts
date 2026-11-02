@@ -171,6 +171,7 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
   let signature: string | null = null;
   let wallet: string | null = null;
   let friction: number | null = null; // what the buy paid over the market price; the sell pays about as much again
+  let quotedTokens = 0; // live: the tokens /order quoted for the same SOL, before signing
   if (cfg.mode === "paper") {
     const q = await jup.quote({ inputMint: jup.WSOL, outputMint: token, amount: lamports, slippagePct: cfg.slippagePct });
     if ("error" in q) return q.error;
@@ -185,6 +186,7 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
     qtyRaw = fill.outAmount;
     costUsd = (Number(fill.inAmount) / 1e9) * solPrice;
     signature = fill.signature;
+    quotedTokens = Number(fill.quotedOut) / 10 ** decimals;
   }
   const qty = Number(qtyRaw) / 10 ** decimals;
   if (!(qty > 0) || !/^\d+$/.test(qtyRaw)) return `swap returned no output (${qtyRaw})`;
@@ -222,6 +224,7 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
         usd: costUsd,
         reason: "entry",
         tx_signature: signature,
+        quote_price_usd: quotedTokens > 0 ? costUsd / quotedTokens : null,
       });
       o.plan.forEach((r, seq) => insert("exit_rules", { position_id: positionId, seq, kind: r.kind, at_pct: r.at, sell_pct: r.sell }));
     });
@@ -283,6 +286,7 @@ async function sellNow(p: Position, pct: number, reason: SellReason, ruleIds: nu
   let soldRaw = want;
   let usd: number;
   let signature: string | null = null;
+  let quoteUsd: number | null = null; // live: what /order quoted for the same tokens, before signing
   if (p.mode === "paper") {
     const q = await jup.quote({ inputMint: p.token, outputMint: jup.WSOL, amount: want.toString(), slippagePct: 0 });
     if ("error" in q) return q.error;
@@ -295,10 +299,12 @@ async function sellNow(p: Position, pct: number, reason: SellReason, ruleIds: nu
     // Slippage 0 = Jupiter picks the tolerance: on an exit, a stop that refuses to fill costs more than slippage.
     const fill = await jup.swap({ inputMint: p.token, outputMint: jup.WSOL, amount: soldRaw.toString(), slippagePct: 0 });
     if ("error" in fill) return fill.error;
-    usd = (Number(fill.outAmount) / 1e9) * (await solUsd());
+    const sol = await solUsd();
+    usd = (Number(fill.outAmount) / 1e9) * sol;
     signature = fill.signature;
+    if (Number(fill.quotedOut) > 0) quoteUsd = (Number(fill.quotedOut) / 1e9) * sol;
   }
-  recordSell(p, soldRaw, usd, reason, ruleIds, signature);
+  recordSell(p, soldRaw, usd, reason, ruleIds, signature, quoteUsd);
   return null;
 }
 
@@ -310,6 +316,7 @@ function recordSell(
   reason: SellReason | "external",
   ruleIds: number[],
   signature: string | null,
+  quoteUsd: number | null = null,
 ): void {
   const original = BigInt(p.original_qty);
   const left = BigInt(p.qty) - soldRaw;
@@ -329,6 +336,7 @@ function recordSell(
       pnl_usd: pnl,
       reason,
       tx_signature: signature,
+      quote_price_usd: quoteUsd === null ? null : quoteUsd / (Number(soldRaw) / 10 ** p.decimals),
     });
     db.prepare("update positions set qty = ? where id = ?").run((left < 0n ? 0n : left).toString(), p.id);
     for (const id of ruleIds) db.prepare("update exit_rules set filled_at = ? where id = ?").run(now, id);

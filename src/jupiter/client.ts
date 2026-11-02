@@ -145,7 +145,8 @@ async function http(url: string, o: { body?: string } = {}): Promise<Record<stri
 }
 
 /** Smallest-unit amounts as the wallet saw them: `inAmount` left it, `outAmount` arrived. */
-export type SwapFill = { signature: string; inAmount: string; outAmount: string } | { error: string };
+/** `quotedOut`: what /order said the swap would bring, before it was signed; against `outAmount` it is the fill gap. */
+export type SwapFill = { signature: string; inAmount: string; outAmount: string; quotedOut: string } | { error: string };
 
 /**
  * Submits a real, irreversible on-chain swap from the `SOLANA_PRIVATE_KEY` wallet.
@@ -155,6 +156,7 @@ export type SwapFill = { signature: string; inAmount: string; outAmount: string 
  */
 export async function swap(a: { inputMint: string; outputMint: string; amount: string; slippagePct: number }): Promise<SwapFill> {
   let body: string;
+  let quotedOut = "";
   try {
     const w = wallet();
     const q = new URLSearchParams({ inputMint: a.inputMint, outputMint: a.outputMint, amount: a.amount, taker: w.address });
@@ -163,6 +165,7 @@ export async function swap(a: { inputMint: string; outputMint: string; amount: s
     // An empty transaction is a quote Jupiter could price but not build — no funds, no gas, no route.
     if (!order["transaction"])
       return { error: `jupiter built no transaction: ${order["errorMessage"] ?? order["error"] ?? "no reason given"}` };
+    quotedOut = String(order["outAmount"] ?? "");
     body = JSON.stringify({ signedTransaction: signTransaction(order["transaction"], w), requestId: order["requestId"] });
   } catch (e) {
     return { error: short(e) };
@@ -180,6 +183,7 @@ export async function swap(a: { inputMint: string; outputMint: string; amount: s
         signature: String(r["signature"] ?? ""),
         inAmount: String(r["totalInputAmount"] ?? r["inputAmountResult"] ?? "0"),
         outAmount: String(r["totalOutputAmount"] ?? r["outputAmountResult"] ?? "0"),
+        quotedOut,
       };
     } catch (e) {
       if (i >= 2) return { error: `jupiter execute outcome unknown — check the wallet: ${short(e)}` };
