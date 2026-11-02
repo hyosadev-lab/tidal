@@ -368,7 +368,7 @@ Table config_history {
 Table hypotheses {
   id integer [pk, increment]
   created_at integer [not null, note: 'registered: only tracks that start after this are judged, so the holdout is the future']
-  author text [not null, note: "'claude-code', or the research agent's model"]
+  author text [not null, note: "'claude-code', the research agent's model, or 'seed' (rounds tried before this table)"]
   parent_id integer [ref: > hypotheses.id, note: 'a variant of this earlier one']
   rule text [not null, note: 'in words, as it would go into the operator prompt']
   conditions text [not null, note: 'JSON [{path, op, value}] over shadow_tracks.features (brief fields only, never tool results): the same rule as checks code runs. Never SQL from a model. During paper, code runs them on every decision and logs where the agent and the rule differ']

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
-import { adverseGap, beats, drawsFor, judge, matches, move, register, seedTries, tries, validate, type Idea } from "../src/research.ts";
+import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, register, seedTries, tries, validate, type Idea } from "../src/research.ts";
 import { query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
@@ -60,6 +60,7 @@ test("seeds: rounds 1–3 and the ATH check are failed tries 1–4, once; the ne
   const t = tries();
   assert.deepEqual(t.map((x) => [x.id, x.status]), [[4, "failed"], [3, "failed"], [2, "failed"], [1, "failed"]]);
   assert.equal(t.find((x) => x.id === 3)!.parent_id, 2);
+  assert.ok(t.every((x) => x.author === "seed"));
   const r = register(validate(idea()) as Idea, "claude-code");
   assert.deepEqual([r.id, r.need_pct], [5, 99]);
 });
@@ -144,10 +145,15 @@ test("paper, then live: each step the operator's, each judged at 30 trades on it
 
   assert.match(move(h, "paper", t0 + 86_400_000)!, /save the rule/);
   db.prepare("delete from config_history").run();
-  insert("config_history", { at: t0 + 86_400_000 + 1, value: JSON.stringify(cfg) }); // the operator saves the rule in
+  insert("config_history", { at: t0 + 86_400_000 + 1, value: JSON.stringify(cfg) }); // saved, but with the old exit
+  assert.match(move(h, "paper")!, /set the exit fields in Settings first: fixed plan/);
+  const fit = { ...cfg, plan: [{ kind: "sl" as const, at: -30, sell: 100 }, { kind: "tp" as const, at: 15, sell: 100 }] };
+  saveConfig(fit); // the operator sets the idea's exit and saves
+  db.prepare("delete from config_history").run();
+  insert("config_history", { at: t0 + 86_400_000 + 2, value: JSON.stringify(fit) }); // on the test's clock
   assert.equal(move(h, "live"), "only an idea that held on paper goes live");
   assert.equal(move(h, "paper"), null);
-  const paperAt = t0 + 86_400_000 + 1;
+  const paperAt = t0 + 86_400_000 + 2;
   // 30 paper trades on the agent's buys (all the rule's too), 2 rule matches the agent skipped, 50 losers it skipped.
   for (let i = 0; i < 30; i++) decided(paperAt + 60_000 + i * 1_800_000, { good: true, symbol: `B${i}` }, UP, { pnl: 5, reason: "tp" });
   for (let i = 0; i < 2; i++) decided(paperAt + 90_000 + i * 1_800_000, { good: true, symbol: `S${i}` }, UP);
@@ -159,9 +165,9 @@ test("paper, then live: each step the operator's, each judged at 30 trades on it
   assert.equal(tries()[0]!.status, "paper");
 
   assert.match(move(h, "live")!, /live mode/);
-  saveConfig({ ...cfg, mode: "live" }); // the operator switches to live, at a small size
+  saveConfig({ ...fit, mode: "live" }); // the operator switches to live, at a small size
   const liveAt = paperAt + 3 * 86_400_000 + 1;
-  insert("config_history", { at: liveAt, value: JSON.stringify({ ...cfg, mode: "live" }) }); // on the test's clock
+  insert("config_history", { at: liveAt, value: JSON.stringify({ ...fit, mode: "live" }) }); // on the test's clock
   assert.equal(move(h, "live"), null);
   for (let i = 0; i < 30; i++) decided(liveAt + 60_000 + i * 1_800_000, { good: true }, DOWN, { pnl: -4, reason: "sl", mode: "live" });
   judge(liveAt + 3 * 86_400_000);
@@ -187,4 +193,30 @@ test("decay watch: a kept idea whose last 30 live trades lose is flagged once, S
   judge(t0 + 2 * 86_400_000);
   assert.equal((db.prepare("select decay_at from hypotheses where id = 1").get() as { decay_at: number }).decay_at, t0 + 86_400_000);
   assert.equal(loadConfig().mode, cfg.mode);
+});
+
+test("proposed change: a prompt written from the conditions, and the exit fields Settings must hold", () => {
+  assert.equal(
+    promptOf([
+      { path: "migrated", op: "=", value: true },
+      { path: "total_fee", op: ">=", value: 3 },
+      { path: "flow.5m.buys", op: ">=", value: { path: "flow.5m.sells", times: 1.5 } },
+      { path: "age_minutes", op: "<", value: 30 },
+    ]),
+    "Buy only when all of these hold:\n- migrated is true\n- total_fee is 3 or more\n- flow.5m.buys is at least 1.5 times flow.5m.sells\n- age_minutes is below 30\nSkip everything else.",
+  );
+  openDb(":memory:");
+  const cfg = loadConfig();
+  assert.deepEqual(
+    exitFields({ ...cfg, exitMode: "agent" }, { sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 20 }).map((f) => [f.label, f.from, f.to]),
+    [
+      ["Who sets take profit and stop loss", "Agent decides", "Fixed plan"],
+      ["Fixed plan", "SL −25% · TP +60% / +150% / +400% selling 40% / 30% / 30%", "SL −30% · one TP +15% selling 100%"],
+      ["Time stop", "30 min", "20 min"],
+    ],
+  );
+  // An idea on rank tokens passed, Settings saved after: still no paper test, the agent never sees those tokens.
+  insert("hypotheses", { id: 1, created_at: 1, author: "m", rule: "r", conditions: "[]", exit: JSON.stringify({ sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30 }), source: "rank", need_pct: 95, status: "passed", decided_at: 1 });
+  insert("config_history", { at: 2, value: "{}" });
+  assert.match(move(1, "paper")!, /does not brief rank or migration tokens/);
 });

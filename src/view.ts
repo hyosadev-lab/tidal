@@ -1,12 +1,12 @@
 import type { Message } from "./agent/llm.ts";
-import type { Config } from "./config.ts";
+import { loadConfig, type Config } from "./config.ts";
 import { getRun, status } from "./control.ts";
 import { db } from "./db.ts";
 import { tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
-import { BAR_N, cliRunning, tries } from "./research.ts";
+import { BAR_N, cliRunning, exitFields, friction, promptOf, tries } from "./research.ts";
 import { SAMPLE_MAX, tracking, type Source } from "./shadow.ts";
 import { lossDay, openPositions, paperCash } from "./trade.ts";
 
@@ -545,7 +545,7 @@ export function research(now: number, tz: string) {
   };
   const stat = (xs: typeof rows) => ({ avg: mean(xs.map((x) => x.r)), n: xs.length });
   const decided = first((r) => r.source === "decision");
-  const bands: [number, number, string][] = [[80, 101, "80+"], [70, 80, "70–79"], [60, 70, "60–69"], [0, 60, "under 60"]];
+  const bands: [number, number, string][] = [[80, 101, "80+"], [70, 80, "70–79"], [60, 70, "60–69"], [0, 60, "<60"]];
 
   const ends = all<{ source: Source; end_reason: string | null; n: number }>(
     "select source, end_reason, count(*) n from shadow_tracks where started_at >= ? group by 1, 2",
@@ -591,7 +591,19 @@ export function research(now: number, tz: string) {
     calibration: calibration(),
     versions: versions.slice(0, 12),
     barN: BAR_N,
-    hypotheses: tries(50),
+    friction: friction().pct,
+    mode: loadConfig().mode,
+    // A passed idea carries its proposed change: the prompt, and the exit fields as Settings hold them now.
+    hypotheses: tries(50).map((h) =>
+      h.status !== "passed" ? h : {
+        ...h,
+        proposal: {
+          prompt: promptOf(h.conditions),
+          fields: exitFields(loadConfig(), h.exit),
+          savedAfter: (marks.at(-1)?.at ?? 0) > (h.decided_at ?? 0),
+          decision: h.source === "decision",
+        },
+      }),
     agent: {
       running: cliRunning("agent"),
       last: lastResearch(),
@@ -600,7 +612,7 @@ export function research(now: number, tz: string) {
          from agent_runs where kind = 'research' and started_at >= ?`,
         now - 7 * DAY,
       ),
-      registered: one<{ n: number }>("select count(*) n from hypotheses where author != 'claude-code' and created_at >= ?", now - 7 * DAY)!.n,
+      registered: one<{ n: number }>("select count(*) n from hypotheses where author not in ('claude-code', 'seed') and created_at >= ?", now - 7 * DAY)!.n,
     },
   };
 }

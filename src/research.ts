@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.ts";
+import { loadConfig, type Config, type Rule } from "./config.ts";
 import { db, insert, tx } from "./db.ts";
 import { log, short } from "./log.ts";
 import { calibration, replayTrade, type ExitPlan } from "./replay.ts";
@@ -283,6 +283,42 @@ export function judge(now = Date.now()): { id: number; status: string }[] {
   return done;
 }
 
+// ── the proposed change ───────────────────────────────────────────────
+
+const WORDS: Record<Op, [string, string]> = { // [against a number, against another field]
+  "<": ["below", "below"], "<=": ["or less", "at most"], ">": ["above", "above"], ">=": ["or more", "at least"], "=": ["", "equal to"], "!=": ["not", "not equal to"],
+};
+
+/** The operator prompt an idea asks for, written from its conditions: what goes into Settings. Pure. */
+export function promptOf(conds: Cond[]): string {
+  const say = (c: Cond) => {
+    if (typeof c.value === "object") return `${c.path} is ${WORDS[c.op][1]} ${c.value.times === 1 ? "" : `${c.value.times} times `}${c.value.path}`;
+    const v = String(c.value);
+    return c.op === "<" || c.op === ">" ? `${c.path} is ${WORDS[c.op][0]} ${v}` : c.op === "=" ? `${c.path} is ${v}` : c.op === "!=" ? `${c.path} is not ${v}` : `${c.path} is ${v} ${WORDS[c.op][0]}`;
+  };
+  return ["Buy only when all of these hold:", ...conds.map((c) => `- ${say(c)}`), "Skip everything else."].join("\n");
+}
+
+const signed = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v)}%`;
+/** An exit plan in words, rules in a fixed order, so two equal plans read the same. */
+function planText(rules: Pick<Rule, "kind" | "at" | "sell">[]): string {
+  const part = (kind: "sl" | "tp", rs: typeof rules) =>
+    !rs.length ? `no ${kind.toUpperCase()}` : rs.length === 1
+      ? `${kind === "tp" ? "one TP" : "SL"} ${signed(rs[0]!.at)}${kind === "tp" ? ` selling ${rs[0]!.sell}%` : ""}`
+      : `${kind.toUpperCase()} ${rs.map((r) => signed(r.at)).join(" / ")} selling ${rs.map((r) => `${r.sell}%`).join(" / ")}`;
+  return `${part("sl", rules.filter((r) => r.kind === "sl").sort((a, b) => b.at - a.at))} · ${part("tp", rules.filter((r) => r.kind === "tp").sort((a, b) => a.at - b.at))}`;
+}
+
+/** The exit fields Settings must hold for an idea's test to run its exit: each as it is now and as the idea needs it. */
+export function exitFields(cfg: Config, s: Exit): { label: string; from: string; to: string }[] {
+  const want = [{ kind: "sl" as const, at: s.sl, sell: 100 }, ...s.tp.map((t) => ({ kind: "tp" as const, at: t.at, sell: t.sell }))];
+  return [
+    { label: "Who sets take profit and stop loss", from: cfg.exitMode === "agent" ? "Agent decides" : "Fixed plan", to: "Fixed plan" },
+    { label: "Fixed plan", from: planText(cfg.plan), to: planText(want) },
+    { label: "Time stop", from: `${cfg.timeStopMinutes} min`, to: `${s.time_min} min` },
+  ];
+}
+
 // ── proving it: paper, then a small live stake ────────────────────────
 
 /** Where the operator can take an idea. Paper and live run on Settings as saved: the engine as today. */
@@ -307,7 +343,8 @@ export function move(id: number, to: Move, now = Date.now()): string | null {
   const h = full(id);
   if (!h) return "no idea with that id";
   const r = resultOf(h);
-  const mode = loadConfig().mode;
+  const cfg = loadConfig();
+  const mode = cfg.mode;
   const save = lastSave() ?? 0;
   const set = (status: string, extra: Record<string, unknown> = {}, result = r) => {
     const cols = Object.keys(extra).map((k) => `, ${k} = ?`).join("");
@@ -325,7 +362,10 @@ export function move(id: number, to: Move, now = Date.now()): string | null {
   if (to === "paper") {
     if (h.status !== "passed") return "only an idea that passed goes to paper";
     if (mode !== "paper") return "switch Settings to paper mode first";
+    if (h.source !== "decision") return "only an idea on decided tokens goes on paper: the engine does not brief rank or migration tokens to the agent";
     if (save <= (h.decided_at ?? 0)) return "save the rule and its exit in Settings first: the test runs on that version";
+    const off = exitFields(cfg, JSON.parse(h.exit)).filter((f) => f.from !== f.to);
+    if (off.length) return `set the exit fields in Settings first: ${off.map((f) => f.label.toLowerCase()).join(", ")}`;
     const other = busy("paper");
     if (other) return `#${other} is on paper: one paper test at a time`;
     return set("paper", { paper_config_at: save }, { ...r, paper: { n: 0 } });
@@ -504,7 +544,7 @@ export function seedTries(): void {
   tx(() =>
     seeds.forEach((s, i) =>
       insert("hypotheses", {
-        id: i + 1, created_at: s.created_at, author: "claude-code", parent_id: s.parent_id, rule: s.rule, conditions: JSON.stringify(s.conditions),
+        id: i + 1, created_at: s.created_at, author: "seed", parent_id: s.parent_id, rule: s.rule, conditions: JSON.stringify(s.conditions),
         exit: JSON.stringify(s.exit), source: "decision", need_pct: 100 - 5 / (i + 1), result: JSON.stringify(s.result), status: "failed",
         decided_at: s.created_at, notes: "tried before hypotheses existed; numbers from the 28–30 Oct research",
       }),

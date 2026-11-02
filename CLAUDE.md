@@ -69,8 +69,9 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   'restart'. Every `saveConfig` also appends to `config_history`. `replay.ts` replays an exit plan
   on a track's path the way `evaluate` runs it (impact off the stored reserve); `calibration()`
   replays every trade closed by its rules on its own track. The Research page (`view.research`,
-  `GET /api/research`, read every 15s while open) shows the scorecard: bought vs. all decided,
-  conviction, drift by source, coverage, calibration, settings versions, hypotheses.
+  `GET /api/research`, read every 15s while open) is laid out as the canvas's Research board: six
+  tiles, the tries beside the open one (a passed idea carries its proposed change: `promptOf` the
+  conditions, `exitFields` against Settings), settings versions folded.
 - Hypotheses (`research.ts`, edge research phase 2): an idea = conditions over a track's
   `features` + an exit; `register` fixes its bar (`need_pct` = 100 − 5/try) and only tracks after
   it judge it; `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
@@ -84,8 +85,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   `agent_runs.kind = 'research'`, kept out of the trading views. Method for it and for Claude
   Code: `.claude/skills/edge-research/SKILL.md`.
 - Proving an idea (phase 3, `research.move` via `POST /api/research/move`): every step is the
-  operator's and nothing edits Settings. passed → paper (paper mode, Settings saved after it
-  passed; one at a time) → live (it held on paper; live mode, saved after that) → kept; cancel and
+  operator's and nothing edits Settings. passed → paper (a decided-tokens idea, paper mode, Settings
+  saved after it passed holding its exit — `exitFields`; one at a time) → live (it held on paper; live mode, saved after that) → kept; cancel and
   drop/undrop. `judge` scores a paper or live test on the first 30 positions opened while the
   tested version was in force (a later save pauses it), on real fills, by the forward test's bar;
   it fades → dropped by code. It also logs agent vs. rule picks: buys go through the prompt, never
