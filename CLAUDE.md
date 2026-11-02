@@ -88,8 +88,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   passed; one at a time) → live (it held on paper; live mode, saved after that) → kept; cancel and
   drop/undrop. `judge` scores a paper or live test on the first 30 positions opened while the
   tested version was in force (a later save pauses it), on real fills, by the forward test's bar;
-  it fades → dropped by code. It also logs agent vs. rule picks (buys stay the prompt's until the
-  operator decides otherwise). Kept and live ideas get the decay watch: last 30 live trades,
+  it fades → dropped by code. It also logs agent vs. rule picks: buys go through the prompt, never
+  a rule in code (the operator's decision, 2 Nov 2026); the rule is only checked against them. Kept and live ideas get the decay watch: last 30 live trades,
   mean ≤ 0 or fill gap (`trades.quote_price_usd`, written on live swaps) above the friction →
   `decay_at` once, a warn log, nothing else.
 - Dashboard: `server.ts` (`node:http`, login via `auth.ts` when `DASHBOARD_TOKEN` is set, else a
