@@ -8,7 +8,7 @@ import * as control from "./control.ts";
 import { entryLoop, wake } from "./entry.ts";
 import * as jup from "./jupiter/client.ts";
 import { log } from "./log.ts";
-import { move, type Move } from "./research.ts";
+import { move, saveResearchSettings, type Move } from "./research.ts";
 import { lastSolUsd, sampleEquity } from "./trade.ts";
 import * as view from "./view.ts";
 
@@ -58,6 +58,12 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
   "/api/start": async () => (control.start(), void entryLoop(), { ok: true }),
   "/api/stop": async (b) => ({ ok: true, errors: await control.stop(b?.closeAll === true) }),
   "/api/resume": async () => (control.resume(), wake(), { ok: true }),
+  // The research agent's model, saved apart from the trading config: no Settings version, no paused test.
+  "/api/research/settings": async (b) => {
+    const s = saveResearchSettings(b);
+    log("info", `Research agent model: ${s.model || "OPENROUTER_MODEL"} — from its next run.`);
+    return { ok: true, research: s };
+  },
   // Research: the operator's move on an idea. The research agent runs on its own, once a day (index.ts).
   "/api/research/move": async (b) => {
     const to = String(b?.to ?? "");
@@ -97,6 +103,7 @@ function state(url: URL) {
     health: view.health(cfg, now, tz),
     overview: view.overview(cfg, url.searchParams.get("range") ?? "7d", now, tz),
     trading: view.trading(cfg, now, tz),
+    research: view.researchSetup(now),
   };
 }
 

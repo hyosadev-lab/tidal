@@ -81,6 +81,8 @@ h2.big { font-size: 18px; line-height: 24px; font-weight: 600; }
 .banner .stack { flex: 1 1 320px; }
 .banner.amber { border: 1px solid rgba(255, 184, 77, 0.35); background: rgba(255, 184, 77, 0.1); color: #FFD9A0; }
 .banner.amber .b { color: #FFE7C2; }
+.banner.lime { border: 1px solid rgba(215, 242, 107, 0.35); background: rgba(215, 242, 107, 0.07); color: #E4E4E7; }
+.banner.lime b { color: var(--ink); }
 .banner.grey { border: 1px solid var(--line3); background: var(--card); color: var(--soft); }
 .banner.grey .b { color: var(--ink); }
 .banner.red { border: 1px solid rgba(255, 129, 112, 0.4); background: rgba(255, 129, 112, 0.1); color: #FFC2B8; }

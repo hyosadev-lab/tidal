@@ -36,6 +36,8 @@ const I = {
   swap: SVG("M7 4v16 M4 7l3-3 3 3 M17 20V4 M14 17l3 3 3-3"),
   eye: SVG("M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"),
   chat: SVG("M5 5h14v10H10l-5 4z"),
+  trading: SVG("M4 18l5-6 4 3 7-8 M15 7h5v5"), // the header's Trading icon
+  flask: SVG("M9 3h6 M10 3v6.5L5.2 17.6A2 2 0 0 0 7 20.5h10a2 2 0 0 0 1.8-2.9L14 9.5V3 M7.5 14h9"), // the header's Research icon
   filter: SVG("M4 5h16l-6 7v6l-4 2v-8z"),
   x: `<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
   help: `<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5"/><path d="M12 18h.01"/></svg>`,
@@ -64,6 +66,7 @@ const S = {
   filtersOpen: false,
   confirmStop: false,
   draft: null,
+  rmodel: null, // the research agent's model as typed on Settings, saved apart from the config; null = as saved
   section: "mode",
   msg: null,
   help: null, // id of the help tip opened by a tap or click; hover and focus open it without this
@@ -781,7 +784,7 @@ function hypothesesList(r, sel) {
     <div class="head"><span class="ico">${SVG(R_ICON.list)}</span><div class="stack" style="flex:1 1 0"><h2 id="hyp-title">Hypotheses</h2>
       <span class="sub">${all.length} ${all.length === 1 ? "try" : "tries"} · each row is one try, kept forever · every rule and SL/TP variant counts, and each try raises the bar · judged only on tracks after it was registered</span></div></div>
     <div class="box" style="gap:8px">
-      <div class="inline" style="flex-wrap:wrap;justify-content:space-between;gap:4px 12px"><span class="s13 b">Own research agent · daily while running</span>${nextRun(a, r.now)}</div>
+      <div class="inline" style="flex-wrap:wrap;justify-content:space-between;gap:4px 12px"><span class="s13 b">Own research agent · ${a.model ? `${esc(String(a.model).split("/").pop())} · ` : ""}daily while running</span>${nextRun(a, r.now)}</div>
       <span class="small muted">${last} · ${ink(a.week.n)} runs in 7 days · ${ink(a.registered)} ${a.registered === 1 ? "try" : "tries"} registered · ${ink(a.week.failed)} errors · ${kn(a.week.tin + a.week.tout)} tokens</span>
       ${agentReport(a)}
     </div>
@@ -974,8 +977,24 @@ function sections(c, d) {
     ["cycle", "Buy cycle", I.cycle, `Wait ≤ ${c.maxWaitMinutes}m · cooldown ${c.cooldownMinutes}m`],
     ["risk", "Risk check", I.shield, `${c.sizeSol} SOL · ${c.maxOpenPositions} slots · ${MINUS}${c.maxDailyLossPct}% daily · ${Number(c.slippagePct) > 0 ? `${c.slippagePct}% slippage` : "auto slippage"}`],
     ["exit", "Exit plan", I.exit, planSummary(c)],
-    ["agent", "Agent", I.chat, `${String(c.model || "OPENROUTER_MODEL").split("/").pop()} · ${unset(c.toolCalls) ? "unlimited" : c.toolCalls} tools · ${unset(c.maxSteps) ? "unlimited" : c.maxSteps} steps`],
+    ["agent", "Trading agent", I.trading, `${String(c.model || "OPENROUTER_MODEL").split("/").pop()} · ${unset(c.toolCalls) ? "unlimited" : c.toolCalls} tools · ${unset(c.maxSteps) ? "unlimited" : c.maxSteps} steps`],
+    // An engine not restarted since the page changed sends no research block: the section waits for it.
+    ...(d.research ? [["research", "Research agent", I.flask, `${typedModel(d).split("/").pop() || "OPENROUTER_MODEL"} · daily · ${d.research.steps} steps`]] : []),
   ];
+}
+
+/** The research model as typed (or as saved), and what a run would use with it: never the trading agent's model. */
+const typedModel = (d) => (S.rmodel ?? d.research.model).trim();
+const runsWith = (d) => typedModel(d) || (d.research.env ? `${d.research.env} (OPENROUTER_MODEL)` : `${d.research.fallback} (built-in default)`);
+
+function researchBody(d) {
+  const r = d.research;
+  return `<div class="note"><span class="small muted">How it runs · set in code</span><span class="big">Once a day while the engine runs · up to ${r.steps} steps · at most one idea registered a run</span><span class="small muted">Its tools: <code class="mono">ledger_query</code> (read-only), <code class="mono">test_rule</code>, <code class="mono">register_hypothesis</code>. It never trades and never edits Settings.</span></div>
+    <div class="row" style="gap:18px 24px">
+      <div class="field" style="flex:1 1 360px;min-width:0"><label for="f-rmodel">Model</label><input id="f-rmodel" class="inp wide" type="text" value="${esc(S.rmodel ?? r.model)}" placeholder="OPENROUTER_MODEL"><span class="small muted">Any OpenRouter model id. Empty = <code class="mono">OPENROUTER_MODEL</code> from <code class="mono">.env</code>, ${r.env ? `now <code class="mono">${esc(r.env)}</code>` : `which is not set: <code class="mono">${esc(r.fallback)}</code>`}.</span></div>
+      <div class="field" style="flex:1 1 260px;min-width:0"><span class="lbl">Runs with, from the next run</span><span class="mono" id="r-uses" style="min-height:48px;display:flex;align-items:center;overflow-wrap:anywhere">${esc(runsWith(d))}</span><span class="small muted">Next run ${r.next <= d.now ? "within 10 min" : esc(when(r.next))} · last 7 days: ${plural(r.week.n, "run")}, ${kn(r.week.tin + r.week.tout)} tokens</span></div>
+    </div>
+    <div class="banner lime" style="border-radius:16px;font-size:13px;line-height:18px;align-items:flex-start;flex-wrap:nowrap"><span class="dot" style="margin-top:5px;background:var(--lime)"></span><span><b>No new Settings version.</b> This model is stored apart from the trading config, in its own <code class="mono">settings</code> row. Save writes it on its own when nothing else changed: <code class="mono">config_history</code> gains no row, a paper or live test keeps running, and the Research page's Settings versions stay as they are.</span></div>`;
 }
 
 const fieldNum = (label, key, value, unit, opts = {}) =>
@@ -988,7 +1007,7 @@ function settings(d) {
   const c = S.draft;
   const ok = planOk(c.plan);
   const nav = sections(c, d)
-    .map(([k, l, ic, sum]) => `<button data-a="section" data-v="${k}" aria-pressed="${S.section === k}"><span class="ico" ${k === "agent" ? 'style="background:var(--violet);color:#161618;border:0"' : ""}>${ic}</span><span class="stack"><span class="b" style="font-size:15px">${l}</span><span class="small muted" data-sum="${k}">${esc(sum)}</span></span></button>`)
+    .map(([k, l, ic, sum]) => `<button data-a="section" data-v="${k}" aria-pressed="${S.section === k}"><span class="ico" ${k === "agent" ? 'style="background:var(--violet);color:#161618;border:0"' : k === "research" ? 'style="background:var(--lime);color:#161618;border:0"' : ""}>${ic}</span><span class="stack"><span class="b" style="font-size:15px">${l}</span><span class="small muted" data-sum="${k}">${esc(sum)}</span></span></button>`)
     .join("");
   const sol = d.solUsd > 0 ? `SOL ≈ ${usd(Number(c.sizeSol) * d.solUsd)}` : "SOL";
   const body = {
@@ -1009,6 +1028,7 @@ function settings(d) {
         <div class="fgrid pair">${fieldNum("Tool calls per run", "toolCalls", c.toolCalls ?? "", "", { step: 1, placeholder: "No limit" })}${fieldNum("Max steps", "maxSteps", c.maxSteps ?? "", "", { step: 1, placeholder: "No limit" })}</div>
         <span class="small muted">Read-only GMGN lookups, one route per tool. Past the budget every call is refused; past max steps the run fails and its tokens retry next cycle. Empty = no limit.</span></div>
       <div class="field" style="flex:999 1 480px;min-width:0"><label for="f-prompt">Operator prompt</label><textarea id="f-prompt" class="inp" rows="14" data-f="prompt" placeholder="Your selection policy. Empty = the agent judges from the numbers alone.">${esc(c.prompt)}</textarea><span class="small muted">Token names and every scanned field reach the model fenced as untrusted data, never as instructions.</span></div></div>`,
+    research: d.research ? researchBody(d) : "",
   }[S.section];
   return `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Operator config</span><h1>Settings</h1><p>Every loop reads this. Saved whole to <code class="mono" style="color:var(--ink)">settings</code>; applies from the next cycle.</p></div>
     <div class="inline" style="gap:8px"><button class="btn" data-a="discard">Discard</button><button class="btn lime" id="save" data-a="save" ${ok ? "" : "disabled"}>Save</button></div></div>
@@ -1045,6 +1065,22 @@ function agentLimits(c) {
 }
 
 /** A form edit: into the draft, then only the bits that depend on it — never the input being typed in. */
+/** Each Settings section's one-line summary, kept up with what is typed. */
+function refreshSums() {
+  for (const [k, , , sum] of sections(S.draft, S.data)) {
+    const n = document.querySelector(`[data-sum="${k}"]`);
+    if (n) n.textContent = sum;
+  }
+}
+
+/** The research model as typed: not part of the config draft, it is saved on its own. */
+function researchTyped(v) {
+  S.rmodel = v;
+  refreshSums();
+  const u = $("#r-uses");
+  if (u) u.textContent = runsWith(S.data);
+}
+
 function setField(el) {
   const c = S.draft;
   if (el.dataset.rule !== undefined) {
@@ -1064,10 +1100,7 @@ function setField(el) {
   if (save) save.disabled = !ok;
   const ps = $("#plan-status");
   if (ps) ps.innerHTML = planStatus(c);
-  for (const [k, , , sum] of sections(c, S.data)) {
-    const n = document.querySelector(`[data-sum="${k}"]`);
-    if (n) n.textContent = sum;
-  }
+  refreshSums();
   const sol = document.querySelector("[data-sol]");
   if (sol && S.data.solUsd > 0) sol.textContent = `SOL ≈ ${usd(Number(c.sizeSol) * S.data.solUsd)}`;
 }
@@ -1216,10 +1249,19 @@ const A = {
   section: (v) => ((S.section = v), render(true)),
   addRule: () => (S.draft.plan.push({ kind: "tp", at: 100, sell: 0 }), render(true)),
   rmRule: (i) => (S.draft.plan.splice(Number(i), 1), render(true)),
-  discard: () => ((S.draft = structuredClone(S.data.config)), (S.msg = null), render(true)),
+  discard: () => ((S.draft = structuredClone(S.data.config)), (S.rmodel = null), (S.msg = null), render(true)),
   save: async () => {
-    const r = await act("/api/settings", { config: S.draft }, "Settings saved. They apply from the next cycle.");
-    if (r?.config) S.draft = structuredClone(r.config);
+    const d = S.data;
+    const model = S.rmodel === null ? null : S.rmodel.trim();
+    const research = model !== null && !!d.research && model !== d.research.model;
+    const config = JSON.stringify(S.draft) !== JSON.stringify(d.config);
+    // The research model is saved apart: a change to it alone makes no Settings version, so no test pauses.
+    if (research && !(await act("/api/research/settings", { model }, config ? null : "Research agent model saved. It applies from its next run."))) return;
+    if (config || !research) {
+      const r = await act("/api/settings", { config: S.draft }, "Settings saved. They apply from the next cycle.");
+      if (r?.config) S.draft = structuredClone(r.config);
+    }
+    S.rmodel = null;
     render(true);
   },
 };
@@ -1231,6 +1273,7 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("input", (e) => {
   const el = e.target;
+  if (el.id === "f-rmodel") return researchTyped(el.value);
   if ((el.dataset.f !== undefined || el.dataset.rule !== undefined) && el.type !== "radio" && el.tagName !== "SELECT") setField(el);
 });
 document.addEventListener("change", (e) => {

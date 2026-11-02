@@ -1,10 +1,9 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { budgetedTools, runAgent, type Message, type Tool, type Usage } from "./agent/llm.ts";
-import { loadConfig } from "./config.ts";
 import { db, dbPath, insert, openDb } from "./db.ts";
 import { log, short } from "./log.ts";
-import { backtest, judge, register, tries, validate, type Try } from "./research.ts";
+import { backtest, judge, register, RESEARCH_STEPS as STEPS, researchModel, tries, validate, type Try } from "./research.ts";
 
 /**
  * The research side's one door, for Claude Code and for the engine, which runs it as a child
@@ -21,7 +20,6 @@ const SKILL = new URL("../.claude/skills/edge-research/SKILL.md", import.meta.ur
 /** Rows and characters one ledger_query answers with, at most. */
 const ROWS = 200;
 const CHARS = 20_000;
-const STEPS = 40;
 
 /** A try in a few fields: what the CLI lists and the agent is briefed with. */
 const brief = (t: Try) => ({
@@ -76,8 +74,7 @@ export function query(ro: DatabaseSync, sql: unknown): unknown {
 }
 
 async function agent(): Promise<void> {
-  const cfg = loadConfig();
-  const model = cfg.model || process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4.5";
+  const model = researchModel(); // its own Settings field, never the trading agent's model
   const method = readFileSync(SKILL, "utf8").replace(/^---[\s\S]*?---\s*/, "").split("\n## Claude Code")[0];
   const ro = new DatabaseSync(dbPath(), { readOnly: true });
   const runId = insert("agent_runs", { started_at: Date.now(), model, status: "running", kind: "research" });

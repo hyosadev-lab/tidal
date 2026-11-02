@@ -6,7 +6,10 @@ import { tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
-import { BAR_N, cliRunning, exitFields, friction, inTest, nextResearchAt, paperLine, promptOf, tries, usedBy } from "./research.ts";
+import {
+  BAR_N, cliRunning, exitFields, FALLBACK_MODEL, friction, inTest, nextResearchAt, paperLine, promptOf, RESEARCH_STEPS, researchModel,
+  researchSettings, tries, usedBy,
+} from "./research.ts";
 import { SAMPLE_MAX, tracking, type Source } from "./shadow.ts";
 import { lossDay, openPositions, paperCash } from "./trade.ts";
 
@@ -506,6 +509,30 @@ const reports = new Map<number, string | null>(); // runId → its closing messa
 let reportsOf: unknown = null;
 
 /** The last research run, with its closing message (model-written: the page escapes it). */
+/** Research runs in the past week: how many, how many failed, and their tokens. */
+const researchWeek = (now: number) =>
+  one<{ n: number; failed: number; tin: number; tout: number }>(
+    `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin, coalesce(sum(output_tokens), 0) tout
+     from agent_runs where kind = 'research' and started_at >= ?`,
+    now - 7 * DAY,
+  )!;
+
+/**
+ * The research agent as the Settings page shows it: its own model (empty = OPENROUTER_MODEL),
+ * what a run would use now, and when it next runs. Model ids only, never a key.
+ */
+export function researchSetup(now: number) {
+  return {
+    model: researchSettings().model,
+    env: process.env.OPENROUTER_MODEL || null,
+    fallback: FALLBACK_MODEL,
+    uses: researchModel(),
+    steps: RESEARCH_STEPS,
+    next: nextResearchAt(),
+    week: researchWeek(now),
+  };
+}
+
 function lastResearch() {
   const r = one<Record<string, any>>("select id, status, started_at, finished_at, error, model from agent_runs where kind = 'research' order by id desc limit 1");
   if (!r) return null;
@@ -611,15 +638,12 @@ export function research(now: number, tz: string) {
     agent: {
       running: cliRunning("agent"),
       last: lastResearch(),
+      model: researchModel(),
       // The daily run: due at `next`, run only while the engine runs and a model key is set.
       next: nextResearchAt(),
       engine: getRun().state,
       key: !!process.env.OPENROUTER_API_KEY,
-      week: one<{ n: number; failed: number; tin: number; tout: number }>(
-        `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin, coalesce(sum(output_tokens), 0) tout
-         from agent_runs where kind = 'research' and started_at >= ?`,
-        now - 7 * DAY,
-      ),
+      week: researchWeek(now),
       registered: one<{ n: number }>("select count(*) n from hypotheses where author not in ('claude-code', 'seed') and created_at >= ?", now - 7 * DAY)!.n,
     },
   };

@@ -640,3 +640,35 @@ export function nextResearchAt(): number {
 
 /** Whether the daily research run is due now, with a model key to run it. */
 export const researchDue = (now = Date.now()): boolean => !!process.env.OPENROUTER_API_KEY && nextResearchAt() <= now;
+
+// ── the research agent's own settings ─────────────────────────────────
+
+/** Model steps a research run may take, and tool calls it may make. */
+export const RESEARCH_STEPS = 40;
+/** The model a run falls back to when neither the research row nor OPENROUTER_MODEL names one. */
+export const FALLBACK_MODEL = "anthropic/claude-sonnet-4.5";
+
+/**
+ * The research agent's own settings: the 'research' row in `settings`, apart from the trading
+ * config. Changing it is no Settings version: config_history gains no row and no test pauses.
+ */
+export type ResearchSettings = { model: string };
+const cleanModel = (v: unknown): string => (typeof v === "string" ? v.trim().slice(0, 120) : "");
+
+export function researchSettings(): ResearchSettings {
+  const row = db.prepare("select value from settings where key = 'research'").get() as { value: string } | undefined;
+  try {
+    return { model: cleanModel(row ? JSON.parse(row.value)?.model : "") };
+  } catch {
+    return { model: "" };
+  }
+}
+
+export function saveResearchSettings(input: unknown): ResearchSettings {
+  const s = { model: cleanModel((input as { model?: unknown } | null)?.model) };
+  db.prepare("insert or replace into settings (key, value, updated_at) values ('research', ?, ?)").run(JSON.stringify(s), Date.now());
+  return s;
+}
+
+/** The model a research run uses: its own, else OPENROUTER_MODEL, else FALLBACK_MODEL. Never the trading agent's. */
+export const researchModel = (): string => researchSettings().model || process.env.OPENROUTER_MODEL || FALLBACK_MODEL;

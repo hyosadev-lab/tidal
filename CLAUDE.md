@@ -83,8 +83,10 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   the last research run's closing message as its report (model-written: escaped).
   The research agent has `ledger_query` (one select on a read-only connection), `test_rule`
   (in-sample backtest) and `register_hypothesis` (once per run, through `validate`); its runs are
-  `agent_runs.kind = 'research'`, kept out of the trading views. Method for it and for Claude
-  Code: `.claude/skills/edge-research/SKILL.md`.
+  `agent_runs.kind = 'research'`, kept out of the trading views. Its model is its own Settings
+  field (`researchModel`: the 'research' row in `settings`, empty = `OPENROUTER_MODEL`, never the
+  trading model), saved by `/api/research/settings` apart from the config: no config_history row,
+  no paused test. Method for it and for Claude Code: `.claude/skills/edge-research/SKILL.md`.
 - Proving an idea (phase 3, `research.move` via `POST /api/research/move`): every step is the
   operator's and nothing edits Settings. passed → paper (a decided-tokens idea, paper mode, Settings
   saved after it passed holding its exit — `exitFields`, never a version another idea was tested on —

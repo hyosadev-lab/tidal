@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
-import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, nextResearchAt, register, researchDue, RESEARCH_EVERY_MS, sameIdea, seedTries, tries, validate, type Idea } from "../src/research.ts";
+import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, FALLBACK_MODEL, nextResearchAt, register, researchDue, RESEARCH_EVERY_MS, researchModel, researchSettings, sameIdea, saveResearchSettings, seedTries, tries, validate, type Idea } from "../src/research.ts";
 import { query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
@@ -291,4 +291,28 @@ test("register: a repeat of any try is refused, whatever its words; a variant is
     sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.7 } }], two, "decision"),
     sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.8 } }], two, "decision"),
   );
+});
+
+test("research model: its own settings row, then OPENROUTER_MODEL, then the default; never the trading model, never a Settings version", () => {
+  openDb(":memory:");
+  const env = process.env.OPENROUTER_MODEL;
+  try {
+    saveConfig({ ...loadConfig(), model: "trading/model" });
+    const versions = () => (db.prepare("select count(*) n from config_history").get() as { n: number }).n;
+    const before = versions();
+    delete process.env.OPENROUTER_MODEL;
+    assert.deepEqual(researchSettings(), { model: "" });
+    assert.equal(researchModel(), FALLBACK_MODEL);
+    process.env.OPENROUTER_MODEL = "env/model";
+    assert.equal(researchModel(), "env/model");
+    assert.deepEqual(saveResearchSettings({ model: "  research/model  " }), { model: "research/model" });
+    assert.equal(researchModel(), "research/model");
+    assert.deepEqual(saveResearchSettings({ model: 42 }), { model: "" }); // not a string: cleared, back to the env
+    assert.equal(researchModel(), "env/model");
+    assert.equal(versions(), before);
+    assert.equal(loadConfig().model, "trading/model");
+  } finally {
+    if (env === undefined) delete process.env.OPENROUTER_MODEL;
+    else process.env.OPENROUTER_MODEL = env;
+  }
 });

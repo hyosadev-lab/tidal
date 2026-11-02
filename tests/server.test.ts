@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { createServer, type Server } from "node:net";
-import { openDb } from "../src/db.ts";
+import { db, openDb } from "../src/db.ts";
 import { startServer } from "../src/server.ts";
 
 const TOKEN = "t".repeat(40); // a test token, never a real one
@@ -69,6 +69,25 @@ test("without a token: only requests addressed to this host get in (no DNS rebin
       );
     assert.equal(await status(`evil.example:${s.port}`), 403);
     assert.equal(await status(`localhost:${s.port}`), 200);
+  } finally {
+    await s.close();
+  }
+});
+
+test("research model: saved through its own route, shown in the state, no Settings version", async () => {
+  const s = await serve(undefined);
+  try {
+    const post = (path: string, body: unknown) =>
+      fetch(`${s.base}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const state = async () => (await (await fetch(`${s.base}/api/state`)).json()) as { research: { model: string; uses: string }; config: { model: string } };
+    await state(); // the first read writes the default config, and with it the first version
+    const before = (db.prepare("select count(*) n from config_history").get() as { n: number }).n;
+    const r = await post("/api/research/settings", { model: "research/model" });
+    assert.equal(r.status, 200);
+    assert.deepEqual((await r.json()).research, { model: "research/model" });
+    const st = await state();
+    assert.deepEqual([st.research.model, st.research.uses, st.config.model], ["research/model", "research/model", ""]);
+    assert.equal((db.prepare("select count(*) n from config_history").get() as { n: number }).n, before);
   } finally {
     await s.close();
   }
