@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inFilters, rankFilters, sanitize, signalFilters } from "../src/config.ts";
+import { inFilters, loadConfig, rankFilters, sanitize, saveConfig, signalFilters } from "../src/config.ts";
+import { db, openDb } from "../src/db.ts";
 
 const cfg = sanitize({
   filters: { ageMax: 120, marketCapMin: 30, initialLiquidityMin: 10, feeMin: 2, top10Max: 30, insiderMax: 150, bogusMin: 1 },
@@ -28,4 +29,13 @@ test("inFilters checks a trending or signal row; a missing field passes", () => 
   const signal = { created_timestamp: ts, market_cap: 50_000, total_fee: 1.5 };
   assert.equal(inFilters(signal, cfg, now), false); // fees under 2 SOL
   assert.equal(inFilters({ ...signal, total_fee: 2 }, cfg, now), true); // no initial_liquidity on signal rows
+});
+
+test("every save lands in config_history too: the version trades and tracks are scored under", () => {
+  openDb(":memory:");
+  loadConfig(); // the first read writes the defaults: the first version
+  saveConfig({ ...loadConfig(), prompt: "v2" });
+  const last = db.prepare("select value from config_history order by at desc limit 1").get() as { value: string };
+  assert.equal(JSON.parse(last.value).prompt, "v2");
+  assert.equal(last.value, (db.prepare("select value from settings where key = 'config'").get() as { value: string }).value);
 });

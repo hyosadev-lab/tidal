@@ -318,6 +318,8 @@ export function openDb(path = process.env.TTA_DB || DEFAULT_PATH): DatabaseSync 
   addColumn("trades", "quote_price_usd", "real");
   addColumn("shadow_tracks", "end_reason",
     "text check (end_reason in ('done', 'rug', 'restart', 'unreadable')) check ((ended_at is null) = (end_reason is null))");
+  // A ledger from before config_history: the config in force starts the history, as of its last save.
+  db.exec("insert into config_history (at, value) select updated_at, value from settings where key = 'config' and not exists (select 1 from config_history)");
   return db;
 }
 
