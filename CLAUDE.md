@@ -77,8 +77,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   any try (same conditions, exit and source — `sameIdea`), and only tracks after it judge it; `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
   seeded random picks). `research-cli.ts` is the one door: `list | test | register | judge | agent`.
   The engine runs `judge` every 10 min (when an idea is testing, on paper, live or kept) and
-  `agent` once a day while running (`researchDue`, a day after the last research run started) and
-  from the Research page's button, as child processes (`runCli`, killed on the engine's
+  `agent` once a day while running (`researchDue`, a day after the last research run started; the
+  page shows when, no button), as child processes (`runCli`, killed on the engine's
   exit): their SQLite reads are synchronous and must never hold up the exit loop. The page shows
   the last research run's closing message as its report (model-written: escaped).
   The research agent has `ledger_query` (one select on a read-only connection), `test_rule`

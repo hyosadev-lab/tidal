@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
-import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, register, researchDue, RESEARCH_EVERY_MS, sameIdea, seedTries, tries, validate, type Idea } from "../src/research.ts";
+import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, nextResearchAt, register, researchDue, RESEARCH_EVERY_MS, sameIdea, seedTries, tries, validate, type Idea } from "../src/research.ts";
 import { query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
@@ -256,6 +256,7 @@ test("daily research: due a day after the last research run starts, button runs 
     assert.equal(researchDue(t0), true); // never ran
     insert("agent_runs", { started_at: t0, model: "m", status: "ok", kind: "research" });
     insert("agent_runs", { started_at: t0 + 3_600_000, model: "m", status: "ok" }); // a trading run does not count
+    assert.equal(nextResearchAt(), t0 + RESEARCH_EVERY_MS);
     assert.equal(researchDue(t0 + RESEARCH_EVERY_MS - 1), false);
     assert.equal(researchDue(t0 + RESEARCH_EVERY_MS), true);
     delete process.env.OPENROUTER_API_KEY;

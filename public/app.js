@@ -231,7 +231,7 @@ const NAV_ICON = {
 
 function header(d) {
   const p = page();
-  const nav = [["overview", "Overview"], ["trading", "Trading"], ["settings", "Settings"], ["research", "Research"]]
+  const nav = [["overview", "Overview"], ["trading", "Trading"], ["research", "Research"], ["settings", "Settings"]]
     .map(([k, l]) =>
       p === k
         ? `<a href="#${k}" aria-current="page"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round">${NAV_ICON[k]}</svg>${l}</a>`
@@ -764,17 +764,27 @@ function hypRow(h, r, on) {
   </button></li>`;
 }
 
+/** The daily research run, where the button used to be: running now, or when it comes next and what it waits for. */
+function nextRun(a, now) {
+  if (a.running) return `<span class="pill due">Researching…</span>`;
+  if (!a.key) return `<span class="small soft">No daily run: OPENROUTER_API_KEY is not set</span>`;
+  const at = a.next <= now ? "within 10 min" : esc(when(a.next));
+  return `<span class="small soft">Next run ${at}${a.engine === "running" ? "" : " · waits for Start"}</span>`;
+}
+
 function hypothesesList(r, sel) {
   const a = r.agent;
   const all = r.hypotheses;
   const rows = all.filter((h) => S.hypFilter === "all" || groupOf(h.status) === S.hypFilter);
-  const last = a.last ? `last run ${esc(when(a.last.started_at))}${a.last.status === "error" ? ` · <span class="neg">failed</span>` : a.last.status === "running" ? " · running" : ""}` : "no run yet";
+  const last = a.last ? `Last run ${esc(when(a.last.started_at))}${a.last.status === "error" ? ` · <span class="neg">failed</span>` : a.last.status === "running" ? " · running" : ""}` : "No run yet";
   return `<section class="card" style="flex:3 1 640px" aria-labelledby="hyp-title">
     <div class="head"><span class="ico">${SVG(R_ICON.list)}</span><div class="stack" style="flex:1 1 0"><h2 id="hyp-title">Hypotheses</h2>
-      <span class="sub">${all.length} ${all.length === 1 ? "try" : "tries"} · each row is one try, kept forever · every rule and SL/TP variant counts, and each try raises the bar · judged only on tracks after it was registered</span>
-      <span class="sub">Own research agent, daily while running · ${last} · ${ink(a.week.n)} runs in 7 days · ${ink(a.registered)} ${a.registered === 1 ? "try" : "tries"} registered · ${ink(a.week.failed)} errors · ${kn(a.week.tin + a.week.tout)} tokens</span></div>
-      <div class="tail"><button class="btn sm lime" data-a="researchRun" ${a.running ? "disabled" : ""}>${a.running ? "Researching…" : "Run research"}</button></div></div>
-    ${agentReport(a)}
+      <span class="sub">${all.length} ${all.length === 1 ? "try" : "tries"} · each row is one try, kept forever · every rule and SL/TP variant counts, and each try raises the bar · judged only on tracks after it was registered</span></div></div>
+    <div class="box" style="gap:8px">
+      <div class="inline" style="flex-wrap:wrap;justify-content:space-between;gap:4px 12px"><span class="s13 b">Own research agent · daily while running</span>${nextRun(a, r.now)}</div>
+      <span class="small muted">${last} · ${ink(a.week.n)} runs in 7 days · ${ink(a.registered)} ${a.registered === 1 ? "try" : "tries"} registered · ${ink(a.week.failed)} errors · ${kn(a.week.tin + a.week.tout)} tokens</span>
+      ${agentReport(a)}
+    </div>
     <div class="seg light" role="group" aria-label="Filter by status" style="align-self:flex-start">${HYP_FILTERS.map(([k, l]) =>
       `<button data-a="hypFilter" data-v="${k}" aria-pressed="${S.hypFilter === k}">${l} ${all.filter((h) => k === "all" || groupOf(h.status) === k).length}</button>`).join("")}</div>
     ${rows.length
@@ -941,7 +951,8 @@ function research() {
   const head = `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Edge research</span><h1>Research</h1><p>Code records every candidate and judges every idea; a model only proposes. Nothing on this page changes trading: trading changes only when you save Settings.</p></div></div>`;
   if (!r) return head + `<p class="${S.researchError ? "neg" : "muted"}" style="padding:0 4px">${esc(S.researchError || "Loading research…")}</p>`;
   const sel = selectedIdea(r);
-  return `${head}${researchTiles(r)}<div class="row" style="align-items:flex-start">${hypothesesList(r, sel)}${ideaPanel(sel, r)}</div>${versionsSection(r)}`;
+  // The list and the open idea side by side, stretched to one height: no hole under the shorter one.
+  return `${head}${researchTiles(r)}<div class="row">${hypothesesList(r, sel)}${ideaPanel(sel, r)}</div>${versionsSection(r)}`;
 }
 
 // ── settings ──────────────────────────────────────────────────────────
@@ -1144,9 +1155,6 @@ const A = {
   hypFilter: (v) => ((S.hypFilter = v), render()),
   verOpen: () => ((S.verOpen = !S.verOpen), render()),
   report: () => ((S.reportOpen = !S.reportOpen), render()),
-  researchRun: async () => {
-    if (await act("/api/research/run", {}, "Research run started: it registers at most one idea.")) (S.researchAt = 0), await loadResearch(), render();
-  },
   move: async (v) => {
     const [id, to] = v.split(":");
     const said = { paper: "on paper", live: "live", keep: "kept", cancel: "test cancelled", drop: "dropped", undrop: "drop undone" }[to];

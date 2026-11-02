@@ -264,9 +264,9 @@ fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .st.kept { color: var(--lime); border-color: var(--lime); }
 .st.failed { color: var(--red); border-color: rgba(255, 129, 112, 0.55); }
 .st.dropped { background: var(--line3); border-color: var(--line3); color: var(--soft); }
-.hyps { min-width: 760px; display: flex; flex-direction: column; gap: 6px; }
+.hyps { min-width: 660px; display: flex; flex-direction: column; gap: 6px; }
 .hyps ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.hrow { width: 100%; display: grid; grid-template-columns: 40px minmax(0, 1fr) 88px 84px 104px 48px 60px; align-items: center; gap: 12px; }
+.hrow { width: 100%; display: grid; grid-template-columns: 40px minmax(0, 1fr) 88px 84px 104px 48px 60px; align-items: center; gap: 10px; }
 button.hrow { min-height: 60px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 16px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 button.hrow.on { background: var(--inner); border-color: #6B6B73; }
 .hrow.hhead { padding: 0 15px; font-size: 12px; line-height: 16px; color: var(--dim); }

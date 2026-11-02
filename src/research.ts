@@ -627,14 +627,16 @@ export function stopCli(): void {
 /** Whether `judge` has anything to do: an idea testing, on paper, live or kept. */
 export const judgeDue = (): boolean => !!db.prepare("select 1 from hypotheses where status in ('testing', 'paper', 'live', 'kept') limit 1").get();
 
-/** The research agent runs on its own this often; the Research page's button runs it any time. */
+/** The research agent runs on its own this often; Claude Code can run one any time with `research-cli.ts agent`. */
 export const RESEARCH_EVERY_MS = 86_400_000;
 /** When this process last started an agent run: a run that dies before its agent_runs row must not be retried every check. */
 let agentStartedAt = 0;
 
-/** Whether the daily research run is due: a day since the last one started (the button's included), and a model key to run it. */
-export function researchDue(now = Date.now()): boolean {
-  if (!process.env.OPENROUTER_API_KEY) return false;
+/** When the daily research run is next due: a day after the last research run started, one from the CLI included. */
+export function nextResearchAt(): number {
   const last = (db.prepare("select max(started_at) at from agent_runs where kind = 'research'").get() as { at: number | null }).at ?? 0;
-  return Math.max(last, agentStartedAt) <= now - RESEARCH_EVERY_MS;
+  return Math.max(last, agentStartedAt) + RESEARCH_EVERY_MS;
 }
+
+/** Whether the daily research run is due now, with a model key to run it. */
+export const researchDue = (now = Date.now()): boolean => !!process.env.OPENROUTER_API_KEY && nextResearchAt() <= now;

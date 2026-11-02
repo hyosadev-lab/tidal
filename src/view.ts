@@ -6,7 +6,7 @@ import { tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
-import { BAR_N, cliRunning, exitFields, friction, inTest, paperLine, promptOf, tries, usedBy } from "./research.ts";
+import { BAR_N, cliRunning, exitFields, friction, inTest, nextResearchAt, paperLine, promptOf, tries, usedBy } from "./research.ts";
 import { SAMPLE_MAX, tracking, type Source } from "./shadow.ts";
 import { lossDay, openPositions, paperCash } from "./trade.ts";
 
@@ -611,6 +611,10 @@ export function research(now: number, tz: string) {
     agent: {
       running: cliRunning("agent"),
       last: lastResearch(),
+      // The daily run: due at `next`, run only while the engine runs and a model key is set.
+      next: nextResearchAt(),
+      engine: getRun().state,
+      key: !!process.env.OPENROUTER_API_KEY,
       week: one<{ n: number; failed: number; tin: number; tout: number }>(
         `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin, coalesce(sum(output_tokens), 0) tout
          from agent_runs where kind = 'research' and started_at >= ?`,
