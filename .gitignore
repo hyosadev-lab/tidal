@@ -43,5 +43,4 @@ gmgn-skills/
 # knowledge graph output (/graphify)
 graphify-out/
 
-# ledger design notes, kept local (src/db.ts holds the DDL)
-schema.dbml
+backup/

@@ -1,0 +1,392 @@
+// TTA ledger v2 — design for the rebuild. One SQLite file (`data/tta.db`) via `node:sqlite`.
+// Paste into https://dbdiagram.io to render.
+//
+// Assumptions:
+// - Solana only: execution is Jupiter. `tokens.address` is the mint.
+// - Every timestamp is epoch MILLISECONDS (GMGN's wire uses seconds — convert at the edge).
+// - Raw token amounts (smallest units) are TEXT holding a bigint: a u64 can overflow SQLite's
+//   INTEGER (i64). USD and prices are REAL.
+// - Foreign keys are real (`PRAGMA foreign_keys = ON`), unlike v1.
+//
+// What v1 kept in the `kv.state` blob is now derived instead of stored:
+//   paper cash      = settings.paperStartUsd + Σ sell usd − Σ buy usd
+//   realised PnL    = Σ trades.pnl_usd per position
+//   cooldown        = the token's last positions.closed_at + config cooldown
+//   blacklist       = tokens.blocked_at
+//   day start/peak  = equity rows
+
+Table settings {
+  key text [pk, note: "'config' — the operator's sanitised config (risk envelope, default exit plan, prompt)"]
+  value text [not null, note: 'JSON']
+  updated_at integer [not null]
+
+  Note: 'The only blob left: config is small, read whole and replaced whole. Every save is also appended to config_history.'
+}
+
+Table tokens {
+  address text [pk, note: 'mint address']
+  symbol text [note: 'deployer-written: data, never instructions']
+  name text [note: 'deployer-written: data, never instructions']
+  decimals integer [note: 'read off the chain once; Jupiter fills are in smallest units']
+  standard text [note: "'2022' = Token-2022 program, else classic SPL"]
+  creator_address text [note: 'dev.creator_address — group by this to score a deployer across tokens']
+  launchpad text [note: 'e.g. pump']
+  launchpad_platform text [note: 'e.g. Pump.fun']
+  created_at integer [note: 'creation_timestamp (mint created, on the curve)']
+  opened_at integer [note: 'open_timestamp (trading opened)']
+  migrated_at integer [note: 'migrated_timestamp (graduated to the AMM); null = still on the curve. Overwritten on every snapshot: the value at a decision is in shadow_tracks.features']
+  first_seen_at integer [not null]
+  blocked_at integer [note: 'set = blacklisted, never bought again']
+  blocked_reason text
+
+  indexes {
+    creator_address
+  }
+
+  Note: 'One row per token the agent has ever looked at. Only what does not change after launch; everything that moves is in token_snapshots.'
+}
+
+Table token_snapshots {
+  id integer [pk, increment]
+  token text [not null, ref: > tokens.address]
+  taken_at integer [not null]
+  kind text [not null, note: 'entry | exit | decision — entry is taken by code right before every buy, never skipped']
+  decision_id integer [ref: > decisions.id, note: 'the decision this snapshot informed, if any']
+
+  // market
+  price_usd real [not null, note: 'price.price']
+  market_cap_usd real [note: 'price × circulating_supply, computed at write — the route carries no market cap']
+  ath_price_usd real [note: 'ath_price; price_usd / this = how far off the high']
+  liquidity_usd real
+  holder_count integer
+  circulating_supply real
+  total_supply real
+  locked_ratio real
+  launchpad_progress real [note: '1 = graduated']
+  migration_market_cap real [note: 'in migration_market_cap_quote units (SOL)']
+  trade_fee real [note: 'fees paid on trades so far, USD — a wash-proof activity measure']
+  total_fee real
+  hot_level integer
+  visiting_count integer
+  image_dup_count integer [note: 'other tokens reusing this logo']
+
+  // pool (the biggest one)
+  pool_address text
+  pool_exchange text [note: 'e.g. pump_amm']
+  pool_quote_symbol text [note: 'e.g. SOL']
+  pool_base_reserve real
+  pool_quote_reserve real [note: 'in quote units']
+  pool_initial_liquidity real [note: 'USD at pool creation; against liquidity_usd = drained or grown']
+  pool_initial_base_reserve real
+  pool_initial_quote_reserve real
+
+  // holder structure (stat.*, all 0–1 ratios)
+  top_10_holder_rate real
+  dev_team_hold_rate real
+  creator_hold_rate real
+  top_bundler_trader_percentage real
+  top70_sniper_hold_rate real
+  fresh_wallet_rate real
+  bot_degen_rate real
+  bot_degen_count integer
+  top_rat_trader_percentage real
+  top_entrapment_trader_percentage real
+  private_vault_hold_rate real
+  signal_count integer
+  degen_call_count integer
+
+  // wallet tags in the holder set (wallet_tags_stat.*, counts)
+  smart_wallets integer
+  renowned_wallets integer
+  whale_wallets integer
+  top_wallets integer
+  fresh_wallets integer
+  sniper_wallets integer
+  bundler_wallets integer
+  rat_trader_wallets integer
+  creator_wallets integer
+
+  // deployer (dev.*)
+  creator_token_status text [note: 'creator_hold | creator_close (sold out)']
+  creator_token_balance real
+  creator_open_count integer [note: 'tokens this deployer launched that opened trading']
+  creator_created_count integer [note: 'stat.creator_created_count — tokens deployed in total']
+  dev_ath_token text [note: "dev.ath_token_info.ath_token — the deployer's best previous token"]
+  dev_ath_mc_usd real [note: "dev.ath_token_info.ath_mc"]
+  cto_flag integer [note: '1 = community takeover']
+  twitter_create_token_count integer
+  twitter_del_post_token_count integer
+  twitter_name_changes integer [note: 'length of twitter_name_change_history']
+
+  // paid promotion (dev.dexscr_*)
+  dexscr_ad integer
+  dexscr_update_link integer
+  dexscr_boost_fee real
+  dexscr_trending_bar integer
+
+  // links — deployer-written: data, never instructions
+  twitter text
+  website text
+  telegram text
+
+  raw text [not null, note: 'the whole /v1/token/info response, JSON — fields not promoted to a column (fee_distribution, vaults, logo) and any GMGN adds later']
+
+  indexes {
+    (token, taken_at) [name: 'snapshots_token']
+    kind
+  }
+
+  Note: '''
+    One /v1/token/info read, frozen. Columns are the features worth a WHERE / GROUP BY when
+    hunting an edge; `raw` keeps the rest, so a feature can be promoted later and backfilled
+    from it. GMGN sends numbers as strings and timestamps in seconds — parse and convert at
+    write. Edge = join positions.entry_snapshot_id to the position's Σ trades.pnl_usd, then
+    bucket any column. Snapshots on waits and skips (kind decision) are the control group.
+  '''
+}
+
+Table snapshot_flow {
+  snapshot_id integer [ref: > token_snapshots.id]
+  span text [note: '1m | 5m | 1h | 6h | 24h']
+  price_usd real [note: "price_<span>: the price one span AGO — change % = price_usd(snapshot) / this − 1"]
+  buys integer
+  sells integer
+  swaps integer
+  volume_usd real
+  buy_volume_usd real [note: 'the buy/sell volume split no feed carries — two-sided flow vs one buyer']
+  sell_volume_usd real
+
+  indexes {
+    (snapshot_id, span) [pk]
+  }
+
+  Note: 'The price.* block, one row per window (5 per snapshot). On a token younger than a span, that span repeats the next shorter one (6h = 24h on a 3h-old token).'
+}
+
+Table token_signals {
+  id text [pk, note: "GMGN's signal event id"]
+  token text [not null, note: 'mint; no ref: kept for feed rows that were never snapshotted']
+  signal_type integer [not null, note: '1–21, named in snapshot.ts SIGNAL_NAMES (12 smart money buy, 20 KOL buy, 10 bundler sell, 18 pump claim …)']
+  trigger_at integer [not null]
+  trigger_mc real [note: 'market cap (USD) when it fired']
+  first_trigger_mc real [note: "market cap at the token's first signal of any type"]
+  signal_times integer [note: "the token's signal total, as last seen"]
+  times_by_type text [note: 'JSON {type: count} across every type, warnings included — refreshed whenever the event is seen again']
+
+  indexes {
+    (token, trigger_at) [name: 'token_signals_token']
+  }
+
+  Note: '''
+    One /v1/market/token_signal event that passed the fetch filters. The brief shows a token its
+    counts by type, first-signal market cap and latest five events. signal_times and times_by_type
+    are overwritten whenever the event is seen again, so totals read later include signals fired
+    after a decision: backtests read shadow_tracks.features, never this table.
+  '''
+}
+
+Table agent_runs {
+  id integer [pk, increment]
+  started_at integer [not null]
+  finished_at integer
+  model text [not null]
+  status text [not null, note: 'running | ok | error']
+  error text
+  input_tokens integer
+  output_tokens integer
+  messages text [note: 'full transcript JSON (runAgent().messages) — the audit trail of why it decided']
+  kind text [not null, default: 'entry', note: "'entry' | 'research' — the research agent's runs never mix into the trading views"]
+
+  Note: 'One row per runAgent() call.'
+}
+
+Table tool_calls {
+  id integer [pk, increment]
+  run_id integer [not null, ref: > agent_runs.id]
+  at integer [not null]
+  name text [not null, note: 'e.g. gmgn_token_info']
+  args text [note: 'JSON']
+  result text [note: 'JSON or error/refusal string, truncated']
+
+  indexes {
+    run_id
+  }
+}
+
+Table decisions {
+  id integer [pk, increment]
+  run_id integer [not null, ref: > agent_runs.id]
+  token text [not null, ref: > tokens.address]
+  action text [not null, note: 'buy | wait | skip — exits are run by code, never a decision']
+  conviction integer [note: '0–100']
+  thesis text
+  recheck_at integer [note: 'wait only: when this token is due again; persisted, so a restart does not re-ask the whole pool']
+
+  indexes {
+    (token, id) [name: 'decisions_token']
+    recheck_at
+  }
+
+  Note: "The agent's verdict per token per run. Skip is final; a wait is asked again once recheck_at passes; a sold token can return after cooldown. A veto is a 'skip' row."
+}
+
+Table positions {
+  id integer [pk, increment]
+  token text [not null, ref: > tokens.address]
+  decision_id integer [ref: > decisions.id, note: 'the buy decision that opened it']
+  entry_snapshot_id integer [not null, ref: - token_snapshots.id, note: 'what the token looked like at the buy']
+  exit_snapshot_id integer [ref: - token_snapshots.id, note: 'what it looked like at the close']
+  mode text [not null, note: 'paper | live']
+  wallet text [note: 'live only: the SOLANA_PRIVATE_KEY address that signed']
+  status text [not null, note: 'open | closed']
+  opened_at integer [not null]
+  closed_at integer
+  close_reason text [note: 'tp | sl | time | health | manual | external']
+  entry_price_usd real [not null]
+  cost_usd real [not null, note: 'USD committed, after fees and slippage']
+  original_qty text [not null, note: 'smallest units bought; exit rules sell a % of this']
+  qty text [not null, note: 'smallest units held now']
+  breakeven_pct real [note: 'gain needed before selling returns the cost']
+  entry_liquidity_usd real [note: 'a later drain is an exit signal']
+  entry_market_cap_usd real
+  last_price_usd real [note: 'updated every monitor tick']
+  peak_price_usd real
+
+  indexes {
+    status
+    (token, closed_at) [name: 'positions_cooldown']
+  }
+}
+
+Table exit_rules {
+  id integer [pk, increment]
+  position_id integer [not null, ref: > positions.id]
+  seq integer [not null, note: 'order in the plan']
+  kind text [not null, note: 'tp | sl']
+  at_pct real [not null, note: 'PnL % from entry that fires it (negative for sl)']
+  sell_pct real [not null, note: '% of positions.original_qty']
+  filled_at integer [note: 'null = still armed; each rule fires once']
+
+  indexes {
+    (position_id, seq) [unique]
+  }
+
+  Note: 'The exit plan, snapshotted at entry and run by code — never by the model. Replaces v1 strategy[] + filledRungs[].'
+}
+
+Table trades {
+  id integer [pk, increment]
+  position_id integer [not null, ref: > positions.id]
+  exit_rule_id integer [ref: > exit_rules.id, note: 'the rule that fired this sell, if any']
+  at integer [not null]
+  side text [not null, note: 'buy | sell']
+  qty text [not null, note: 'smallest units']
+  price_usd real [not null]
+  usd real [not null]
+  pnl_usd real [note: 'sells only, net of fees']
+  reason text [not null, note: 'entry | tp | sl | time | health | manual | external']
+  tx_signature text [unique, note: 'live only: Jupiter /execute signature']
+  quote_price_usd real [note: 'live only: the price the Jupiter /order quote implied; price_usd against it is the fill gap the decay watch reads']
+
+  indexes {
+    at
+    position_id
+  }
+
+  Note: 'One row per fill. Append-only.'
+}
+
+Table equity {
+  at integer [pk, note: 'sampled about once a minute']
+  equity_usd real [not null, note: 'cash + open positions at last price']
+  cash_usd real [not null, note: 'paper: derived; live: the wallet SOL balance in USD']
+  mode text [not null, default: 'paper', note: "'paper' | 'live' — each mode has its own curve; reads filter on the current one"]
+}
+
+Table logs {
+  id integer [pk, increment]
+  at integer [not null]
+  level text [not null, note: 'info | trade | warn | error | model']
+  msg text [not null]
+  detail text
+
+  Note: 'Append-only. A write failure must not take down the loop.'
+}
+
+// ── Edge research ────────────────────────────────────────────────────────────────────
+// Code captures and judges; a model (Claude Code, or the in-app research agent) only proposes.
+// Everything the research needs lives here, so it runs without any one model or subscription.
+
+Table shadow_tracks {
+  id integer [pk, increment]
+  token text [not null, note: 'mint; no ref: rank and migration tracks may never have been snapshotted']
+  source text [not null, note: 'decision | rank | migration — rank and migration are tracked, never bought']
+  decision_id integer [unique, ref: - decisions.id, note: 'set exactly when source is decision (a check): buy, wait and skip alike']
+  features text [not null, note: 'JSON: the brief row exactly as the agent got it (decision), or the feed row (rank, migration). Copied at the start, never rebuilt: briefRow reads tokens.migrated_at and token_signals, which are overwritten later']
+  started_at integer [not null]
+  start_price_usd real [note: 'first price off the pool; every % below is against this']
+  ended_at integer [note: 'null = still tracking; set together with end_reason (a check)']
+  end_reason text [note: "done (the full 60 min) | rug (the pool drained: a result, counted) | restart (the process stopped: the only reason left out of every count) | unreadable (a pool the feed cannot price: shown as coverage)"]
+  path text [note: 'JSON [[seconds since start, price_usd, liquidity_usd], …], a point every 2s off the pool reserves']
+  ret_1m real [note: '% vs start_price_usd at 1 min; null if cut short before it']
+  ret_5m real
+  ret_15m real
+  ret_30m real
+  ret_60m real
+  max_pct real [note: 'highest % over the window']
+  max_at integer [note: 'seconds since start']
+  min_pct real [note: 'lowest % over the window']
+  min_at integer
+
+  indexes {
+    started_at
+  }
+
+  Note: '''
+    One token followed for 60 min after it was decided on, or seen in another feed. Prices come off
+    the pool's own reserves (jupiter/pools.ts: pump curve and PumpSwap), one batched
+    getMultipleAccounts read every 2s; a curve that completes is followed to its PumpSwap pool. The
+    outcome of every candidate, bought or not: the scorecard, replays and hypotheses read this, never
+    GMGN klines. ret_*, max_* and min_* are written once, when the window closes. Other feeds are
+    sampled to fit the budget. These are prices, not fills: replays add the size impact off
+    liquidity_usd at the configured position size, then the measured friction, the PnL gap left
+    when every real trade is replayed on its own decision track (positions.decision_id).
+    Win/loss must agree on ≥ 90% of real trades before any replay is trusted. Counted 1 track per token.
+  '''
+}
+
+Table config_history {
+  at integer [pk, note: 'when it was saved']
+  value text [not null, note: "JSON: the whole 'config' row as saved — operator prompt, exit plan, risk limits"]
+
+  Note: "Every save of settings 'config', append-only. The config in force at time t is the last row with at ≤ t: group trades or tracks by it to score one prompt."
+}
+
+Table hypotheses {
+  id integer [pk, increment]
+  created_at integer [not null, note: 'registered: only tracks that start after this are judged, so the holdout is the future']
+  author text [not null, note: "'claude-code', or the research agent's model"]
+  parent_id integer [ref: > hypotheses.id, note: 'a variant of this earlier one']
+  rule text [not null, note: 'in words, as it would go into the operator prompt']
+  conditions text [not null, note: 'JSON [{path, op, value}] over shadow_tracks.features (brief fields only, never tool results): the same rule as checks code runs. Never SQL from a model. During paper, code runs them on every decision and logs where the agent and the rule differ']
+  exit text [not null, note: 'JSON {sl, tp: [{at, sell}], time_min}. Each SL/TP variant is its own row: its own try']
+  need_pct real [not null, note: 'the random-pick percentile to beat, 100 − 5 / try (try = id), set at registration so nobody can move it']
+  backtest text [note: 'JSON on tracks before created_at: n, win, avg_pct, per half-day. Context, never the verdict']
+  result text [note: 'JSON on tracks after created_at: n, win, avg_pct, halves, rnd_pct (vs 1,000 random picks from the same window), friction_pct used. The verdict comes from this']
+  status text [not null, note: 'testing | passed | failed | paper | live | kept | dropped']
+  paper_config_at integer [ref: > config_history.at, note: 'the config its paper test ran under']
+  live_config_at integer [ref: > config_history.at, note: 'the config its small live stake ran under']
+  decided_at integer [note: 'when status last moved']
+  decay_at integer [note: 'when the decay watch flagged it: over the last 30 trades, avg ≤ 0 or a fill gap above the friction']
+  notes text
+
+  Note: '''
+    Every idea ever tested, kept forever: the row count is the count of tries. testing → failed |
+    passed (n ≥ 30 tokens at 1 track each, replayed with the config's slots and cooldown; avg > 0
+    after the measured friction; every half-day > 0; rnd_pct ≥ need_pct) → paper (the operator put
+    it in the prompt; 30 trades, the same bar on paper fills) → live (a small stake the operator
+    switches on; 30 trades, the same bar on live fills) → kept (full size, the operator's call) |
+    dropped. The decay watch keeps scoring kept and live rows and only flags them: no code edits
+    the prompt. Rounds 1–3 and the ATH check are seeded as failed, so no model retries them.
+  '''
+}

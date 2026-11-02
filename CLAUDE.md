@@ -92,7 +92,7 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   else it is the RPC's over ws(s)://.
 - `src/db.ts` — the ledger: `openDb(path?)` opens `data/tta.db` (`TTA_DB` overrides) and sets the
   module-level `db`; WAL, foreign keys on, STRICT tables. `insert(table, row)` and `tx(fn)`. The
-  DDL is `schema.dbml` (local, gitignored) translated; change both together.
+  DDL is `schema.dbml` (the design notes) translated; change both together.
 - `src/auth.ts` — dashboard sign-in: token compare, session cookie, the sign-in page.
 
 ## Invariants worth knowing before you edit
