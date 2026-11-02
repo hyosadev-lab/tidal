@@ -660,7 +660,8 @@ function barRows(rows, label) {
 const IDEA_TAG = { testing: "wait", passed: "buy", failed: "failed", dropped: "", paper: "run", live: "run", kept: "buy" };
 const condText = (c) => `${c.path} ${c.op} ${typeof c.value === "object" && c.value ? `${c.value.path} × ${c.value.times}` : JSON.stringify(c.value)}`;
 const exitText = (e) => `SL ${pct(e.sl, 0)} · ${e.tp.map((t) => `TP ${pct(t.at, 0)} sells ${t.sell}%`).join(" · ")} · time ${e.time_min}m`;
-const sample = (h, n) => (h.status === "testing" ? `${h.result?.n ?? 0} of ${n}` : fin(h.result?.n) ? String(h.result.n) : "—");
+const sample = (h, n) =>
+  h.status === "testing" ? `${h.result?.n ?? 0} of ${n}` : h.status === "paper" || h.status === "live" ? `${h.result?.[h.status]?.n ?? 0} of ${n} ${h.status}` : fin(h.result?.n) ? String(h.result.n) : "—";
 
 /** Every try, the research agent's runs, and the open idea's numbers and proposed change. */
 function hypotheses(r) {
@@ -689,7 +690,6 @@ function ideaDetail(h, r) {
   const verdict = h.status === "testing"
     ? esc(res.note ?? `0 of ${r.barN} trades`)
     : fin(res.avg_pct) ? `${res.n} trades · ${Math.round(res.win)}% won · ${pct(res.avg_pct)} a trade after ${pct(res.friction_pct, 2)} friction · half-days ${res.halves.map((x) => pct(x, 0)).join(" ")} · beat ${res.rnd_pct.toFixed(2)}% of ${res.draws} random picks (needs ${h.need_pct.toFixed(2)}%)` : esc(res.note ?? "");
-  const canDrop = ["testing", "passed", "failed"].includes(h.status);
   return `<div class="stack" style="gap:12px;padding:4px 16px 12px">
     <div class="note"><span class="small muted">#${h.id} · ${esc(h.source)} · by ${esc(h.author)} · registered ${esc(dayLabel(h.created_at))} ${hm(h.created_at)}${h.parent_id ? ` · a variant of #${h.parent_id}` : ""}</span>
       <span class="big">${esc(h.rule)}</span>
@@ -697,9 +697,49 @@ function ideaDetail(h, r) {
       <span class="s13">${esc(exitText(h.exit))} · ${plural(h.exit.slots, "slot")} · ${h.exit.size_sol} SOL · drain ${h.exit.drain}%</span></div>
     <span class="s13"><b>After registering:</b> ${verdict}</span>
     ${bt && fin(bt.n) ? `<span class="s13 muted"><b>Before registering, in sample (context only):</b> ${bt.n} trades · ${fin(bt.avg_pct) ? pct(bt.avg_pct) : "—"} a trade vs. ${pct(bt.base_avg_pct)} for every track</span>` : ""}
-    ${h.status === "passed" ? `<div class="note"><span class="small muted">Proposed change · never applied by itself · you make it in Settings: the rule in the operator prompt, the exit in the exit plan</span><span class="s13">${esc(h.rule)}</span><span class="s13">${esc(exitText(h.exit))}</span></div>` : ""}
-    <div class="inline" style="flex-wrap:wrap;gap:8px">${h.status === "passed" ? `<button class="btn sm line" data-a="copyRule" data-v="${h.id}">Copy rule</button><a class="btn sm line" href="#settings">Open Settings</a>` : ""}${canDrop ? `<button class="btn sm ghost" data-a="dropIdea" data-v="${h.id}">Drop</button>` : ""}</div>
+    ${["passed", "paper", "live", "kept"].includes(h.status) ? `<div class="note"><span class="small muted">Proposed change · never applied by itself · you make it in Settings: the rule in the operator prompt, the exit in the exit plan</span><span class="s13">${esc(h.rule)}</span><span class="s13">${esc(exitText(h.exit))}</span></div>` : ""}
+    ${stage(h, r)}
+    <div class="inline" style="flex-wrap:wrap;gap:8px">${buttons(h)}</div>
   </div>`;
+}
+
+const mv = (h, to, label, cls = "line") => `<button class="btn sm ${cls}" data-a="move" data-v="${h.id}:${to}">${label}</button>`;
+
+function buttons(h) {
+  const r = h.result ?? {};
+  const b = [];
+  if (h.status === "passed") b.push(mv(h, "paper", "Test on paper", "lime"), `<button class="btn sm line" data-a="copyRule" data-v="${h.id}">Copy rule</button>`, `<a class="btn sm line" href="#settings">Open Settings</a>`);
+  if (h.status === "paper" && r.paper?.verdict === "holds") b.push(mv(h, "live", "Go live", "lime"), `<a class="btn sm line" href="#settings">Open Settings</a>`);
+  if (h.status === "live" && r.live?.verdict === "holds") b.push(mv(h, "keep", "Keep", "lime"));
+  if ((h.status === "paper" && !r.paper?.verdict) || (h.status === "live" && !r.live?.verdict)) b.push(mv(h, "cancel", "Cancel test"));
+  if (h.status !== "dropped") b.push(mv(h, "drop", "Drop", "ghost"));
+  if (h.status === "dropped" && r.dropped_by === "operator") b.push(mv(h, "undrop", "Undo drop", "ghost"));
+  return b.join("");
+}
+
+/** Where a paper or live test stands, the agent against the rule, and the decay watch. */
+function stage(h, r) {
+  const res = h.result ?? {};
+  const part = (mode) => {
+    const t = res[mode];
+    if (!t) return "";
+    const a = t.agreement;
+    const head = t.verdict
+      ? `<b>${t.verdict === "holds" ? "Held" : "Faded"} on ${mode} fills:</b> ${t.n} trades · ${Math.round(t.win)}% won · ${pct(t.avg_pct)} a trade · half-days ${t.halves.map((x) => pct(x, 0)).join(" ")} · beat ${t.rnd_pct.toFixed(2)}% of random picks (needs ${h.need_pct.toFixed(2)}%)`
+      : `<b>${mode === "paper" ? "Paper" : "Live"} test:</b> ${t.n ?? 0} of ${r.barN} trades closed on the Settings version saved ${(() => { const at = t.version_at ?? h[`${mode}_config_at`]; return at ? `${esc(dayLabel(at))} ${hm(at)}` : "when it started"; })()}${t.paused_at ? ` · <span class="warn">paused: Settings were saved again ${esc(dayLabel(t.paused_at))} ${hm(t.paused_at)}, later trades are another version</span>` : ""}`;
+    const agree = a ? `Agent vs. rule: <b>${a.bothBuy} of ${a.agentBuys}</b> buys match the rule · <b>${a.ruleOnly}</b> rule matches the agent did not buy${a.differ.length ? ` · latest: ${a.differ.map((d) => `${esc(d.symbol ?? d.token.slice(0, 6))} (${esc(d.agent)}, rule ${d.rule ? "yes" : "no"})`).join(", ")}` : ""}` : "";
+    const gap = fin(t.fill_gap_pct) ? ` · fill gap ${pct(t.fill_gap_pct, 2)} against the quote` : "";
+    return `<span class="s13">${head}${gap}</span>${agree ? `<span class="s13 muted">${agree}</span>` : ""}`;
+  };
+  const next = h.status === "passed"
+    ? `<span class="small muted">Next: save the rule and its exit in Settings, in paper mode, then press Test on paper. The test runs on that version, 30 trades, the same bar on paper fills. One paper test at a time.</span>`
+    : h.status === "paper" && res.paper?.verdict === "holds"
+      ? `<span class="small muted">Next is a small live stake, your call: switch Settings to live at a small size, save, then press Go live. 30 trades, the same bar on live fills, the fill gap measured.</span>`
+      : h.status === "live" && res.live?.verdict === "holds" ? `<span class="small muted">Held live. Keep it to leave it as the prompt; full size stays your call in Settings. The decay watch then follows it.</span>` : "";
+  const d = res.decay;
+  const decay = d ? `<span class="s13 ${d.decayed ? "warn" : "muted"}"><b>Decay watch:</b> last ${d.n} live trades ${pct(d.avg_pct)} a trade${fin(d.fill_gap_pct) ? ` · fill gap ${pct(d.fill_gap_pct, 2)}` : ""}${d.decayed ? ` · flagged ${h.decay_at ? `${esc(dayLabel(h.decay_at))} ${hm(h.decay_at)}` : ""}: Settings are unchanged, your call` : " · holding"}</span>` : h.status === "kept" ? `<span class="s13 muted"><b>Decay watch:</b> scores the last ${r.barN} live trades once there are that many.</span>` : "";
+  const dropped = h.status === "dropped" ? `<span class="s13 muted">${res.dropped_by === "code" ? `Dropped by code: it faded on ${esc(res.dropped_from)} fills.` : res.dropped_by === "operator" ? `Dropped by you while ${esc(res.dropped_from)}.` : "Dropped."}</span>` : "";
+  return [part("paper"), part("live"), decay, dropped, next].filter(Boolean).join("");
 }
 
 function research() {
@@ -707,6 +747,7 @@ function research() {
   const head = `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Edge research · capture</span><h1>Research</h1><p>Code follows every candidate for 60 minutes and scores every settings version. Nothing on this page changes trading: trading changes only when you save Settings.</p></div></div>`;
   if (!r) return head + `<p class="${S.researchError ? "neg" : "muted"}" style="padding:0 4px">${esc(S.researchError || "Loading research…")}</p>`;
   const cur = r.versions.find((v) => v.current);
+  const test = r.hypotheses.find((x) => x.status === "paper" || x.status === "live");
   const c = r.candidates;
   const gap = fin(c.bought.avg) && fin(c.decided.avg) ? c.bought.avg - c.decided.avg : null;
   const cal = r.calibration;
@@ -717,7 +758,8 @@ function research() {
   <div class="tiles" style="flex:none">
     <div class="tile lime"><div class="inline"><span class="ico">${I.cycle}</span><span style="font-size:15px;font-weight:600">Current settings${cur ? ` · ${esc(cur.label)}` : ""}</span></div>
       ${cur ? `<div class="in"><span class="num">${cur.trades} <span style="font-size:20px">of ${r.judgeN}</span></span><span class="s13 muted">closed trades before it can be judged · saved ${esc(dayLabel(cur.at))} ${hm(cur.at)}</span></div>
-      <div class="in"><span class="s13"><b>${cur.trades ? Math.round((cur.won / cur.trades) * 100) + "% won" : "no trades yet"}</b>${cur.trades ? ` · ${pct(cur.avgPct)} a trade · ${susd(cur.totalUsd)}` : ""}</span></div>`
+      <div class="in"><span class="s13"><b>${cur.trades ? Math.round((cur.won / cur.trades) * 100) + "% won" : "no trades yet"}</b>${cur.trades ? ` · ${pct(cur.avgPct)} a trade · ${susd(cur.totalUsd)}` : ""}</span>
+        ${test ? `<span class="s13">${test.status === "paper" ? "Paper" : "Live"} test of #${test.id}: <b>${test.result?.[test.status]?.n ?? 0} of ${r.barN}</b> trades${test.result?.[test.status]?.verdict ? ` · ${esc(test.result[test.status].verdict)}` : ""}</span>` : ""}</div>`
       : `<div class="in"><span class="s13 muted">No settings saved yet.</span></div>`}</div>
     <div class="tile"><div class="inline"><span class="ico">${I.target}</span><span style="font-size:15px;font-weight:500">Bought vs. all candidates</span></div>
       <div class="in"><span class="num ${gap === null ? "" : sign(gap)}">${gap === null ? "—" : (gap < 0 ? MINUS : "+") + Math.abs(gap).toFixed(1) + " pts"}</span>
@@ -740,8 +782,8 @@ function research() {
   </div>
   ${hypotheses(r)}
   <section class="card flush" aria-labelledby="ver-title"><div class="head"><span class="ico">${I.clock}</span><div class="stack" style="flex:1 1 0"><h2 id="ver-title">Settings versions</h2><span class="sub">one row per save in Settings · closed trades by when they opened · judged at ${r.judgeN} trades</span></div></div>
-    ${r.versions.length ? `<div class="scroll-x" data-scroll="versions" tabindex="0" role="region" aria-label="Settings versions"><table style="min-width:560px"><thead><tr><th>Version</th><th>Saved</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg / trade</th><th class="r">Total</th></tr></thead><tbody>${r.versions
-      .map((v) => `<tr><td><span class="b">${esc(v.label)}</span>${v.current ? ` <span class="tag buy">current</span>` : ""}</td><td class="s13 muted">${v.at ? `${esc(dayLabel(v.at))} ${hm(v.at)}` : "before history"}</td><td class="r mono">${v.trades}</td><td class="r mono">${v.trades ? Math.round((v.won / v.trades) * 100) + "%" : "—"}</td><td class="r mono ${sign(v.avgPct)}">${pct(v.avgPct)}</td><td class="r mono ${sign(v.totalUsd)}">${v.trades ? susd(v.totalUsd) : "—"}</td></tr>`)
+    ${r.versions.length ? `<div class="scroll-x" data-scroll="versions" tabindex="0" role="region" aria-label="Settings versions"><table style="min-width:560px"><thead><tr><th>Version</th><th>Saved</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg / trade</th><th class="r">Total</th><th>From</th></tr></thead><tbody>${r.versions
+      .map((v) => `<tr><td><span class="b">${esc(v.label)}</span>${v.current ? ` <span class="tag buy">current</span>` : ""}</td><td class="s13 muted">${v.at ? `${esc(dayLabel(v.at))} ${hm(v.at)}` : "before history"}</td><td class="r mono">${v.trades}</td><td class="r mono">${v.trades ? Math.round((v.won / v.trades) * 100) + "%" : "—"}</td><td class="r mono ${sign(v.avgPct)}">${pct(v.avgPct)}</td><td class="r mono ${sign(v.totalUsd)}">${v.trades ? susd(v.totalUsd) : "—"}</td><td class="s13 muted">${v.from ? esc(v.from) : ""}</td></tr>`)
       .join("")}</tbody></table></div>` : `<p class="empty">No settings saved yet.</p>`}</section>`;
 }
 
@@ -945,8 +987,10 @@ const A = {
   researchRun: async () => {
     if (await act("/api/research/run", {}, "Research run started: it registers at most one idea.")) (S.researchAt = 0), await loadResearch(), render();
   },
-  dropIdea: async (v) => {
-    if (await act("/api/research/drop", { id: Number(v) }, `Idea #${v} dropped.`)) (S.researchAt = 0), await loadResearch(), render();
+  move: async (v) => {
+    const [id, to] = v.split(":");
+    const said = { paper: "on paper", live: "live", keep: "kept", cancel: "test cancelled", drop: "dropped", undrop: "drop undone" }[to];
+    if (await act("/api/research/move", { id: Number(id), to }, `Idea #${id}: ${said}.`)) (S.researchAt = 0), await loadResearch(), render();
   },
   copyRule: (v) => {
     const h = S.research?.hypotheses.find((x) => x.id === Number(v));

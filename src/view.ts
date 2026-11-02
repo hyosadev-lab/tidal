@@ -541,8 +541,12 @@ export function research(now: number, tz: string) {
     const pcts = ps.map((p) => ((p.pnl ?? 0) / p.cost) * 100);
     return { label, at, current, trades: ps.length, won: pcts.filter((x) => x > 0).length, avgPct: mean(pcts), totalUsd: ps.reduce((t, p) => t + (p.pnl ?? 0), 0) };
   };
-  const versions = marks.map((m, i) => score(`v${i + 1}`, m.at, m.at, marks[i + 1]?.at ?? Infinity, i === marks.length - 1)).reverse();
-  if (marks.length && closed.some((p) => p.opened_at < marks[0]!.at)) versions.push(score("earlier", null, 0, marks[0]!.at, false));
+  const tested = all<{ id: number; paper_config_at: number | null; live_config_at: number | null }>(
+    "select id, paper_config_at, live_config_at from hypotheses where paper_config_at is not null or live_config_at is not null",
+  );
+  const from = (at: number) => tested.flatMap((h) => [...(h.paper_config_at === at ? [`#${h.id} paper`] : []), ...(h.live_config_at === at ? [`#${h.id} live`] : [])]).join(", ") || null;
+  const versions = marks.map((m, i) => ({ ...score(`v${i + 1}`, m.at, m.at, marks[i + 1]?.at ?? Infinity, i === marks.length - 1), from: from(m.at) })).reverse();
+  if (marks.length && closed.some((p) => p.opened_at < marks[0]!.at)) versions.push({ ...score("earlier", null, 0, marks[0]!.at, false), from: null });
 
   return {
     now,

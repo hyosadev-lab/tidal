@@ -80,6 +80,15 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   (in-sample backtest) and `register_hypothesis` (once per run, through `validate`); its runs are
   `agent_runs.kind = 'research'`, kept out of the trading views. Method for it and for Claude
   Code: `.claude/skills/edge-research/SKILL.md`.
+- Proving an idea (phase 3, `research.move` via `POST /api/research/move`): every step is the
+  operator's and nothing edits Settings. passed → paper (paper mode, Settings saved after it
+  passed; one at a time) → live (it held on paper; live mode, saved after that) → kept; cancel and
+  drop/undrop. `judge` scores a paper or live test on the first 30 positions opened while the
+  tested version was in force (a later save pauses it), on real fills, by the forward test's bar;
+  it fades → dropped by code. It also logs agent vs. rule picks (buys stay the prompt's until the
+  operator decides otherwise). Kept and live ideas get the decay watch: last 30 live trades,
+  mean ≤ 0 or fill gap (`trades.quote_price_usd`, written on live swaps) above the friction →
+  `decay_at` once, a warn log, nothing else.
 - Dashboard: `server.ts` (`node:http`, login via `auth.ts` when `DASHBOARD_TOKEN` is set, else a
   Host allowlist against DNS rebinding; POSTs must be application/json) serves `public/` (vanilla
   JS, polls `GET /api/state` every 3s) and reads through `view.ts`, the only place dashboard numbers

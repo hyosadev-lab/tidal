@@ -270,12 +270,180 @@ export function judge(now = Date.now()): { id: number; status: string }[] {
       .run(JSON.stringify({ ...st, rnd_pct: rnd, draws, pool_n: pool.length }), status, now, h.id);
     done.push({ id: h.id, status });
   }
+  for (const h of db.prepare("select * from hypotheses where status in ('paper', 'live', 'kept')").all() as Full[]) {
+    const r = resultOf(h);
+    const mode = h.status === "paper" ? "paper" : "live";
+    if (h.status !== "kept" && !r[mode]?.verdict) {
+      const v = prove(h, mode, fr, now);
+      if (v) done.push({ id: h.id, status: `${mode} ${v}` });
+    } else if (h.status !== "paper") decayWatch(h, fr, now);
+  }
   return done;
 }
 
-/** The operator's no: logged with its numbers, never tried again as new. */
-export function drop(id: number, now = Date.now()): boolean {
-  return Number(db.prepare("update hypotheses set status = 'dropped', decided_at = ? where id = ? and status in ('testing', 'passed', 'failed')").run(now, id).changes) > 0;
+// ── proving it: paper, then a small live stake ────────────────────────
+
+/** Where the operator can take an idea. Paper and live run on Settings as saved: the engine as today. */
+export type Move = "paper" | "cancel" | "live" | "keep" | "drop" | "undrop";
+
+type Full = Row & { status: string; decided_at: number | null; result: string | null; paper_config_at: number | null; live_config_at: number | null; decay_at: number | null };
+const full = (id: number) => db.prepare("select * from hypotheses where id = ?").get(id) as Full | undefined;
+const resultOf = (h: Full): Record<string, any> => (h.result ? JSON.parse(h.result) : {});
+/** The last Settings save, and the one after `at` (when the version saved at `at` stopped being in force). */
+const lastSave = () => (db.prepare("select max(at) at from config_history").get() as { at: number | null }).at;
+const nextSave = (at: number) => (db.prepare("select min(at) at from config_history where at > ?").get(at) as { at: number | null }).at;
+
+/**
+ * The operator's move on an idea, checked against where it stands; an error, or null. Nothing
+ * here edits Settings: a test runs on the version the operator saved, from when they press it.
+ *   passed → paper (paper mode, saved after it passed; one paper test at a time)
+ *   paper → live (it held on paper; live mode, saved after that; one at a time)
+ *   live → kept (it held on live fills) · paper or live → cancel (back one step)
+ *   any → drop · a drop made here → undrop
+ */
+export function move(id: number, to: Move, now = Date.now()): string | null {
+  const h = full(id);
+  if (!h) return "no idea with that id";
+  const r = resultOf(h);
+  const mode = loadConfig().mode;
+  const save = lastSave() ?? 0;
+  const set = (status: string, extra: Record<string, unknown> = {}, result = r) => {
+    const cols = Object.keys(extra).map((k) => `, ${k} = ?`).join("");
+    db.prepare(`update hypotheses set status = ?, decided_at = ?, result = ?${cols} where id = ?`)
+      .run(status, now, JSON.stringify(result), ...(Object.values(extra) as (number | null)[]), id);
+    return null;
+  };
+  const busy = (status: string) => (db.prepare("select id from hypotheses where status = ? and id != ?").get(status, id) as { id: number } | undefined)?.id;
+  if (to === "drop") return h.status === "dropped" ? "already dropped" : set("dropped", {}, { ...r, dropped_from: h.status, dropped_by: "operator" });
+  if (to === "undrop") {
+    if (h.status !== "dropped" || r["dropped_by"] !== "operator") return "only a drop made by hand can be undone";
+    const { dropped_from, dropped_by: _, ...rest } = r;
+    return set(dropped_from, {}, rest);
+  }
+  if (to === "paper") {
+    if (h.status !== "passed") return "only an idea that passed goes to paper";
+    if (mode !== "paper") return "switch Settings to paper mode first";
+    if (save <= (h.decided_at ?? 0)) return "save the rule and its exit in Settings first: the test runs on that version";
+    const other = busy("paper");
+    if (other) return `#${other} is on paper: one paper test at a time`;
+    return set("paper", { paper_config_at: save }, { ...r, paper: { n: 0 } });
+  }
+  if (to === "live") {
+    if (h.status !== "paper" || r["paper"]?.verdict !== "holds") return "only an idea that held on paper goes live";
+    if (mode !== "live") return "switch Settings to live mode, at a small size, first";
+    if (save <= (r["paper"].at ?? 0)) return "save Settings for the live stake first: the test runs on that version";
+    const other = busy("live");
+    if (other) return `#${other} is live: one live test at a time`;
+    return set("live", { live_config_at: save }, { ...r, live: { n: 0 } });
+  }
+  if (to === "keep") return h.status === "live" && r["live"]?.verdict === "holds" ? set("kept") : "only an idea that held on live fills is kept";
+  if (to === "cancel") {
+    if (h.status === "paper") return set("passed", { paper_config_at: null }, { ...r, paper: undefined });
+    if (h.status === "live" && !r["live"]?.verdict) return set("paper", { live_config_at: null }, { ...r, live: undefined });
+    return "only a running paper or live test can be cancelled";
+  }
+  return "unknown move";
+}
+
+/** How much worse a live fill came in than its quote, in % (buy: paid more; sell: got less). Pure. */
+export const adverseGap = (side: "buy" | "sell", price: number, quoted: number) => (side === "buy" ? price / quoted - 1 : 1 - price / quoted) * 100;
+
+/** Agent picks against the rule over decided tracks in [from, to): where the two agree and where they part. */
+function agreement(conds: Cond[], from: number, to: number) {
+  const rows = db
+    .prepare(
+      `select s.started_at at, s.token, s.features, d.action from shadow_tracks s join decisions d on d.id = s.decision_id
+       where s.source = 'decision' and s.started_at >= ? and s.started_at < ? order by s.started_at`,
+    )
+    .all(from, to) as { at: number; token: string; features: string; action: string }[];
+  const out = { decided: rows.length, agentBuys: 0, bothBuy: 0, ruleOnly: 0, differ: [] as { at: number; token: string; symbol: unknown; agent: string; rule: boolean }[] };
+  for (const r of rows) {
+    const f = JSON.parse(r.features);
+    const rule = matches(f, conds);
+    const buy = r.action === "buy";
+    out.agentBuys += buy ? 1 : 0;
+    out.bothBuy += buy && rule ? 1 : 0;
+    out.ruleOnly += !buy && rule ? 1 : 0;
+    if (buy !== rule) out.differ.push({ at: r.at, token: r.token, symbol: f.symbol ?? null, agent: r.action, rule });
+  }
+  out.differ = out.differ.slice(-8);
+  return out;
+}
+
+/**
+ * A paper or live test: the first BAR_N positions opened while the tested Settings version was in
+ * force, judged on their real fills by the forward test's bar. Holds: the operator takes the next
+ * step. Fades: dropped by code. A save of Settings mid-test pauses it: later trades are another version.
+ */
+function prove(h: Full, mode: "paper" | "live", fr: { pct: number | null }, now: number): string | null {
+  const from = (mode === "paper" ? h.paper_config_at : h.live_config_at)!;
+  const until = nextSave(from) ?? Infinity;
+  const r = resultOf(h);
+  const ps = db
+    .prepare(
+      `select p.id, p.opened_at, p.status, p.cost_usd cost, (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
+       from positions p where p.mode = ? and p.opened_at >= ? and p.opened_at < ? order by p.opened_at limit ?`,
+    )
+    .all(mode, from, until, BAR_N) as { id: number; opened_at: number; status: string; cost: number; pnl: number | null }[];
+  const closed = ps.filter((p) => p.status === "closed" && p.cost > 0);
+  const conds = JSON.parse(h.conditions) as Cond[];
+  const gaps = (db
+    .prepare(
+      `select t.side, t.price_usd price, t.quote_price_usd quoted from trades t join positions p on p.id = t.position_id
+       where p.mode = 'live' and p.opened_at >= ? and p.opened_at < ? and t.quote_price_usd > 0`,
+    )
+    .all(from, until) as { side: "buy" | "sell"; price: number; quoted: number }[]).map((g) => adverseGap(g.side, g.price, g.quoted));
+  const base = {
+    of: BAR_N, version_at: from, paused_at: until <= now ? until : null, agreement: agreement(conds, from, Math.min(until, now)),
+    fill_gap_pct: gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null, at: now,
+  };
+  if (ps.length < BAR_N || closed.length < BAR_N) {
+    db.prepare("update hypotheses set result = ? where id = ?").run(JSON.stringify({ ...r, [mode]: { ...base, n: closed.length } }), h.id);
+    return null;
+  }
+  const trades = closed.map((p) => ({ at: p.opened_at, pnl: ((p.pnl ?? 0) / p.cost) * 100 }));
+  const st = stats(trades, 0, []);
+  const s = JSON.parse(h.exit) as Setup;
+  // Real fills carry their costs; random picks are replays, so they pay the measured friction.
+  const pool = poolOf(tracksIn(h.source, from, trades.at(-1)!.at + 1), s).map((p) => p - (fr.pct ?? 0));
+  const draws = drawsFor(h.id);
+  const rnd = beats(st.avg_pct!, pool, BAR_N, draws, h.id + 1000);
+  const verdict = st.avg_pct! > 0 && st.halves.every((x) => x > 0) && rnd >= h.need_pct ? "holds" : "fades";
+  const result = { ...r, [mode]: { ...base, ...st, friction_pct: null, rnd_pct: rnd, draws, pool_n: pool.length, verdict } };
+  if (verdict === "fades") {
+    db.prepare("update hypotheses set status = 'dropped', decided_at = ?, result = ? where id = ?").run(now, JSON.stringify({ ...result, dropped_from: mode, dropped_by: "code" }), h.id);
+    log("warn", `Research: #${h.id} faded on ${mode} fills (${st.avg_pct!.toFixed(1)}% a trade over ${BAR_N}) — dropped.`);
+  } else {
+    db.prepare("update hypotheses set result = ? where id = ?").run(JSON.stringify(result), h.id);
+    log("info", `Research: #${h.id} held on ${mode} fills (${st.avg_pct!.toFixed(1)}% a trade over ${BAR_N})${mode === "paper" ? " — a small live stake is your call." : " — keeping it is your call."}`);
+  }
+  return verdict;
+}
+
+/**
+ * The decay watch, on ideas live or kept: over the last BAR_N live positions since it went live,
+ * a mean at or below 0, or a fill gap above the friction, flags it once and says so. It never
+ * edits Settings.
+ */
+function decayWatch(h: Full, fr: { pct: number | null }, now: number): void {
+  const ps = db
+    .prepare(
+      `select p.id, p.cost_usd cost, (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
+       from positions p where p.mode = 'live' and p.status = 'closed' and p.opened_at >= ? order by p.closed_at desc limit ?`,
+    )
+    .all(h.live_config_at ?? now, BAR_N) as { id: number; cost: number; pnl: number | null }[];
+  if (ps.length < BAR_N) return;
+  const avg = ps.reduce((a, p) => a + (p.cost > 0 ? ((p.pnl ?? 0) / p.cost) * 100 : 0), 0) / ps.length;
+  const ids = ps.map((p) => p.id).join(",");
+  const gaps = (db.prepare(`select side, price_usd price, quote_price_usd quoted from trades where position_id in (${ids}) and quote_price_usd > 0`).all() as {
+    side: "buy" | "sell"; price: number; quoted: number;
+  }[]).map((g) => adverseGap(g.side, g.price, g.quoted));
+  const gap = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null;
+  const decayed = avg <= 0 || (gap !== null && fr.pct !== null && gap > fr.pct);
+  const r = { ...resultOf(h), decay: { n: ps.length, avg_pct: avg, fill_gap_pct: gap, friction_pct: fr.pct, decayed, at: now } };
+  db.prepare("update hypotheses set result = ?, decay_at = coalesce(decay_at, ?) where id = ?").run(JSON.stringify(r), decayed ? now : null, h.id);
+  if (decayed && !h.decay_at)
+    log("warn", `Decay watch: #${h.id} — the last ${BAR_N} live trades average ${avg.toFixed(1)}%${gap !== null ? `, fill gap ${gap.toFixed(2)}%` : ""}. Settings are unchanged: your call.`);
 }
 
 export type Try = { id: number; created_at: number; author: string; parent_id: number | null; rule: string; conditions: Cond[]; exit: Setup; source: Source; need_pct: number; backtest: unknown; result: any; status: string; decided_at: number | null; notes: string | null };

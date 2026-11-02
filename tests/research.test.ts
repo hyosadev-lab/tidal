@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { loadConfig, saveConfig } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
-import { beats, drawsFor, drop, judge, matches, register, seedTries, tries, validate, type Idea } from "../src/research.ts";
+import { adverseGap, beats, drawsFor, judge, matches, move, register, seedTries, tries, validate, type Idea } from "../src/research.ts";
 import { query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
@@ -65,7 +66,7 @@ test("seeds: rounds 1–3 and the ATH check are failed tries 1–4, once; the ne
 
 let seq = 0;
 /** A decided token's track, and when `cost` is given, the real trade bought on it. */
-function decided(at: number, features: object, path: Point[], real?: { pnl: number; reason: string }) {
+function decided(at: number, features: object, path: Point[], real?: { pnl: number; reason: string; mode?: string }) {
   const token = `T${seq++}`;
   insert("tokens", { address: token, first_seen_at: 1 });
   const d = insert("decisions", { run_id: insert("agent_runs", { started_at: at, model: "m", status: "ok" }), token, action: real ? "buy" : "skip" });
@@ -76,7 +77,7 @@ function decided(at: number, features: object, path: Point[], real?: { pnl: numb
   if (!real) return;
   const p = insert("positions", {
     token, decision_id: d, entry_snapshot_id: insert("token_snapshots", { token, taken_at: at, kind: "entry", price_usd: 1, raw: "{}" }),
-    mode: "paper", status: "closed", opened_at: at + 4_000, closed_at: at + 60_000, close_reason: real.reason, entry_price_usd: 1, cost_usd: 10, original_qty: "1", qty: "0",
+    mode: real.mode ?? "paper", status: "closed", opened_at: at + 4_000, closed_at: at + 60_000, close_reason: real.reason, entry_price_usd: 1, cost_usd: 10, original_qty: "1", qty: "0",
   });
   insert("exit_rules", { position_id: p, seq: 0, kind: "sl", at_pct: -30, sell_pct: 100 });
   insert("exit_rules", { position_id: p, seq: 1, kind: "tp", at_pct: 15, sell_pct: 100 });
@@ -105,9 +106,11 @@ test("judge: waits for a trusted replay, then decides at the 30th trade on track
   assert.ok(g.result.halves.every((h: number) => h > 0));
   assert.equal(tries().find((x) => x.id === bad.id)!.result.win, 0);
 
-  assert.ok(drop(good.id));
+  assert.equal(move(good.id, "drop"), null);
   assert.equal(tries().find((x) => x.id === good.id)!.status, "dropped");
-  assert.ok(!drop(good.id));
+  assert.equal(move(good.id, "drop"), "already dropped");
+  assert.equal(move(good.id, "undrop"), null);
+  assert.equal(tries().find((x) => x.id === good.id)!.status, "passed");
 });
 
 test("ledger_query: one select on a read-only connection, cut short when it runs long", () => {
@@ -119,4 +122,69 @@ test("ledger_query: one select on a read-only connection, cut short when it runs
   assert.equal(r.rows.length, 200);
   assert.match(r.cut!, /aggregate/);
   assert.match(String(query(ro, "select nope from t")), /SQL error/);
+});
+
+test("fill gap: what a live fill paid over its quote, either side", () => {
+  assert.ok(Math.abs(adverseGap("buy", 1.02, 1) - 2) < 1e-9);
+  assert.ok(Math.abs(adverseGap("sell", 0.98, 1) - 2) < 1e-9);
+  assert.ok(Math.abs(adverseGap("sell", 1.01, 1) + 1) < 1e-9);
+});
+
+const trusted = (t: number) => { for (let i = 0; i < 10; i++) decided(t + i * 60_000, { good: true }, UP, { pnl: 19.9, reason: "tp" }); };
+
+test("paper, then live: each step the operator's, each judged at 30 trades on its own fills", () => {
+  openDb(":memory:");
+  const t0 = Date.UTC(2026, 10, 2, 0, 0);
+  const cfg = loadConfig(); // the first config save: the history starts before the idea
+  trusted(t0 - 3 * 86_400_000);
+  const h = register(validate(idea()) as Idea, "m", t0).id;
+  for (let i = 0; i < 40; i++) decided(t0 + 60_000 + i * 600_000, { good: i % 4 !== 3 }, i % 4 !== 3 ? UP : DOWN);
+  judge(t0 + 86_400_000);
+  assert.equal(tries()[0]!.status, "passed");
+
+  assert.match(move(h, "paper", t0 + 86_400_000)!, /save the rule/);
+  db.prepare("delete from config_history").run();
+  insert("config_history", { at: t0 + 86_400_000 + 1, value: JSON.stringify(cfg) }); // the operator saves the rule in
+  assert.equal(move(h, "live"), "only an idea that held on paper goes live");
+  assert.equal(move(h, "paper"), null);
+  const paperAt = t0 + 86_400_000 + 1;
+  // 30 paper trades on the agent's buys (all the rule's too), 2 rule matches the agent skipped, 50 losers it skipped.
+  for (let i = 0; i < 30; i++) decided(paperAt + 60_000 + i * 1_800_000, { good: true, symbol: `B${i}` }, UP, { pnl: 5, reason: "tp" });
+  for (let i = 0; i < 2; i++) decided(paperAt + 90_000 + i * 1_800_000, { good: true, symbol: `S${i}` }, UP);
+  for (let i = 0; i < 50; i++) decided(paperAt + 120_000 + i * 1_000_000, { good: false }, DOWN);
+  judge(paperAt + 3 * 86_400_000);
+  const p = tries()[0]!.result.paper;
+  assert.equal(p.verdict, "holds", JSON.stringify(p));
+  assert.deepEqual([p.n, p.agreement.agentBuys, p.agreement.bothBuy, p.agreement.ruleOnly, p.agreement.differ.length], [30, 30, 30, 2, 2]);
+  assert.equal(tries()[0]!.status, "paper");
+
+  assert.match(move(h, "live")!, /live mode/);
+  saveConfig({ ...cfg, mode: "live" }); // the operator switches to live, at a small size
+  const liveAt = paperAt + 3 * 86_400_000 + 1;
+  insert("config_history", { at: liveAt, value: JSON.stringify({ ...cfg, mode: "live" }) }); // on the test's clock
+  assert.equal(move(h, "live"), null);
+  for (let i = 0; i < 30; i++) decided(liveAt + 60_000 + i * 1_800_000, { good: true }, DOWN, { pnl: -4, reason: "sl", mode: "live" });
+  judge(liveAt + 3 * 86_400_000);
+  const r = tries()[0]!;
+  assert.deepEqual([r.status, r.result.live.verdict, r.result.dropped_by], ["dropped", "fades", "code"]);
+  assert.equal(move(h, "undrop"), "only a drop made by hand can be undone");
+});
+
+test("decay watch: a kept idea whose last 30 live trades lose is flagged once, Settings untouched", () => {
+  openDb(":memory:");
+  const t0 = Date.UTC(2026, 10, 5, 0, 0);
+  const cfg = loadConfig();
+  insert("config_history", { at: t0, value: JSON.stringify({ ...cfg, mode: "live" }) });
+  insert("hypotheses", {
+    id: 1, created_at: t0, author: "m", rule: "r", conditions: "[]", exit: JSON.stringify({ sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30, drain: 55, slots: 2, size_sol: 0.1 }),
+    need_pct: 95, status: "kept", live_config_at: t0, result: "{}",
+  });
+  for (let i = 0; i < 30; i++) decided(t0 + i * 600_000, { good: true }, DOWN, { pnl: -2, reason: "sl", mode: "live" });
+  judge(t0 + 86_400_000);
+  const h = db.prepare("select decay_at, result from hypotheses where id = 1").get() as { decay_at: number; result: string };
+  assert.equal(h.decay_at, t0 + 86_400_000);
+  assert.equal(JSON.parse(h.result).decay.decayed, true);
+  judge(t0 + 2 * 86_400_000);
+  assert.equal((db.prepare("select decay_at from hypotheses where id = 1").get() as { decay_at: number }).decay_at, t0 + 86_400_000);
+  assert.equal(loadConfig().mode, cfg.mode);
 });

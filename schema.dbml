@@ -286,7 +286,7 @@ Table trades {
   pnl_usd real [note: 'sells only, net of fees']
   reason text [not null, note: 'entry | tp | sl | time | health | manual | external']
   tx_signature text [unique, note: 'live only: Jupiter /execute signature']
-  quote_price_usd real [note: 'live only: the price the Jupiter /order quote implied; price_usd against it is the fill gap the decay watch reads']
+  quote_price_usd real [note: 'live only: the price the Jupiter /order quote implied before signing (its outAmount); price_usd against it is the fill gap the decay watch reads. Null on paper, whose fill is the quote']
 
   indexes {
     at
@@ -392,6 +392,10 @@ Table hypotheses {
     switches on; 30 trades, the same bar on live fills) → kept (full size, the operator's call) |
     dropped. The decay watch keeps scoring kept and live rows and only flags them: no code edits
     the prompt. Rounds 1–3 and the ATH check are seeded as failed tries 1–4, so no model retries them.
+    result keeps the forward test's numbers, then `paper` and `live` (n, agreement: agent vs. rule
+    picks, fill_gap_pct, the same stats and verdict holds | fades), `decay`, and on a drop
+    dropped_from / dropped_by (operator: undoable; code: it faded). A paper or live test counts the
+    first 30 positions opened while its Settings version was in force; a later save pauses it.
     research.ts judges (the engine runs `research-cli.ts judge` as a child process every 10 min);
     a verdict waits until the replay is trusted (10+ real trades, 90% agree). Ideas come from the
     research agent (`research-cli.ts agent`, the Research page's button) or Claude Code (the CLI),
