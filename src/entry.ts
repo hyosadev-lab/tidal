@@ -5,6 +5,7 @@ import { decide, type Verdict } from "./decide.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import { log, short } from "./log.ts";
+import { sampleRank } from "./shadow.ts";
 import { takeSnapshot, writeSignal } from "./snapshot.ts";
 import { buy, cashUsd, lossDay, MIN_BUY_USD, openPositions, positionClosed, security, solUsd } from "./trade.ts";
 
@@ -50,13 +51,15 @@ function feedRow(r: any, source: string, signal: boolean): FeedRow {
   };
 }
 
-async function fetchTokens(cfg: Config): Promise<string[]> {
+/** The feeds' tokens, trending first, and the trending rows as GMGN sent them (for rank shadow tracks). */
+async function fetchTokens(cfg: Config): Promise<{ tokens: string[]; rank: Record<string, any>[] }> {
   const c = gmgnClient();
   const [rank, signal] = await Promise.allSettled([
     c.getTrendingSwaps("sol", "1h", { order_by: "volume", limit: FEED_LIMIT, ...rankFilters(cfg) }),
     c.getTokenSignalV2("sol", SIGNAL_GROUPS.map((signal_type) => ({ signal_type, ...signalFilters(cfg) }))),
   ]);
   const rows = new Map<string, FeedRow>();
+  const rankRows: Record<string, any>[] = [];
   const failed = (feed: string, e: unknown) => {
     const error = `${feed}: ${short(e)}`;
     if (error !== status.gmgn.error) log("warn", `${feed} feed failed: ${short(e)}`); // once, not every cycle
@@ -66,7 +69,10 @@ async function fetchTokens(cfg: Config): Promise<string[]> {
     // The rank route's data is itself an envelope: { code, data: { rank: [...] } }.
     const r: any = rank.value;
     for (const row of r?.rank ?? r?.data?.rank ?? [])
-      if (row?.address && !row.is_wash_trading && inFilters(row, cfg)) rows.set(String(row.address), feedRow(row, "1h trending", false));
+      if (row?.address && !row.is_wash_trading && inFilters(row, cfg)) {
+        rows.set(String(row.address), feedRow(row, "1h trending", false));
+        rankRows.push(row);
+      }
   } else failed("Trending", rank.reason);
   if (signal.status === "fulfilled") {
     const s: any = signal.value;
@@ -84,7 +90,7 @@ async function fetchTokens(cfg: Config): Promise<string[]> {
     });
   } else failed("Signal", signal.reason);
   status.fetch = { at: Date.now(), rows: [...rows.values()] };
-  return [...rows.keys()];
+  return { tokens: [...rows.keys()], rank: rankRows };
 }
 
 /** Waits whose recheck time has passed, whether or not a feed carried them this cycle. */
@@ -225,8 +231,14 @@ async function entryCycle(): Promise<boolean> {
     status.entry.note = "";
 
     const now = Date.now();
-    const candidates = [...new Set([...waitsDue(now), ...(await fetchTokens(cfg))])];
+    const feed = await fetchTokens(cfg);
+    const candidates = [...new Set([...waitsDue(now), ...feed.tokens])];
     const due = candidates.filter((t) => isDue(t, cfg, now)).slice(0, MAX_BRIEF);
+    try {
+      sampleRank(feed.rank, new Set(due));
+    } catch (e) {
+      log("warn", `Rank shadow tracks not started: ${short(e)}`); // research only: never stops a cycle
+    }
     if (!due.length) return true;
 
     const snaps: { token: string; snapshotId: number }[] = [];

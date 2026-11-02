@@ -272,6 +272,7 @@ create table if not exists shadow_tracks (
   check ((source = 'decision') = (decision_id is not null))
 ) strict;
 create index if not exists shadow_tracks_started on shadow_tracks(started_at);
+create index if not exists shadow_tracks_token on shadow_tracks(token, source);
 
 create table if not exists config_history (
   at integer primary key,

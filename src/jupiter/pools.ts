@@ -1,4 +1,5 @@
-import { b58encode, rpc, rpcUrl, WSOL } from "./client.ts";
+import { createHash } from "node:crypto";
+import { b58decode, b58encode, rpc, rpcUrl, WSOL } from "./client.ts";
 
 /**
  * Exit prices off each pool's own reserves, on-chain: no Jupiter call. A Solana RPC WebSocket
@@ -54,6 +55,50 @@ export function curveReading(d: Buffer, decimals: number, quoteDecimals = 9): { 
 export function curveQuote(d: Buffer): string {
   const at = d.subarray(83, 115);
   return at.length < 32 || at.every((b) => b === 0) ? WSOL : b58encode(at);
+}
+
+// ── addresses (pure) ──────────────────────────────────────────────────
+
+const P = 2n ** 255n - 19n;
+const powMod = (b: bigint, e: bigint): bigint => {
+  let r = 1n;
+  for (b %= P; e > 0n; e >>= 1n, b = (b * b) % P) if (e & 1n) r = (r * b) % P;
+  return r;
+};
+const D = P - ((121665n * powMod(121666n, P - 2n)) % P);
+
+/** Whether 32 bytes decode to an ed25519 point (RFC 8032 §5.1.3, y taken mod p as Solana does). */
+function onCurve(b: Buffer): boolean {
+  let y = 0n;
+  for (let i = 31; i >= 0; i--) y = (y << 8n) | BigInt(b[i]!);
+  y = (y & ((1n << 255n) - 1n)) % P;
+  const y2 = (y * y) % P;
+  const u = (y2 + P - 1n) % P;
+  const v = (D * y2 + 1n) % P;
+  const v3 = (((v * v) % P) * v) % P;
+  const x = (((u * v3) % P) * powMod((((u * v3) % P) * ((v3 * v) % P)) % P, (P - 5n) / 8n)) % P;
+  const vx2 = (((v * x) % P) * x) % P;
+  return vx2 === u || vx2 === (P - u) % P;
+}
+
+/** Solana's findProgramAddress: the first bump, from 255 down, whose hash is not a curve point. */
+export function pda(seeds: Buffer[], program: string): string {
+  for (let bump = 255; bump >= 0; bump--) {
+    const h = createHash("sha256");
+    for (const s of seeds) h.update(s);
+    const k = h.update(Buffer.from([bump])).update(b58decode(program)).update("ProgramDerivedAddress").digest();
+    if (!onCurve(k)) return b58encode(k);
+  }
+  throw new Error("no program address");
+}
+
+/** A pump token's bonding curve. */
+export const curveOf = (mint: string): string => pda([Buffer.from("bonding-curve"), b58decode(mint)], PUMP_CURVE);
+
+/** The PumpSwap pool a pump curve migrates into: index 0, made by pump's pool authority for the mint, against `quote`. */
+export function migratedPool(mint: string, quote = WSOL): string {
+  const authority = pda([Buffer.from("pool-authority"), b58decode(mint)], PUMP_CURVE);
+  return pda([Buffer.from("pool"), Buffer.from([0, 0]), b58decode(authority), b58decode(mint), b58decode(quote)], PUMP_AMM);
 }
 
 /** An SPL token account's raw amount — the same offset in Token and Token-2022. */
@@ -127,26 +172,51 @@ export type Resolved = { kind: "curve" | "amm"; quoteMint: string; decimals: num
 
 /** Reads a pool once and finds its reserve accounts, or says why it is not read on-chain. Network errors throw. */
 export async function resolvePool(mint: string, pool: string): Promise<Resolved | string> {
-  const first = await accounts([pool]);
-  const acc = first.list[0];
-  const layout = acc && decodePool(acc.owner, acc.data);
-  if (!layout) return acc ? `pool owned by ${acc.owner.slice(0, 8)}…, not read on-chain` : "pool account not found";
-  if (layout.kind === "curve") {
-    const quoteMint = curveQuote(acc!.data);
-    const [m, q] = (await accounts(quoteMint === WSOL ? [mint] : [mint, quoteMint])).list;
-    if (!m) return "mint account not found";
-    if (quoteMint !== WSOL && !q) return "quote mint account not found";
-    const decimals = [mintDecimals(m.data), q ? mintDecimals(q.data) : 9];
-    return { kind: "curve", quoteMint, decimals, accounts: [pool], slot: first.slot, data: [acc!.data] };
+  return (await resolvePools([{ mint, pool }]))[0]!;
+}
+
+/** Accounts by key, read 100 at a time; each keeps the slot of the read that brought it. */
+async function many(keys: string[]): Promise<Map<string, { owner: string; data: Buffer; slot: number }>> {
+  const out = new Map<string, { owner: string; data: Buffer; slot: number }>();
+  for (let i = 0; i < keys.length; i += 100) {
+    const r = await accounts(keys.slice(i, i + 100));
+    r.list.forEach((a, j) => a && out.set(keys[i + j]!, { ...a, slot: r.slot }));
   }
-  const tokenIsBase = layout.baseMint === mint;
-  if (!tokenIsBase && layout.quoteMint !== mint) return "pool does not hold this token";
-  const other = tokenIsBase ? layout.quoteMint : layout.baseMint;
-  const vaults = tokenIsBase ? [layout.baseVault, layout.quoteVault] : [layout.quoteVault, layout.baseVault];
-  const r = await accounts([mint, other, ...vaults]);
-  if (r.list.some((a) => !a)) return "a pool account is missing";
-  const [m, q, ...v] = r.list.map((a) => a!.data);
-  return { kind: "amm", quoteMint: other, decimals: [mintDecimals(m!), mintDecimals(q!)], accounts: vaults, slot: r.slot, data: v };
+  return out;
+}
+
+/**
+ * `resolvePool` for many pools in two rounds of reads, whatever their number: every pool account,
+ * then every mint and vault they name. Network errors throw.
+ */
+export async function resolvePools(items: { mint: string; pool: string }[]): Promise<(Resolved | string)[]> {
+  const first = await many([...new Set(items.map((i) => i.pool))]);
+  const plans = items.map(({ mint, pool }) => {
+    const acc = first.get(pool);
+    const layout = acc && decodePool(acc.owner, acc.data);
+    if (!layout) return acc ? `pool owned by ${acc.owner.slice(0, 8)}…, not read on-chain` : "pool account not found";
+    if (layout.kind === "curve") {
+      const quoteMint = curveQuote(acc!.data);
+      return { kind: "curve" as const, mint, quoteMint, accounts: [pool], first: acc! };
+    }
+    const tokenIsBase = layout.baseMint === mint;
+    if (!tokenIsBase && layout.quoteMint !== mint) return "pool does not hold this token";
+    const quoteMint = tokenIsBase ? layout.quoteMint : layout.baseMint;
+    return { kind: "amm" as const, mint, quoteMint, accounts: tokenIsBase ? [layout.baseVault, layout.quoteVault] : [layout.quoteVault, layout.baseVault] };
+  });
+  const keys = plans.flatMap((p) => (typeof p === "string" ? [] : [p.mint, p.quoteMint, ...(p.kind === "amm" ? p.accounts : [])]));
+  const second = await many([...new Set(keys.filter((k) => k !== WSOL))]);
+  const decimalsOf = (m: string) => (m === WSOL ? 9 : second.has(m) ? mintDecimals(second.get(m)!.data) : null);
+  return plans.map((p): Resolved | string => {
+    if (typeof p === "string") return p;
+    const decimals = [decimalsOf(p.mint), decimalsOf(p.quoteMint)];
+    if (decimals[0] === null) return "mint account not found";
+    if (decimals[1] === null) return "quote mint account not found";
+    if (p.kind === "curve") return { kind: "curve", quoteMint: p.quoteMint, decimals: decimals as number[], accounts: p.accounts, slot: p.first.slot, data: [p.first.data] };
+    const vaults = p.accounts.map((a) => second.get(a));
+    if (vaults.some((v) => !v)) return "a pool account is missing";
+    return { kind: "amm", quoteMint: p.quoteMint, decimals: decimals as number[], accounts: p.accounts, slot: vaults[0]!.slot, data: vaults.map((v) => v!.data) };
+  });
 }
 
 /** Price (quote per token) and liquidity (the quote reserve) off one read of a pool's reserve accounts, all from one slot. */

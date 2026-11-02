@@ -161,3 +161,13 @@ test("a curve quoted in another token is priced in that token, with its decimals
   for (const m of pools.watching()) pools.unwatch(m);
   pools.tick();
 });
+
+test("addresses: a pump token's curve and the PumpSwap pool it migrates into, off the mint alone", () => {
+  // Pairs GMGN reported for real tokens.
+  assert.equal(pools.curveOf("2KH3rv7PoDa3nwyzRqd7Tfq365aGRSzb8vEujRWrpump"), "3LoJoiLH3vimphQfrjCtw6T2hrFUG1gy4uwohweBqWFK");
+  assert.equal(pools.migratedPool("E6exteuDy1u6u3FfQV7SvPyU4XPdcBGi4cBnqrusocat"), "5sPzRxRMyaX85fAwNC61kvifvH63JUwt4viZkUNno4wd");
+  assert.equal(
+    pools.migratedPool("93FWFR63nwQcq5zuXNmTits5BYcKFjmUZzccMvhmpump", "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"),
+    "646NHe5TmrAHa6y6TxGBnW94bhu5sgXCqMH6oLD1pkvb",
+  );
+});
