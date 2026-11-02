@@ -21,7 +21,8 @@ const ENTRY_STEPS = 15;
  * then a liquidity drain against the first reserve, then the time stop, then take profits), each
  * sale at the point's price less its own impact. What is held when the path ends is sold at its
  * last point; after a rug it is worth nothing. The reserve is the real one, so on a curve (about
- * 30 SOL shallower than its virtual reserve) the impact is overstated; the measured gap carries it.
+ * 30 SOL shallower than its virtual reserve) or a PumpSwap pool (about 17.5) the impact is
+ * overstated; the measured gap carries it.
  * Returns the PnL % on cost and the point where nothing was left held, or null with no point to buy at. Pure.
  */
 export function replayTrade(points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean): { pnl: number; out: number } | null {

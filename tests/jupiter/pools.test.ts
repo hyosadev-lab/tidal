@@ -16,8 +16,8 @@ const CURVE = key(6);
 const u64 = (d: Buffer, at: number, v: bigint) => (d.writeBigUInt64LE(v, at), d);
 const mint = (decimals: number) => Object.assign(Buffer.alloc(82), { 44: decimals });
 const tokenAccount = (amount: bigint) => u64(Buffer.alloc(165), 64, amount);
-function ammPool(): Buffer {
-  const d = Buffer.alloc(301);
+function ammPool(virtualQuote = 0n): Buffer {
+  const d = u64(Buffer.alloc(301), 245, virtualQuote);
   for (const [at, k] of [[43, MINT], [75, WSOL], [139, BASE_VAULT], [171, QUOTE_VAULT]] as const) b58decode(k).copy(d, at);
   return d;
 }
@@ -73,16 +73,16 @@ test("layouts: a PumpSwap pool names its vaults, a curve prices off virtual rese
   assert.equal(pools.curveQuote(curve(1n, 1n, 1n)), WSOL); // an empty quote field: a SOL launch
 });
 
-test("PumpSwap: priced on first read, then only when both vaults agree on a slot", async () => {
-  chain.set(POOL, { owner: pools.PUMP_AMM, data: ammPool() });
+test("PumpSwap: priced off the vaults plus the pool's virtual quote, on first read, then only when both vaults agree on a slot", async () => {
+  chain.set(POOL, { owner: pools.PUMP_AMM, data: ammPool(25_000_000_000n) }); // 25 virtual SOL
   chain.set(MINT, { owner: "token", data: mint(6) });
   chain.set(WSOL, { owner: "token", data: mint(9) });
   chain.set(BASE_VAULT, { owner: "token", data: tokenAccount(2_000_000_000_000n) }); // 2,000,000 tokens
   chain.set(QUOTE_VAULT, { owner: "token", data: tokenAccount(100_000_000_000n) }); // 100 SOL
 
   await pools.watch(MINT, POOL);
-  assert.equal(pools.reading(MINT)?.price, 0.00005);
-  assert.equal(pools.reading(MINT)?.liquidity, 100);
+  assert.equal(pools.reading(MINT)?.price, 125 / 2_000_000);
+  assert.equal(pools.reading(MINT)?.liquidity, 100, "liquidity is the real reserve");
   assert.deepEqual(pools.quoteMints(), [WSOL]);
 
   pools.tick();
@@ -90,7 +90,7 @@ test("PumpSwap: priced on first read, then only when both vaults agree on a slot
   sock.onopen!();
   assert.ok(pools.socketUp());
   const asks = sock.sent.filter((m) => m.method === "accountSubscribe");
-  assert.deepEqual(asks.map((m) => m.params[0]).sort(), [BASE_VAULT, QUOTE_VAULT].sort());
+  assert.deepEqual(asks.map((m) => m.params[0]).sort(), [BASE_VAULT, QUOTE_VAULT, POOL].sort());
   assert.ok(sock.sent.some((m) => m.method === "slotSubscribe"), "a heartbeat is asked for");
   const subOf = new Map<string, number>();
   asks.forEach((m, i) => (subOf.set(m.params[0], 100 + i), sock.reply({ jsonrpc: "2.0", id: m.id, result: 100 + i })));
@@ -104,14 +104,16 @@ test("PumpSwap: priced on first read, then only when both vaults agree on a slot
 
   // A buy: tokens leave the base vault, SOL enters the quote vault, both in slot 20.
   push(BASE_VAULT, tokenAccount(1_600_000_000_000n), 20);
-  assert.equal(pools.reading(MINT)?.price, 0.00005, "one vault seen: not priced yet");
+  assert.equal(pools.reading(MINT)?.price, 125 / 2_000_000, "one vault seen: not priced yet");
   push(QUOTE_VAULT, tokenAccount(125_000_000_000n), 20);
-  assert.equal(pools.reading(MINT)?.price, 125 / 1_600_000);
+  assert.equal(pools.reading(MINT)?.price, 150 / 1_600_000);
   assert.deepEqual(moves, [MINT]);
+  push(POOL, ammPool(20_000_000_000n), 21); // the virtual reserve drifts on its own
+  assert.equal(pools.reading(MINT)?.price, 145 / 1_600_000);
 
   push(BASE_VAULT, tokenAccount(1n), 19);
   push(QUOTE_VAULT, tokenAccount(1n), 19);
-  assert.equal(pools.reading(MINT)?.price, 125 / 1_600_000, "an older slot is dropped");
+  assert.equal(pools.reading(MINT)?.price, 145 / 1_600_000, "an older slot is dropped");
   pools.feed.removeEventListener("price", onPrice);
 
   pools.tick(Date.now() + 16_000);
