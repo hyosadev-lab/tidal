@@ -4,6 +4,8 @@ import { db } from "./db.ts";
 import { tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
+import { calibration } from "./replay.ts";
+import { SAMPLE_MAX, tracking, type Source } from "./shadow.ts";
 import { lossDay, openPositions, paperCash } from "./trade.ts";
 
 /**
@@ -493,5 +495,64 @@ export function tokenDetail(address: string, cfg: Config, now: number) {
       name: c.name,
       text: toolSummary(c.name, c.result).text,
     })),
+  };
+}
+
+// ── research ──────────────────────────────────────────────────────────
+
+/** A settings version is judged once this many of its trades have closed. */
+export const JUDGE_N = 30;
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+
+/**
+ * The edge research scorecard. What every candidate did in the 30 min after it was decided, or
+ * seen in a sampled feed (shadow tracks of the last 7 days, readable pools, 1 track per token:
+ * its first), how well the replay matches real trades, and each settings version's closed trades.
+ */
+export function research(now: number, tz: string) {
+  const rows = all<{ token: string; source: Source; r: number; action: string | null; conviction: number | null }>(
+    `select s.token, s.source, s.ret_30m r, d.action, d.conviction from shadow_tracks s left join decisions d on d.id = s.decision_id
+     where s.started_at >= ? and s.end_reason in ('done', 'rug') and s.ret_30m is not null order by s.id`,
+    now - 7 * DAY,
+  );
+  const first = (keep: (r: (typeof rows)[number]) => boolean) => {
+    const seen = new Set<string>();
+    return rows.filter((r) => keep(r) && !seen.has(r.token) && !!seen.add(r.token));
+  };
+  const stat = (xs: typeof rows) => ({ avg: mean(xs.map((x) => x.r)), n: xs.length });
+  const decided = first((r) => r.source === "decision");
+  const bands: [number, number, string][] = [[80, 101, "80+"], [70, 80, "70–79"], [60, 70, "60–69"], [0, 60, "under 60"]];
+
+  const ends = all<{ end_reason: string | null; n: number }>(
+    "select end_reason, count(*) n from shadow_tracks where started_at >= ? group by 1",
+    dayStart(now, tz),
+  );
+  const count = (k: string | null) => ends.find((e) => e.end_reason === k)?.n ?? 0;
+  const [done, rug, unreadable] = [count("done"), count("rug"), count("unreadable")];
+
+  const marks = all<{ at: number }>("select at from config_history order by at");
+  const closed = all<{ opened_at: number; cost: number; pnl: number | null }>(
+    `select p.opened_at, p.cost_usd cost, (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
+     from positions p where p.status = 'closed' order by p.opened_at`,
+  );
+  const score = (label: string, at: number | null, from: number, to: number, current: boolean) => {
+    const ps = closed.filter((p) => p.opened_at >= from && p.opened_at < to && p.cost > 0);
+    const pcts = ps.map((p) => ((p.pnl ?? 0) / p.cost) * 100);
+    return { label, at, current, trades: ps.length, won: pcts.filter((x) => x > 0).length, avgPct: mean(pcts), totalUsd: ps.reduce((t, p) => t + (p.pnl ?? 0), 0) };
+  };
+  const versions = marks.map((m, i) => score(`v${i + 1}`, m.at, m.at, marks[i + 1]?.at ?? Infinity, i === marks.length - 1)).reverse();
+  if (marks.length && closed.some((p) => p.opened_at < marks[0]!.at)) versions.push(score("earlier", null, 0, marks[0]!.at, false));
+
+  return {
+    now,
+    judgeN: JUDGE_N,
+    sampleMax: SAMPLE_MAX,
+    tracking: tracking(),
+    today: { started: ends.reduce((t, e) => t + e.n, 0), done, rug, unreadable, restart: count("restart"), open: count(null), readable: done + rug + unreadable ? (done + rug) / (done + rug + unreadable) : null },
+    candidates: { bought: stat(first((r) => r.source === "decision" && r.action === "buy")), decided: stat(decided) },
+    conviction: bands.map(([lo, hi, label]) => ({ label, ...stat(decided.filter((r) => r.conviction !== null && r.conviction >= lo && r.conviction < hi)) })),
+    sources: (["decision", "rank", "migration"] as const).map((s) => ({ source: s, ...stat(first((r) => r.source === s)) })),
+    calibration: calibration(),
+    versions: versions.slice(0, 12),
   };
 }

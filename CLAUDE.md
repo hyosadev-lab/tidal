@@ -65,7 +65,11 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
   in any quote (reserve in SOL at the quote's price at start); pools come off the mint
   (`pools.curveOf` / `migratedPool`, PDAs). Runs started or stopped; a restart ends open tracks as
-  'restart'. Every `saveConfig` also appends to `config_history`.
+  'restart'. Every `saveConfig` also appends to `config_history`. `replay.ts` replays an exit plan
+  on a track's path the way `evaluate` runs it (impact off the stored reserve); `calibration()`
+  replays every trade closed by its rules on its own track. The Research page (`view.research`,
+  `GET /api/research`, read every 15s while open) shows the scorecard: bought vs. all decided,
+  conviction, drift by source, coverage, calibration, settings versions.
 - Dashboard: `server.ts` (`node:http`, login via `auth.ts` when `DASHBOARD_TOKEN` is set, else a
   Host allowlist against DNS rebinding; POSTs must be application/json) serves `public/` (vanilla
   JS, polls `GET /api/state` every 3s) and reads through `view.ts`, the only place dashboard numbers

@@ -72,8 +72,13 @@ const S = {
   loadingOlder: false,
   runPages: { all: new Map(), failed: new Map() }, // runId → row, for today's runs paged in past the state's page
   runsMore: { all: null, failed: null },
+  research: null, // /api/research, read every RESEARCH_MS while the Research page is open
+  researchAt: 0,
+  researchError: "",
 };
-const page = () => (["overview", "trading", "settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
+const PAGES = ["overview", "trading", "research", "settings"];
+const page = () => (PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
+const RESEARCH_MS = 15_000;
 
 // ── network ───────────────────────────────────────────────────────────
 
@@ -119,6 +124,18 @@ async function poll() {
     S.error = e.message;
   }
   render();
+  if (page() === "research" && Date.now() - S.researchAt >= RESEARCH_MS) (await loadResearch(), render());
+}
+
+/** The research scorecard: heavier than the state, so read only on its page and every RESEARCH_MS. */
+async function loadResearch() {
+  S.researchAt = Date.now();
+  try {
+    S.research = await call(`/api/research?tz=${encodeURIComponent(TZ)}`);
+    S.researchError = "";
+  } catch (e) {
+    S.researchError = e.message;
+  }
 }
 
 async function act(path, body, okMsg) {
@@ -171,7 +188,8 @@ function paint(el, html) {
 function tickClock() {
   const d = S.data;
   const now = !d ? Date.now() : Date.now() - S.seenAt < 10_000 ? Date.now() + S.skew : d.now;
-  $("#clock").textContent = `${dayLabel(now)} · ${hms(now)}`;
+  const clock = $("#clock");
+  if (clock) clock.textContent = `${dayLabel(now)} · ${hms(now)}`;
 }
 
 /** `force` repaints the settings form, which polls otherwise leave alone so typing is never lost. */
@@ -184,7 +202,7 @@ function render(force = false) {
   const p = page();
   if (p !== "settings" || force || !painted.has($("#main")) || $("#main").dataset.page !== "settings") {
     $("#main").dataset.page = p;
-    paint($("#main"), p === "overview" ? overview(d) : p === "trading" ? trading(d) : settings(d));
+    paint($("#main"), p === "overview" ? overview(d) : p === "trading" ? trading(d) : p === "research" ? research() : settings(d));
   }
   paint($("#modal"), S.confirmStop ? stopDialog(d) : S.filtersOpen ? filtersDialog(d) : "");
   nearEnd($('[data-scroll="agent"]')); // a list too short to scroll still pages in until it fills the box
@@ -203,11 +221,12 @@ const NAV_ICON = {
   overview: `<path d="M4 5h16v10H4z M12 15v4 M8 19h8 M8 11l3-3 2 2 3-3"/>`,
   trading: `<path d="M4 18l5-6 4 3 7-8 M15 7h5v5"/>`,
   settings: `<path d="M4 7h10 M18 7h2 M4 17h2 M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>`,
+  research: `<path d="M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12z M14.5 14.5L20 20 M7 10h6 M10 7v6"/>`,
 };
 
 function header(d) {
   const p = page();
-  const nav = [["overview", "Overview"], ["trading", "Trading"], ["settings", "Settings"]]
+  const nav = [["overview", "Overview"], ["trading", "Trading"], ["research", "Research"], ["settings", "Settings"]]
     .map(([k, l]) =>
       p === k
         ? `<a href="#${k}" aria-current="page"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round">${NAV_ICON[k]}</svg>${l}</a>`
@@ -621,6 +640,64 @@ function filtersDialog(d) {
   </div></div>`;
 }
 
+// ── research ──────────────────────────────────────────────────────────
+
+const SOURCE = { decision: "decided", rank: "rank, passed over", migration: "fresh migrations" };
+
+/** A bar from the middle: right and lime above 0, left and red below; `max` is the widest |value|. */
+function bar(v, max) {
+  if (!fin(v) || !max) return `<span class="rbar" aria-hidden="true"></span>`;
+  const w = Math.min(50, (Math.abs(v) / max) * 50).toFixed(1);
+  return `<span class="rbar" aria-hidden="true"><i class="${v < 0 ? "neg" : "pos"}" style="width:${w}%;${v < 0 ? `right:50%` : `left:50%`}"></i></span>`;
+}
+
+function barRows(rows, label) {
+  const max = Math.max(...rows.map((r) => (fin(r.avg) ? Math.abs(r.avg) : 0)), 1);
+  return `<ul class="rbars">${rows.map((r) => `<li><span class="s13">${esc(label(r))}</span>${bar(r.avg, max)}<span class="mono s13 r ${sign(r.avg)}">${pct(r.avg)}</span><span class="small muted r">n ${r.n}</span></li>`).join("")}</ul>`;
+}
+
+function research() {
+  const r = S.research;
+  const head = `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Edge research · capture</span><h1>Research</h1><p>Code follows every candidate for 60 minutes and scores every settings version. Nothing on this page changes trading: trading changes only when you save Settings.</p></div></div>`;
+  if (!r) return head + `<p class="${S.researchError ? "neg" : "muted"}" style="padding:0 4px">${esc(S.researchError || "Loading research…")}</p>`;
+  const cur = r.versions.find((v) => v.current);
+  const c = r.candidates;
+  const gap = fin(c.bought.avg) && fin(c.decided.avg) ? c.bought.avg - c.decided.avg : null;
+  const cal = r.calibration;
+  const agree = cal.n ? cal.agree / cal.n : null;
+  const t = r.today;
+  const open = r.tracking;
+  return `${head}
+  <div class="tiles" style="flex:none">
+    <div class="tile lime"><div class="inline"><span class="ico">${I.cycle}</span><span style="font-size:15px;font-weight:600">Current settings${cur ? ` · ${esc(cur.label)}` : ""}</span></div>
+      ${cur ? `<div class="in"><span class="num">${cur.trades} <span style="font-size:20px">of ${r.judgeN}</span></span><span class="s13 muted">closed trades before it can be judged · saved ${esc(dayLabel(cur.at))} ${hm(cur.at)}</span></div>
+      <div class="in"><span class="s13"><b>${cur.trades ? Math.round((cur.won / cur.trades) * 100) + "% won" : "no trades yet"}</b>${cur.trades ? ` · ${pct(cur.avgPct)} a trade · ${susd(cur.totalUsd)}` : ""}</span></div>`
+      : `<div class="in"><span class="s13 muted">No settings saved yet.</span></div>`}</div>
+    <div class="tile"><div class="inline"><span class="ico">${I.target}</span><span style="font-size:15px;font-weight:500">Bought vs. all candidates</span></div>
+      <div class="in"><span class="num ${gap === null ? "" : sign(gap)}">${gap === null ? "—" : (gap < 0 ? MINUS : "+") + Math.abs(gap).toFixed(1) + " pts"}</span>
+        <span class="s13 muted">bought <b class="${sign(c.bought.avg)}">${pct(c.bought.avg)}</b> (n ${c.bought.n}) · all decided <b class="${sign(c.decided.avg)}">${pct(c.decided.avg)}</b> (n ${c.decided.n}), 30 min after the decision</span></div>
+      <span class="small muted" style="padding:0 6px">last 7 days · 1 track per token · above 0 = the agent picks better than its own candidates · judged at n ${r.judgeN} bought</span></div>
+    <div class="tile"><div class="inline"><span class="ico">${I.swap}</span><span style="font-size:15px;font-weight:500">Replay calibration</span></div>
+      <div class="in"><span class="num">${agree === null ? "—" : Math.round(agree * 100) + "%"}</span>
+        <span class="s13 muted">${cal.n ? `<b style="color:var(--ink)">${cal.agree} of ${cal.n}</b> real trades replay to the same win or loss · replay − real <b style="color:var(--ink)">${pct(cal.gapPct, 2)}</b> a trade` : "No closed trade has a track of its own yet."}</span></div>
+      <span class="small muted" style="padding:0 6px">every trade closed by its exit rules, replayed on its own track · trusted at 90% · the gap is the friction every test charges</span></div>
+  </div>
+  <div class="row">
+    <section class="card" style="flex:1 1 320px" aria-labelledby="conv-title"><div class="head"><span class="ico">${I.bars}</span><div class="stack" style="flex:1 1 0"><h2 id="conv-title">Conviction vs. result</h2><span class="sub">30-min return of every decided token, by the agent's conviction</span></div></div>
+      ${c.decided.n ? barRows(r.conviction, (b) => b.label) : `<p class="empty">No decided token has finished 30 minutes yet.</p>`}</section>
+    <section class="card" style="flex:1 1 320px" aria-labelledby="src-title"><div class="head"><span class="ico">${I.filter}</span><div class="stack" style="flex:1 1 0"><h2 id="src-title">Drift by source</h2><span class="sub">30-min return before costs, last 7 days · worth researching only above 0 after impact and the gap</span></div></div>
+      ${r.sources.some((s) => s.n) ? barRows(r.sources, (s) => SOURCE[s.source]) : `<p class="empty">No track has finished 30 minutes yet.</p>`}</section>
+    <section class="card" style="flex:1 1 320px" aria-labelledby="shadow-title"><div class="head"><span class="ico">${I.eye}</span><div class="stack" style="flex:1 1 0"><h2 id="shadow-title">Shadow tracking</h2><span class="sub">pool reserves on-chain every 2s, 60 min each</span></div></div>
+      <div class="split"><div class="stack" style="gap:4px"><span class="s13 muted">Tracking now</span><span class="num2">${open.decision + open.rank + open.migration}</span><span class="small muted">${open.decision} decided · ${open.rank} of ${r.sampleMax} rank · ${open.migration} of ${r.sampleMax} migrations</span></div>
+        <div class="stack" style="gap:4px"><span class="s13 muted">Started today</span><span class="num2">${t.started}</span><span class="small muted">${t.readable === null ? "none ended yet" : `<b style="color:var(--ink)">${Math.round(t.readable * 100)}%</b> readable on-chain`}</span></div></div>
+      <span class="small muted">ended today: ${t.done} done · ${t.rug} rug · ${t.unreadable} unreadable · ${t.restart} restart · a rug counts as a result; only restarts leave the counts</span></section>
+  </div>
+  <section class="card flush" aria-labelledby="ver-title"><div class="head"><span class="ico">${I.clock}</span><div class="stack" style="flex:1 1 0"><h2 id="ver-title">Settings versions</h2><span class="sub">one row per save in Settings · closed trades by when they opened · judged at ${r.judgeN} trades</span></div></div>
+    ${r.versions.length ? `<div class="scroll-x" data-scroll="versions" tabindex="0" role="region" aria-label="Settings versions"><table style="min-width:560px"><thead><tr><th>Version</th><th>Saved</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg / trade</th><th class="r">Total</th></tr></thead><tbody>${r.versions
+      .map((v) => `<tr><td><span class="b">${esc(v.label)}</span>${v.current ? ` <span class="tag buy">current</span>` : ""}</td><td class="s13 muted">${v.at ? `${esc(dayLabel(v.at))} ${hm(v.at)}` : "before history"}</td><td class="r mono">${v.trades}</td><td class="r mono">${v.trades ? Math.round((v.won / v.trades) * 100) + "%" : "—"}</td><td class="r mono ${sign(v.avgPct)}">${pct(v.avgPct)}</td><td class="r mono ${sign(v.totalUsd)}">${v.trades ? susd(v.totalUsd) : "—"}</td></tr>`)
+      .join("")}</tbody></table></div>` : `<p class="empty">No settings saved yet.</p>`}</section>`;
+}
+
 // ── settings ──────────────────────────────────────────────────────────
 
 const sums = (rules) => ["tp", "sl"].map((k) => rules.reduce((t, r) => t + (r.kind === k ? Number(r.sell) || 0 : 0), 0));
@@ -896,7 +973,10 @@ document.addEventListener("keydown", (e) => {
   else if (S.filtersOpen) A.closeFilters();
   else if (S.help) A.help(S.help);
 });
-window.addEventListener("hashchange", () => render(true));
+window.addEventListener("hashchange", async () => {
+  render(true);
+  if (page() === "research" && Date.now() - S.researchAt >= RESEARCH_MS) (await loadResearch(), render());
+});
 
 poll();
 setInterval(poll, 3000);
