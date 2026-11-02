@@ -87,5 +87,12 @@ test("research: 1 track per token, bought vs all decided, conviction bands, sour
   assert.deepEqual(r.conviction.map((b) => b.n), [1, 1, 0, 1]);
   assert.deepEqual(r.sources.map((s) => [s.source, s.n]), [["decision", 3], ["rank", 1], ["migration", 1]]);
   assert.deepEqual([r.today.done, r.today.unreadable, r.today.readable], [6, 1, 6 / 7]);
+  assert.deepEqual(r.today.bySource.map((x) => [x.source, x.started, x.readable]), [["decision", 4, 1], ["rank", 2, 0.5], ["migration", 1, 1]]);
+  assert.equal(r.agent.last, null);
+
+  // The research agent's closing message is its report; a model wrote it, the page escapes it.
+  const msgs = [{ role: "user", content: "brief" }, { role: "assistant", content: "Looked at fees.\nRegistered nothing." }, { role: "tool", content: "x" }];
+  insert("agent_runs", { started_at: now, finished_at: now, model: "m", status: "ok", kind: "research", messages: JSON.stringify(msgs) });
+  assert.equal(research(now, "UTC").agent.last!.report, "Looked at fees.\nRegistered nothing.");
   assert.deepEqual(r.versions.map((v) => [v.label, v.current, v.trades]), [["v1", true, 0]]);
 });

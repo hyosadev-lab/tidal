@@ -1,3 +1,4 @@
+import type { Message } from "./agent/llm.ts";
 import type { Config } from "./config.ts";
 import { getRun, status } from "./control.ts";
 import { db } from "./db.ts";
@@ -501,6 +502,28 @@ export function tokenDetail(address: string, cfg: Config, now: number) {
 
 // ── research ──────────────────────────────────────────────────────────
 
+const reports = new Map<number, string | null>(); // runId → its closing message: a finished run never changes
+let reportsOf: unknown = null;
+
+/** The last research run, with its closing message (model-written: the page escapes it). */
+function lastResearch() {
+  const r = one<Record<string, any>>("select id, status, started_at, finished_at, error, model from agent_runs where kind = 'research' order by id desc limit 1");
+  if (!r) return null;
+  if (reportsOf !== db) (reports.clear(), (reportsOf = db));
+  if (r.status !== "running" && !reports.has(r.id)) {
+    let text: string | null = null;
+    try {
+      const msgs = JSON.parse(one<{ messages: string | null }>("select messages from agent_runs where id = ?", r.id)?.messages ?? "[]") as Message[];
+      text = [...msgs].reverse().find((m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim())?.content ?? null;
+    } catch {
+      /* no transcript: no report */
+    }
+    if (reports.size > 20) reports.clear();
+    reports.set(r.id, text ? text.slice(0, 6000) : null);
+  }
+  return { ...r, report: reports.get(r.id) ?? null };
+}
+
 /** A settings version is judged once this many of its trades have closed. */
 export const JUDGE_N = 30;
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -524,12 +547,20 @@ export function research(now: number, tz: string) {
   const decided = first((r) => r.source === "decision");
   const bands: [number, number, string][] = [[80, 101, "80+"], [70, 80, "70–79"], [60, 70, "60–69"], [0, 60, "under 60"]];
 
-  const ends = all<{ end_reason: string | null; n: number }>(
-    "select end_reason, count(*) n from shadow_tracks where started_at >= ? group by 1",
+  const ends = all<{ source: Source; end_reason: string | null; n: number }>(
+    "select source, end_reason, count(*) n from shadow_tracks where started_at >= ? group by 1, 2",
     dayStart(now, tz),
   );
-  const count = (k: string | null) => ends.find((e) => e.end_reason === k)?.n ?? 0;
-  const [done, rug, unreadable] = [count("done"), count("rug"), count("unreadable")];
+  /** Today's tracks by how they ended, for one source or all; readable = done + rug of those that ended. */
+  const coverage = (source?: Source) => {
+    const rows = ends.filter((e) => !source || e.source === source);
+    const count = (k: string | null) => rows.filter((e) => e.end_reason === k).reduce((t, e) => t + e.n, 0);
+    const [done, rug, unreadable] = [count("done"), count("rug"), count("unreadable")];
+    return {
+      started: rows.reduce((t, e) => t + e.n, 0), done, rug, unreadable, restart: count("restart"), open: count(null),
+      readable: done + rug + unreadable ? (done + rug) / (done + rug + unreadable) : null,
+    };
+  };
 
   const marks = all<{ at: number }>("select at from config_history order by at");
   const closed = all<{ opened_at: number; cost: number; pnl: number | null }>(
@@ -553,7 +584,7 @@ export function research(now: number, tz: string) {
     judgeN: JUDGE_N,
     sampleMax: SAMPLE_MAX,
     tracking: tracking(),
-    today: { started: ends.reduce((t, e) => t + e.n, 0), done, rug, unreadable, restart: count("restart"), open: count(null), readable: done + rug + unreadable ? (done + rug) / (done + rug + unreadable) : null },
+    today: { ...coverage(), bySource: (["decision", "rank", "migration"] as const).map((s) => ({ source: s, ...coverage(s) })) },
     candidates: { bought: stat(first((r) => r.source === "decision" && r.action === "buy")), decided: stat(decided) },
     conviction: bands.map(([lo, hi, label]) => ({ label, ...stat(decided.filter((r) => r.conviction !== null && r.conviction >= lo && r.conviction < hi)) })),
     sources: (["decision", "rank", "migration"] as const).map((s) => ({ source: s, ...stat(first((r) => r.source === s)) })),
@@ -563,7 +594,7 @@ export function research(now: number, tz: string) {
     hypotheses: tries(50),
     agent: {
       running: cliRunning("agent"),
-      last: one<Record<string, any>>("select id, status, started_at, finished_at, error, model from agent_runs where kind = 'research' order by id desc limit 1") ?? null,
+      last: lastResearch(),
       week: one<{ n: number; failed: number; tin: number; tout: number }>(
         `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin, coalesce(sum(output_tokens), 0) tout
          from agent_runs where kind = 'research' and started_at >= ?`,

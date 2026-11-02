@@ -59,7 +59,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
 - Shadow tracks (`shadow.ts`, edge research capture): every verdict in `decide` starts a 60-min
   track of its token, `features` = the brief row exactly as sent (never rebuilt later: look-ahead).
   Sampled, never bought: trending rows the cycle passed over ('rank', `sampleRank`) and fresh
-  PumpSwap migrations off GMGN trenches ('migration', every 60s), 20 open each. Its own
+  PumpSwap migrations off GMGN trenches ('migration', every 60s while running: a stopped process
+  spends no GMGN budget), 20 open each. Its own
   `getMultipleAccounts` read every 2s (`pools.resolvePools` / `poolReading`), not the exit loop's
   watches (an unwatch would cut a held position's feed); it shares the public RPC with the exit
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
@@ -74,8 +75,10 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   `features` + an exit; `register` fixes its bar (`need_pct` = 100 − 5/try) and only tracks after
   it judge it; `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
   seeded random picks). `research-cli.ts` is the one door: `list | test | register | judge | agent`.
-  The engine runs `judge` every 10 min and `agent` from the Research page's button as child
-  processes (`runCli`): their SQLite reads are synchronous and must never hold up the exit loop.
+  The engine runs `judge` every 10 min (when an idea is testing, on paper, live or kept) and
+  `agent` from the Research page's button as child processes (`runCli`, killed on the engine's
+  exit): their SQLite reads are synchronous and must never hold up the exit loop. The page shows
+  the last research run's closing message as its report (model-written: escaped).
   The research agent has `ledger_query` (one select on a read-only connection), `test_rule`
   (in-sample backtest) and `register_hypothesis` (once per run, through `validate`); its runs are
   `agent_runs.kind = 'research'`, kept out of the trading views. Method for it and for Claude

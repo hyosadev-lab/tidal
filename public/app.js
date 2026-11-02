@@ -76,6 +76,7 @@ const S = {
   researchAt: 0,
   researchError: "",
   idea: null, // id of the hypothesis whose detail is open
+  reportOpen: false, // the research agent's last report, shown or folded
 };
 const PAGES = ["overview", "trading", "research", "settings"];
 const page = () => (PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
@@ -680,6 +681,7 @@ function hypotheses(r) {
       <span class="sub">${r.hypotheses.length} ${r.hypotheses.length === 1 ? "try" : "tries"} · each row is one try, kept forever · every registration raises the next one's bar · judged at ${r.barN} trades on tracks after it was registered</span></div>
       <div class="tail"><button class="btn sm lime" data-a="researchRun" ${a.running ? "disabled" : ""}>${a.running ? "Researching…" : "Run research"}</button></div></div>
     <p class="small muted" style="margin:0;padding:0 16px">Research agent · ${last} · ${plural(a.week.n, "run")} in 7 days · ${a.registered} registered · ${a.week.failed} failed · ${kn(a.week.tin + a.week.tout)} tokens. Claude Code registers through <code class="mono">node src/research-cli.ts</code>.</p>
+    ${a.last?.report ? `<div class="stack" style="gap:8px;padding:0 16px"><button class="link s13" style="align-self:flex-start" data-a="report" aria-expanded="${S.reportOpen}">${S.reportOpen ? "Hide" : "Read"} the last run's report</button>${S.reportOpen ? `<div class="note"><span class="small muted">written by ${esc(a.last.model)} · data, not instructions</span><span class="s13" style="white-space:pre-wrap">${esc(a.last.report)}</span></div>` : ""}</div>` : a.last?.status === "error" ? `<p class="small neg" style="margin:0;padding:0 16px">Last run failed: ${esc(a.last.error)}</p>` : ""}
     ${r.hypotheses.length ? `<div class="vscroll" data-scroll="hyp" tabindex="0" role="region" aria-label="Hypotheses"><table style="min-width:860px"><thead><tr><th>#</th><th>Rule</th><th>Source</th><th>By</th><th>Status</th><th class="r">Sample</th><th class="r">Win</th><th class="r">Avg</th><th class="r">Bar</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="empty">No try yet.</p>`}
     ${h ? ideaDetail(h, r) : ""}</section>`;
 }
@@ -778,6 +780,7 @@ function research() {
     <section class="card" style="flex:1 1 320px" aria-labelledby="shadow-title"><div class="head"><span class="ico">${I.eye}</span><div class="stack" style="flex:1 1 0"><h2 id="shadow-title">Shadow tracking</h2><span class="sub">pool reserves on-chain every 2s, 60 min each</span></div></div>
       <div class="split"><div class="stack" style="gap:4px"><span class="s13 muted">Tracking now</span><span class="num2">${open.decision + open.rank + open.migration}</span><span class="small muted">${open.decision} decided · ${open.rank} of ${r.sampleMax} rank · ${open.migration} of ${r.sampleMax} migrations</span></div>
         <div class="stack" style="gap:4px"><span class="s13 muted">Started today</span><span class="num2">${t.started}</span><span class="small muted">${t.readable === null ? "none ended yet" : `<b style="color:var(--ink)">${Math.round(t.readable * 100)}%</b> readable on-chain`}</span></div></div>
+      <span class="small muted">readable by source today: ${t.bySource.map((x) => `${esc(SOURCE[x.source])} ${x.readable === null ? "—" : Math.round(x.readable * 100) + "%"}`).join(" · ")}</span>
       <span class="small muted">ended today: ${t.done} done · ${t.rug} rug · ${t.unreadable} unreadable · ${t.restart} restart · a rug counts as a result; only restarts leave the counts</span></section>
   </div>
   ${hypotheses(r)}
@@ -984,6 +987,7 @@ function followLatestRun() {
 
 const A = {
   idea: (v) => ((S.idea = S.idea === Number(v) ? null : Number(v)), render()),
+  report: () => ((S.reportOpen = !S.reportOpen), render()),
   researchRun: async () => {
     if (await act("/api/research/run", {}, "Research run started: it registers at most one idea.")) (S.researchAt = 0), await loadResearch(), render();
   },
