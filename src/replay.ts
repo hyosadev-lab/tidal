@@ -22,9 +22,9 @@ const ENTRY_STEPS = 15;
  * sale at the point's price less its own impact. What is held when the path ends is sold at its
  * last point; after a rug it is worth nothing. The reserve is the real one, so on a curve (about
  * 30 SOL shallower than its virtual reserve) the impact is overstated; the measured gap carries it.
- * Returns the PnL % on cost, or null with no point to buy at. Pure.
+ * Returns the PnL % on cost and the point where nothing was left held, or null with no point to buy at. Pure.
  */
-export function replay(points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean): number | null {
+export function replayTrade(points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean): { pnl: number; out: number } | null {
   let e = Math.max(0, from);
   while (e < points.length && e <= from + ENTRY_STEPS && !points[e]) e++;
   const at = points[e];
@@ -43,10 +43,12 @@ export function replay(points: Point[], from: number, plan: ExitPlan, sizeSol: n
     held -= f * 100;
   };
   let last: [number, number] = at;
+  let out = points.length - 1;
   for (let i = e + 1; i < points.length && held > 1e-9; i++) {
     const p = points[i];
     if (!p) continue;
     last = p;
+    out = i;
     const pnl = ((1 + p[0] / 100) / entry - 1) * 100;
     const fire = (kind: "tp" | "sl", hit: (r: Rule) => boolean) => {
       const rs = armed.filter((r) => r.kind === kind && hit(r));
@@ -63,8 +65,12 @@ export function replay(points: Point[], from: number, plan: ExitPlan, sizeSol: n
     }
   }
   if (held > 1e-9 && !rug) sellAt(last, held);
-  return ((got - sizeSol) / sizeSol) * 100;
+  return { pnl: ((got - sizeSol) / sizeSol) * 100, out };
 }
+
+/** `replayTrade`'s PnL % alone. */
+export const replay = (points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean): number | null =>
+  replayTrade(points, from, plan, sizeSol, rug)?.pnl ?? null;
 
 export type Calibration = { n: number; agree: number; gapPct: number | null };
 

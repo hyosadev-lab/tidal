@@ -5,6 +5,7 @@ import { tokenStatus } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
+import { BAR_N, cliRunning, tries } from "./research.ts";
 import { SAMPLE_MAX, tracking, type Source } from "./shadow.ts";
 import { lossDay, openPositions, paperCash } from "./trade.ts";
 
@@ -210,10 +211,10 @@ export function health(cfg: Config, now: number, tz: string) {
   const stopped = run.state === "stopped";
   const paused = run.pausedAt !== null;
   const midnight = dayStart(now, tz);
-  const last = one<Record<string, any>>("select id, status, started_at, finished_at, error from agent_runs order by id desc limit 1");
+  const last = one<Record<string, any>>("select id, status, started_at, finished_at, error from agent_runs where kind = 'entry' order by id desc limit 1");
   const day = one<{ n: number; failed: number; tin: number; tout: number }>(
     `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin,
-       coalesce(sum(output_tokens), 0) tout from agent_runs where started_at >= ?`,
+       coalesce(sum(output_tokens), 0) tout from agent_runs where kind = 'entry' and started_at >= ?`,
     midnight,
   )!;
   const open = openPositions().length;
@@ -320,7 +321,7 @@ function activityOf(runs: RunRow[]) {
 /** The Activity tab's lazy load: up to `n` runs started since `since`, before run `before`, and whether more remain. */
 export function activityBefore(before: number, since: number, n = 10) {
   const runs = all<RunRow>(
-    "select id, started_at, finished_at, status, error from agent_runs where id < ? and started_at >= ? order by id desc limit ?",
+    "select id, started_at, finished_at, status, error from agent_runs where kind = 'entry' and id < ? and started_at >= ? order by id desc limit ?",
     before,
     since,
     n + 1,
@@ -351,7 +352,7 @@ function runSummary(r: Record<string, any>) {
 /** The Runs list's lazy load: up to `n` runs started since `since`, before run `before`; `failed` keeps errors only. */
 export function runsBefore(before: number, since: number, failed: boolean, n = 20) {
   const rows = all<Record<string, any>>(
-    `select ${RUN_COLS} from agent_runs where id < ? and started_at >= ?${failed ? " and status = 'error'" : ""} order by id desc limit ?`,
+    `select ${RUN_COLS} from agent_runs where kind = 'entry' and id < ? and started_at >= ?${failed ? " and status = 'error'" : ""} order by id desc limit ?`,
     before,
     since,
     n + 1,
@@ -361,7 +362,7 @@ export function runsBefore(before: number, since: number, failed: boolean, n = 2
 
 export function trading(cfg: Config, now: number, tz: string) {
   const midnight = dayStart(now, tz);
-  const runs = all<Record<string, any>>(`select ${RUN_COLS} from agent_runs order by id desc limit 4`);
+  const runs = all<Record<string, any>>(`select ${RUN_COLS} from agent_runs where kind = 'entry' order by id desc limit 4`);
   const latest = runs.find((r) => r.status !== "running");
   const act = activityBefore(Number.MAX_SAFE_INTEGER, midnight);
   const inLatest = new Set((latest ? (briefOf(latest.id) ?? []) : []).map((b) => b.address));
@@ -416,7 +417,7 @@ export function trading(cfg: Config, now: number, tz: string) {
     runs: { all: runsBefore(Number.MAX_SAFE_INTEGER, midnight, false), failed: runsBefore(Number.MAX_SAFE_INTEGER, midnight, true) },
     runsToday: one<{ n: number; failed: number; tin: number; tout: number }>(
       `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin,
-         coalesce(sum(output_tokens), 0) tout from agent_runs where started_at >= ?`,
+         coalesce(sum(output_tokens), 0) tout from agent_runs where kind = 'entry' and started_at >= ?`,
       midnight,
     ),
     toolBudget: cfg.toolCalls,
@@ -554,5 +555,17 @@ export function research(now: number, tz: string) {
     sources: (["decision", "rank", "migration"] as const).map((s) => ({ source: s, ...stat(first((r) => r.source === s)) })),
     calibration: calibration(),
     versions: versions.slice(0, 12),
+    barN: BAR_N,
+    hypotheses: tries(50),
+    agent: {
+      running: cliRunning("agent"),
+      last: one<Record<string, any>>("select id, status, started_at, finished_at, error, model from agent_runs where kind = 'research' order by id desc limit 1") ?? null,
+      week: one<{ n: number; failed: number; tin: number; tout: number }>(
+        `select count(*) n, coalesce(sum(status = 'error'), 0) failed, coalesce(sum(input_tokens), 0) tin, coalesce(sum(output_tokens), 0) tout
+         from agent_runs where kind = 'research' and started_at >= ?`,
+        now - 7 * DAY,
+      ),
+      registered: one<{ n: number }>("select count(*) n from hypotheses where author != 'claude-code' and created_at >= ?", now - 7 * DAY)!.n,
+    },
   };
 }

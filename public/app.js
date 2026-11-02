@@ -75,6 +75,7 @@ const S = {
   research: null, // /api/research, read every RESEARCH_MS while the Research page is open
   researchAt: 0,
   researchError: "",
+  idea: null, // id of the hypothesis whose detail is open
 };
 const PAGES = ["overview", "trading", "research", "settings"];
 const page = () => (PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
@@ -656,6 +657,51 @@ function barRows(rows, label) {
   return `<ul class="rbars">${rows.map((r) => `<li><span class="s13">${esc(label(r))}</span>${bar(r.avg, max)}<span class="mono s13 r ${sign(r.avg)}">${pct(r.avg)}</span><span class="small muted r">n ${r.n}</span></li>`).join("")}</ul>`;
 }
 
+const IDEA_TAG = { testing: "wait", passed: "buy", failed: "failed", dropped: "", paper: "run", live: "run", kept: "buy" };
+const condText = (c) => `${c.path} ${c.op} ${typeof c.value === "object" && c.value ? `${c.value.path} × ${c.value.times}` : JSON.stringify(c.value)}`;
+const exitText = (e) => `SL ${pct(e.sl, 0)} · ${e.tp.map((t) => `TP ${pct(t.at, 0)} sells ${t.sell}%`).join(" · ")} · time ${e.time_min}m`;
+const sample = (h, n) => (h.status === "testing" ? `${h.result?.n ?? 0} of ${n}` : fin(h.result?.n) ? String(h.result.n) : "—");
+
+/** Every try, the research agent's runs, and the open idea's numbers and proposed change. */
+function hypotheses(r) {
+  const a = r.agent;
+  const h = r.hypotheses.find((x) => x.id === S.idea);
+  const last = a.last ? `last run ${esc(dayLabel(a.last.started_at))} ${hm(a.last.started_at)} · ${esc(a.last.status)}` : "no run yet";
+  const rows = r.hypotheses
+    .map((x) => `<tr${x.id === S.idea ? ' class="sel"' : ""}><td><button class="link" data-a="idea" data-v="${x.id}" aria-expanded="${x.id === S.idea}">#${x.id}</button></td>
+      <td style="max-width:420px;white-space:normal">${esc(x.rule)}</td><td class="s13 muted">${esc(x.source)}</td><td class="s13 muted">${esc(x.author)}</td>
+      <td><span class="tag ${IDEA_TAG[x.status] ?? ""}">${esc(x.status)}</span></td><td class="r mono nowrap">${sample(x, r.barN)}</td>
+      <td class="r mono">${fin(x.result?.win) ? Math.round(x.result.win) + "%" : "—"}</td><td class="r mono ${sign(x.result?.avg_pct)}">${pct(x.result?.avg_pct)}</td>
+      <td class="r mono small muted">${x.need_pct.toFixed(2)}%</td></tr>`)
+    .join("");
+  return `<section class="card flush" aria-labelledby="hyp-title">
+    <div class="head"><span class="ico">${I.chat}</span><div class="stack" style="flex:1 1 0"><h2 id="hyp-title">Hypotheses</h2>
+      <span class="sub">${r.hypotheses.length} ${r.hypotheses.length === 1 ? "try" : "tries"} · each row is one try, kept forever · every registration raises the next one's bar · judged at ${r.barN} trades on tracks after it was registered</span></div>
+      <div class="tail"><button class="btn sm lime" data-a="researchRun" ${a.running ? "disabled" : ""}>${a.running ? "Researching…" : "Run research"}</button></div></div>
+    <p class="small muted" style="margin:0;padding:0 16px">Research agent · ${last} · ${plural(a.week.n, "run")} in 7 days · ${a.registered} registered · ${a.week.failed} failed · ${kn(a.week.tin + a.week.tout)} tokens. Claude Code registers through <code class="mono">node src/research-cli.ts</code>.</p>
+    ${r.hypotheses.length ? `<div class="vscroll" data-scroll="hyp" tabindex="0" role="region" aria-label="Hypotheses"><table style="min-width:860px"><thead><tr><th>#</th><th>Rule</th><th>Source</th><th>By</th><th>Status</th><th class="r">Sample</th><th class="r">Win</th><th class="r">Avg</th><th class="r">Bar</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="empty">No try yet.</p>`}
+    ${h ? ideaDetail(h, r) : ""}</section>`;
+}
+
+function ideaDetail(h, r) {
+  const res = h.result ?? {};
+  const bt = h.backtest;
+  const verdict = h.status === "testing"
+    ? esc(res.note ?? `0 of ${r.barN} trades`)
+    : fin(res.avg_pct) ? `${res.n} trades · ${Math.round(res.win)}% won · ${pct(res.avg_pct)} a trade after ${pct(res.friction_pct, 2)} friction · half-days ${res.halves.map((x) => pct(x, 0)).join(" ")} · beat ${res.rnd_pct.toFixed(2)}% of ${res.draws} random picks (needs ${h.need_pct.toFixed(2)}%)` : esc(res.note ?? "");
+  const canDrop = ["testing", "passed", "failed"].includes(h.status);
+  return `<div class="stack" style="gap:12px;padding:4px 16px 12px">
+    <div class="note"><span class="small muted">#${h.id} · ${esc(h.source)} · by ${esc(h.author)} · registered ${esc(dayLabel(h.created_at))} ${hm(h.created_at)}${h.parent_id ? ` · a variant of #${h.parent_id}` : ""}</span>
+      <span class="big">${esc(h.rule)}</span>
+      <span class="s13 mono">${h.conditions.length ? h.conditions.map((c) => esc(condText(c))).join(" · ") : "no conditions code can check"}</span>
+      <span class="s13">${esc(exitText(h.exit))} · ${plural(h.exit.slots, "slot")} · ${h.exit.size_sol} SOL · drain ${h.exit.drain}%</span></div>
+    <span class="s13"><b>After registering:</b> ${verdict}</span>
+    ${bt && fin(bt.n) ? `<span class="s13 muted"><b>Before registering, in sample (context only):</b> ${bt.n} trades · ${fin(bt.avg_pct) ? pct(bt.avg_pct) : "—"} a trade vs. ${pct(bt.base_avg_pct)} for every track</span>` : ""}
+    ${h.status === "passed" ? `<div class="note"><span class="small muted">Proposed change · never applied by itself · you make it in Settings: the rule in the operator prompt, the exit in the exit plan</span><span class="s13">${esc(h.rule)}</span><span class="s13">${esc(exitText(h.exit))}</span></div>` : ""}
+    <div class="inline" style="flex-wrap:wrap;gap:8px">${h.status === "passed" ? `<button class="btn sm line" data-a="copyRule" data-v="${h.id}">Copy rule</button><a class="btn sm line" href="#settings">Open Settings</a>` : ""}${canDrop ? `<button class="btn sm ghost" data-a="dropIdea" data-v="${h.id}">Drop</button>` : ""}</div>
+  </div>`;
+}
+
 function research() {
   const r = S.research;
   const head = `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Edge research · capture</span><h1>Research</h1><p>Code follows every candidate for 60 minutes and scores every settings version. Nothing on this page changes trading: trading changes only when you save Settings.</p></div></div>`;
@@ -692,6 +738,7 @@ function research() {
         <div class="stack" style="gap:4px"><span class="s13 muted">Started today</span><span class="num2">${t.started}</span><span class="small muted">${t.readable === null ? "none ended yet" : `<b style="color:var(--ink)">${Math.round(t.readable * 100)}%</b> readable on-chain`}</span></div></div>
       <span class="small muted">ended today: ${t.done} done · ${t.rug} rug · ${t.unreadable} unreadable · ${t.restart} restart · a rug counts as a result; only restarts leave the counts</span></section>
   </div>
+  ${hypotheses(r)}
   <section class="card flush" aria-labelledby="ver-title"><div class="head"><span class="ico">${I.clock}</span><div class="stack" style="flex:1 1 0"><h2 id="ver-title">Settings versions</h2><span class="sub">one row per save in Settings · closed trades by when they opened · judged at ${r.judgeN} trades</span></div></div>
     ${r.versions.length ? `<div class="scroll-x" data-scroll="versions" tabindex="0" role="region" aria-label="Settings versions"><table style="min-width:560px"><thead><tr><th>Version</th><th>Saved</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg / trade</th><th class="r">Total</th></tr></thead><tbody>${r.versions
       .map((v) => `<tr><td><span class="b">${esc(v.label)}</span>${v.current ? ` <span class="tag buy">current</span>` : ""}</td><td class="s13 muted">${v.at ? `${esc(dayLabel(v.at))} ${hm(v.at)}` : "before history"}</td><td class="r mono">${v.trades}</td><td class="r mono">${v.trades ? Math.round((v.won / v.trades) * 100) + "%" : "—"}</td><td class="r mono ${sign(v.avgPct)}">${pct(v.avgPct)}</td><td class="r mono ${sign(v.totalUsd)}">${v.trades ? susd(v.totalUsd) : "—"}</td></tr>`)
@@ -894,6 +941,17 @@ function followLatestRun() {
 }
 
 const A = {
+  idea: (v) => ((S.idea = S.idea === Number(v) ? null : Number(v)), render()),
+  researchRun: async () => {
+    if (await act("/api/research/run", {}, "Research run started: it registers at most one idea.")) (S.researchAt = 0), await loadResearch(), render();
+  },
+  dropIdea: async (v) => {
+    if (await act("/api/research/drop", { id: Number(v) }, `Idea #${v} dropped.`)) (S.researchAt = 0), await loadResearch(), render();
+  },
+  copyRule: (v) => {
+    const h = S.research?.hypotheses.find((x) => x.id === Number(v));
+    if (h) navigator.clipboard?.writeText(h.rule).then(() => ((S.msg = { ok: true, text: "Rule copied." }), render()), () => {});
+  },
   runBtn: () => (S.data.overview.positions.length ? ((S.confirmStop = true), render()) : act("/api/stop", { closeAll: false })),
   cancelStop: () => ((S.confirmStop = false), render()),
   stopAnyway: () => ((S.confirmStop = false), act("/api/stop", { closeAll: false })),

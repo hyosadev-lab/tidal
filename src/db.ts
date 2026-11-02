@@ -11,6 +11,8 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_PATH = fileURLToPath(new URL("../data/tta.db", import.meta.url));
+/** The ledger file this process opens: `TTA_DB`, else data/tta.db. */
+export const dbPath = (): string => process.env.TTA_DB || DEFAULT_PATH;
 
 // ponytail: `if not exists` never alters a table that is already there; a column added after real
 // data landed gets its own idempotent step in openDb.
@@ -287,6 +289,7 @@ create table if not exists hypotheses (
   rule text not null,
   conditions text not null,
   exit text not null,
+  source text not null default 'decision' check (source in ('decision', 'rank', 'migration')),
   need_pct real not null check (need_pct between 0 and 100),
   backtest text,
   result text,
@@ -309,14 +312,16 @@ function addColumn(table: string, column: string, def: string): void {
 export let db!: DatabaseSync;
 
 /** Opens (creating if needed) the ledger, applies the schema and makes it `db`. */
-export function openDb(path = process.env.TTA_DB || DEFAULT_PATH): DatabaseSync {
+export function openDb(path = dbPath()): DatabaseSync {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   db = new DatabaseSync(path);
-  db.exec("pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = on;");
+  // busy_timeout: the research CLI writes to the same file from its own process.
+  db.exec("pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
   db.exec(SCHEMA);
   addColumn("equity", "mode", "text not null default 'paper' check (mode in ('paper', 'live'))");
   addColumn("agent_runs", "kind", "text not null default 'entry' check (kind in ('entry', 'research'))");
   addColumn("trades", "quote_price_usd", "real");
+  addColumn("hypotheses", "source", "text not null default 'decision' check (source in ('decision', 'rank', 'migration'))");
   addColumn("shadow_tracks", "end_reason",
     "text check (end_reason in ('done', 'rug', 'restart', 'unreadable')) check ((ended_at is null) = (end_reason is null))");
   // A ledger from before config_history: the config in force starts the history, as of its last save.

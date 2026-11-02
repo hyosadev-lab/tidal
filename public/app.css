@@ -258,3 +258,5 @@ fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
   .rbars li { grid-template-columns: 1fr auto auto; row-gap: 6px; }
   .rbar { grid-column: 1 / -1; grid-row: 2; }
 }
+
+tr.sel td { background: var(--inner); }

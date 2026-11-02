@@ -8,6 +8,7 @@ import * as control from "./control.ts";
 import { entryLoop, wake } from "./entry.ts";
 import * as jup from "./jupiter/client.ts";
 import { log } from "./log.ts";
+import { drop, runCli } from "./research.ts";
 import { lastSolUsd, sampleEquity } from "./trade.ts";
 import * as view from "./view.ts";
 
@@ -57,6 +58,9 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
   "/api/start": async () => (control.start(), void entryLoop(), { ok: true }),
   "/api/stop": async (b) => ({ ok: true, errors: await control.stop(b?.closeAll === true) }),
   "/api/resume": async () => (control.resume(), wake(), { ok: true }),
+  // Research: a run of the research agent (a child process, 15 min at most), or the operator's no to an idea.
+  "/api/research/run": async () => (runCli("agent", 15 * 60_000) ? { ok: true } : { ok: false, error: "a research run is already going" }),
+  "/api/research/drop": async (b) => (drop(Number(b?.id)) ? { ok: true } : { ok: false, error: "no idea to drop with that id" }),
   "/api/close": async (b) => {
     const err = await control.closePosition(Number(b?.id));
     return err ? { ok: false, error: err } : { ok: true };
