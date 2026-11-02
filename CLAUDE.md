@@ -73,8 +73,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   tiles, the tries beside the open one (a passed idea carries its proposed change: `promptOf` the
   conditions, `exitFields` against Settings), settings versions folded.
 - Hypotheses (`research.ts`, edge research phase 2): an idea = conditions over a track's
-  `features` + an exit; `register` fixes its bar (`need_pct` = 100 − 5/try) and only tracks after
-  it judge it; `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
+  `features` + an exit; `register` fixes its bar (`need_pct` = 100 − 5/try), refuses a repeat of
+  any try (same conditions, exit and source — `sameIdea`), and only tracks after it judge it; `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
   seeded random picks). `research-cli.ts` is the one door: `list | test | register | judge | agent`.
   The engine runs `judge` every 10 min (when an idea is testing, on paper, live or kept) and
   `agent` once a day while running (`researchDue`, a day after the last research run started) and

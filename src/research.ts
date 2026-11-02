@@ -227,8 +227,25 @@ function setupOf(exit: Exit): Setup {
 
 // ── hypotheses ────────────────────────────────────────────────────────
 
-/** Records an idea as a try. Its bar (need_pct) is set now from its try number and never moves. */
-export function register(idea: Idea, author: string, now = Date.now()): { id: number; need_pct: number; backtest: ReturnType<typeof backtest> } {
+/** What makes two ideas the same try: their conditions as a set, the exit and the source. Rule words, Settings and parent do not. Pure. */
+export const sameIdea = (conds: Cond[], exit: Pick<Exit, "sl" | "tp" | "time_min">, source: string): string =>
+  JSON.stringify([
+    [...new Set(conds.map((c) => JSON.stringify([c.path, c.op, c.value])))].sort(),
+    exit.sl,
+    exit.tp.map((t) => [t.at, t.sell]).sort((a, b) => a[0]! - b[0]! || a[1]! - b[1]!),
+    exit.time_min,
+    source,
+  ]);
+
+/**
+ * Records an idea as a try, or says which try it repeats: a try is never re-run as new, whatever
+ * became of it. Its bar (need_pct) is set now from its try number and never moves.
+ */
+export function register(idea: Idea, author: string, now = Date.now()): string | { id: number; need_pct: number; backtest: ReturnType<typeof backtest> } {
+  const key = sameIdea(idea.conditions, idea.exit, idea.source);
+  const past = db.prepare("select id, status, conditions, exit, source from hypotheses order by id").all() as { id: number; status: string; conditions: string; exit: string; source: string }[];
+  const same = past.find((h) => sameIdea(JSON.parse(h.conditions), JSON.parse(h.exit), h.source) === key);
+  if (same) return `already tried as #${same.id} (${same.status}): a try is never re-run as new; change a condition or the exit to try a variant`;
   const bt = backtest(idea, now);
   const setup = setupOf(idea.exit);
   return tx(() => {

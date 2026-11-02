@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
-import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, register, researchDue, RESEARCH_EVERY_MS, seedTries, tries, validate, type Idea } from "../src/research.ts";
+import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, register, researchDue, RESEARCH_EVERY_MS, sameIdea, seedTries, tries, validate, type Idea } from "../src/research.ts";
 import { query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
@@ -14,6 +14,13 @@ const idea = (over: Record<string, unknown> = {}) => ({
   exit: { sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30 },
   ...over,
 });
+
+/** Registers an idea that must be new, and gives back its try. */
+function reg(x: unknown, author: string, now?: number) {
+  const r = register(validate(x) as Idea, author, now);
+  assert.ok(typeof r !== "string", String(r));
+  return r;
+}
 
 test("rules: fields by path, a field against another, a missing field fails", () => {
   const f = { migrated: true, flow: { "1m": { change_pct: 4 } }, price_usd: 8, ath_price_usd: 10 };
@@ -61,7 +68,7 @@ test("seeds: rounds 1–3 and the ATH check are failed tries 1–4, once; the ne
   assert.deepEqual(t.map((x) => [x.id, x.status]), [[4, "failed"], [3, "failed"], [2, "failed"], [1, "failed"]]);
   assert.equal(t.find((x) => x.id === 3)!.parent_id, 2);
   assert.ok(t.every((x) => x.author === "seed"));
-  const r = register(validate(idea()) as Idea, "claude-code");
+  const r = reg(idea(), "claude-code");
   assert.deepEqual([r.id, r.need_pct], [5, 99]);
 });
 
@@ -91,8 +98,8 @@ test("judge: waits for a trusted replay, then decides at the 30th trade on track
   openDb(":memory:");
   const t0 = Date.UTC(2026, 10, 2, 0, 0);
   for (let i = 0; i < 40; i++) decided(t0 - 86_400_000 + i * 60_000, { good: true }, DOWN); // before: never judged
-  const good = register(validate(idea()) as Idea, "m", t0);
-  const bad = register(validate(idea({ rule: "Bad tokens.", conditions: [{ path: "good", op: "=", value: false }] })) as Idea, "m", t0);
+  const good = reg(idea(), "m", t0);
+  const bad = reg(idea({ rule: "Bad tokens.", conditions: [{ path: "good", op: "=", value: false }] }), "m", t0);
   assert.equal(tries().find((x) => x.id === good.id)!.status, "testing");
   for (let i = 0; i < 80; i++) decided(t0 + 60_000 + i * 600_000, { good: i % 2 === 0 }, i % 2 === 0 ? UP : DOWN);
 
@@ -138,7 +145,7 @@ test("paper, then live: each step the operator's, each judged at 30 trades on it
   const t0 = Date.UTC(2026, 10, 2, 0, 0);
   const cfg = loadConfig(); // the first config save: the history starts before the idea
   trusted(t0 - 3 * 86_400_000);
-  const h = register(validate(idea()) as Idea, "m", t0).id;
+  const h = reg(idea(), "m", t0).id;
   for (let i = 0; i < 40; i++) decided(t0 + 60_000 + i * 600_000, { good: i % 4 !== 3 }, i % 4 !== 3 ? UP : DOWN);
   judge(t0 + 86_400_000);
   assert.equal(tries()[0]!.status, "passed");
@@ -257,4 +264,30 @@ test("daily research: due a day after the last research run starts, button runs 
     if (key === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = key;
   }
+});
+
+test("register: a repeat of any try is refused, whatever its words; a variant is a new try", () => {
+  openDb(":memory:");
+  seedTries();
+  const two = { sl: -30, tp: [{ at: 15, sell: 50 }, { at: 40, sell: 50 }], time_min: 30 };
+  assert.equal(reg(idea({ exit: two }), "m").id, 5);
+  const count = () => (db.prepare("select count(*) n from hypotheses").get() as { n: number }).n;
+  // Other words, conditions reordered and repeated, take profits listed the other way round: the same try.
+  const again = idea({
+    rule: "Only the good ones.",
+    conditions: [{ path: "good", op: "=", value: true }, { path: "good", op: "=", value: true }],
+    exit: { ...two, tp: [...two.tp].reverse() },
+  });
+  assert.equal(register(validate(again) as Idea, "m"), "already tried as #5 (testing): a try is never re-run as new; change a condition or the exit to try a variant");
+  // A seeded round counts too.
+  const r2 = tries().find((t) => t.id === 2)!;
+  assert.match(register(validate(idea({ conditions: r2.conditions, exit: { sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30 } })) as Idea, "m") as string, /already tried as #2 \(failed\)/);
+  assert.equal(count(), 5);
+  // Another stop, or another source: a variant, so a new try with a higher bar.
+  assert.equal(reg(idea({ exit: { ...two, sl: -25 } }), "m").id, 6);
+  assert.equal(reg(idea({ exit: two, source: "rank" }), "m").id, 7);
+  assert.notEqual(
+    sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.7 } }], two, "decision"),
+    sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.8 } }], two, "decision"),
+  );
 });

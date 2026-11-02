@@ -67,6 +67,8 @@ decision; impact off the pool's reserve; the measured friction charged). At its 
 **passes** when the mean is above 0, every half-day is above 0, and the mean beats `need_pct` %
 of random picks of 30 tokens from the same source and window. `need_pct` is 100 − 5 / try number:
 every registration, a variant included, makes the next one harder. Test freely; register rarely.
+An idea with the same conditions, exit and source as any earlier try is refused: a try is never
+re-run as new, whatever became of it.
 
 ## How to work
 

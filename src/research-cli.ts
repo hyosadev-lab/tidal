@@ -104,6 +104,7 @@ async function agent(): Promise<void> {
         const i = validate(x);
         if (typeof i === "string") return `Not registered: ${i}`;
         const r = register(i, model);
+        if (typeof r === "string") return `Not registered: ${r}`;
         registered = r.id;
         log("info", `Research: #${r.id} registered — needs to beat ${r.need_pct.toFixed(2)}% of random picks.`);
         return r;
@@ -158,7 +159,9 @@ if (import.meta.main) {
     if (typeof i === "string") fail(i);
     const at = rest.indexOf("--author");
     const author = at >= 0 && rest[at + 1] ? rest[at + 1]! : "claude-code";
-    print(cmd === "test" ? backtest(i as Exclude<typeof i, string>) : register(i as Exclude<typeof i, string>, author));
+    const out = cmd === "test" ? backtest(i as Exclude<typeof i, string>) : register(i as Exclude<typeof i, string>, author);
+    if (typeof out === "string") fail(out);
+    print(out);
   } else if (cmd === "judge") print(judge());
   else if (cmd === "agent") await agent().catch((e) => fail(`research agent: ${short(e)}`)); // its row in agent_runs has the transcript
   else fail("usage: node src/research-cli.ts list | test < idea.json | register < idea.json [--author name] | judge | agent");
