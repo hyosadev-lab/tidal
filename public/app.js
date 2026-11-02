@@ -420,7 +420,7 @@ function pnlChart(c, now) {
 }
 
 function equityChart(c, equityNow, now) {
-  const pts = c.equity.length ? c.equity : [{ at: now, e: equityNow }];
+  const pts = [...c.equity, { at: now, e: equityNow }]; // ends on the headline, not the last minute sample
   const vals = pts.map((p) => p.e);
   const step = niceStep(Math.max(1, Math.max(...vals) - Math.min(...vals)));
   const hi = Math.ceil(Math.max(...vals) / step) * step + (Math.max(...vals) === Math.min(...vals) ? step : 0);

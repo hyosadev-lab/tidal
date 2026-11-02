@@ -72,6 +72,9 @@ test("paper: buy books the plan, a TP sells 40% at a profit, the stop sells the 
   assert.ok(Math.abs(t.usd - 7.68) < 1e-9 && Math.abs(t.pnl_usd - 2.88) < 1e-9);
   assert.equal(t.exit_rule_id, tp.id);
   assert.equal(openPositions()[0]!.qty, "600000000");
+  await new Promise((r) => setImmediate(r));
+  const eq = db.prepare("select cash_usd c from equity order by at desc limit 1").get() as { c: number };
+  assert.ok(Math.abs(eq.c - (988 + 7.68)) < 1e-9, "a sell samples equity at once");
 
   assert.equal(await sell(p.id, 100, "sl"), null);
   assert.equal(await sell(p.id, 100, "sl"), "the position is already closed");

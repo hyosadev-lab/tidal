@@ -1,4 +1,4 @@
-import type { Config, Rule } from "./config.ts";
+import { loadConfig, type Config, type Rule } from "./config.ts";
 import { db, insert, tx } from "./db.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
@@ -133,6 +133,9 @@ export async function sampleEquity(cfg: Config): Promise<void> {
   db.prepare("insert or replace into equity (at, equity_usd, cash_usd, mode) values (?, ?, ?, ?)").run(Date.now(), cash + held, cash, cfg.mode);
 }
 
+/** A fill moves cash and holdings at once: sample now, so the curve, live cash and the loss pause don't wait a minute. */
+const resample = () => void sampleEquity(loadConfig()).catch(() => {});
+
 /** The start of the daily-loss day: 00:00 UTC, whatever zone the server or the viewer is in. */
 export const lossDay = (now: number) => now - (now % 86_400_000);
 
@@ -227,6 +230,7 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
     log("error", `BUY ${symbol} filled${signature ? ` (${signature})` : ""} but booking failed: ${short(e)} — check the wallet by hand.`);
     return "booked nothing";
   }
+  resample();
   log("trade", `BUY ${symbol} $${costUsd.toFixed(2)} at $${entryPrice.toPrecision(4)} (${cfg.mode})`, signature ?? undefined);
   return null;
 }
@@ -330,6 +334,7 @@ function recordSell(
     for (const id of ruleIds) db.prepare("update exit_rules set filled_at = ? where id = ?").run(now, id);
     if (closes) db.prepare("update positions set status = 'closed', closed_at = ?, close_reason = ? where id = ?").run(now, reason, p.id);
   });
+  resample();
   const pctSold = Math.round((Number(soldRaw) / Number(original)) * 100);
   log("trade", `SELL ${p.symbol} ${pctSold}% $${usd.toFixed(2)} · PnL ${pnl >= 0 ? "+" : "−"}$${Math.abs(pnl).toFixed(2)} · ${reason}${closes ? " · closed" : ""}`, signature ?? undefined);
   if (closes) positionClosed.dispatchEvent(new Event("close"));
