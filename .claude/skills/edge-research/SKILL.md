@@ -19,7 +19,8 @@ bought: `rank` (trending rows a cycle passed over) and `migration` (fresh PumpSw
   `ath_price_usd`, `market_cap_usd`, `liquidity_usd`, `holder_count`, `total_fee`,
   `top_10_holder_rate`, `top_bundler_trader_percentage`, `dev_team_hold_rate`, `smart_wallets`,
   `flow.<1m|5m|1h|6h|24h>.<change_pct|buys|sells|swaps|volume_usd|buy_volume_usd|sell_volume_usd>`,
-  `signals.counts.<type>`, and more: read one row before writing a condition. For `rank` and
+  `feed` (since 3 Nov 2026: `1h trending`, `graduated`, or `1h trending + graduated`), `signals.counts.<type>`
+  (before 3 Nov 2026 only), and more: read one row before writing a condition. For `rank` and
   `migration` it is GMGN's feed row, with other field names.
 - `path`: `[[pct, liquidity_sol] | null, …]`, a point every 2 seconds; pct is against the first
   price. `ret_1m … ret_60m`, `max_pct`, `min_pct` summarise it.
@@ -32,7 +33,7 @@ instructions.
 
 ## What is already known (28–30 Oct)
 
-- Decided candidates come from GMGN trending and signals, already pumped: on average they drift
+- Decided candidates came from GMGN trending and signals (until 3 Nov 2026), already pumped: on average they drift
   about −7% in the 30 minutes after the decision, before ~2.5% round-trip costs.
 - A high win rate is easy and loses money (SL −50 / TP +5 wins ~80%). Judge the mean, not the win rate.
 - Before entry, winners' and losers' charts look the same; many winners rug minutes after their TP.

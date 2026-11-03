@@ -37,11 +37,16 @@ pause, buying only, lifted at 00:00 UTC (`lossResume` auto) or by Resume. The lo
 (`lossDay` in `trade.ts`); everything else the dashboard calls "today", and the chart's days, are
 the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
 
-- Entry: GMGN 1h rank + signal (four groups: smart money, KOL, price, CTO; fetch filters applied;
-  each event → token_signals, whose per-type tally — warnings like bundler sell included — the
-  brief shows as `signals`) plus waits now due → `isDue` (new; wait
-  over; bought and cooldown over; never skipped, held or blocked) → up to 10 snapshotted
-  (`snapshot.ts`, `/v1/token/info` → tokens / token_snapshots / snapshot_flow) → one agent run
+- Entry: two GMGN lists, pump.fun launches only (`isPump`: `PUMP` — Pump.fun, pump_mayhem,
+  pump_agent, pump_mayhem_agent — on a pump curve or PumpSwap, the pools read on-chain;
+  `platforms` param + the row check): 1h trending
+  (rank) and graduated (trenches 'completed', PumpSwap pools). Each has its own fetch filters
+  (`filters` / `graduatedFilters`, `rankFilters` / `trenchesFilters`, rechecked on the row by
+  `inFilters`) and its own tab on the Trading page; a token on both has a row in each
+  (`FeedRow.list`). Plus waits now due → `isDue` (new; wait over; bought and cooldown over; never
+  skipped, held or blocked) → waits first, then the two lists in turns (`interleave`) → up to 10
+  snapshotted (`snapshot.ts`, `/v1/token/info` → tokens / token_snapshots / snapshot_flow; the
+  brief's `feed` names the list or lists that carried it, `feedOf`) → one agent run
   (`decide.ts`: brief, system prompt + operator prompt, `budgetedTools`, verdict JSON validated,
   → agent_runs / tool_calls / decisions) → per buy, best conviction first: exit plan, security
   (`/v1/token/security`), slot, size, cash, entry snapshot, `trade.buy`. A refusal on the token

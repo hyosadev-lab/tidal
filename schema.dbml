@@ -178,7 +178,8 @@ Table token_signals {
   }
 
   Note: '''
-    One /v1/market/token_signal event that passed the fetch filters. The brief shows a token its
+    One /v1/market/token_signal event that passed the fetch filters. No longer written since
+    3 Nov 2026 (the entry loop dropped the signal feed); briefs before that showed a token its
     counts by type, first-signal market cap and latest five events. signal_times and times_by_type
     are overwritten whenever the event is seen again, so totals read later include signals fired
     after a decision: backtests read shadow_tracks.features, never this table.
@@ -322,7 +323,7 @@ Table shadow_tracks {
   token text [not null, note: 'mint; no ref: rank and migration tracks may never have been snapshotted']
   source text [not null, note: "decision | rank (trending rows that passed the fetch filters but were not briefed, never decided, pump-launched) | migration (GMGN trenches 'completed' PumpSwap pools, seen within 3 min). Rank and migration are tracked, never bought; 20 open at a time each, one track per token per source"]
   decision_id integer [unique, ref: - decisions.id, note: "set exactly when source is decision (a check): the agent's own buy, wait and skip alike. A risk-check skip after a buy shares that buy's track"]
-  features text [not null, note: 'JSON: the brief row exactly as the agent got it (decision), or the feed row (rank, migration). Copied at the start, never rebuilt: briefRow reads tokens.migrated_at and token_signals, which are overwritten later']
+  features text [not null, note: 'JSON: the brief row exactly as the agent got it (decision), or the feed row (rank, migration). Copied at the start, never rebuilt: briefRow reads tokens.migrated_at, which is overwritten later. A decision brief carries `feed` (the list that carried the token: 1h trending, graduated, or 1h trending + graduated) since 3 Nov 2026, and `signals` before it']
   started_at integer [not null]
   start_price_usd real [note: "the first price off the pool, in USD at that moment's prices. Every % below is against that first price in the pool's quote"]
   ended_at integer [note: 'null = still tracking; set together with end_reason (a check)']

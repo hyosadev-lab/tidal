@@ -83,10 +83,14 @@ export async function closePosition(id: number): Promise<string | null> {
 
 // ── what the loops are doing, for the dashboard (in memory: it describes this process) ──
 
+/**
+ * One row of one list, in that list's own numbers: buys and sells are 1h on trending, 24h on
+ * graduated, which has no 1h change but a migration time. A token on both lists has a row in each.
+ */
 export type FeedRow = {
   address: string;
   symbol: string | null;
-  source: string;
+  list: "trending" | "graduated";
   mcap: number | null;
   liq: number | null;
   buys: number | null;
@@ -96,6 +100,7 @@ export type FeedRow = {
   bundler: number | null;
   rug: number | null;
   createdAt: number | null;
+  migratedAt: number | null;
 };
 
 export const status = {

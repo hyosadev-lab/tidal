@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start, status, stop } from "../src/control.ts";
 import { openDb } from "../src/db.ts";
-import { entryLoop, wake } from "../src/entry.ts";
+import { entryLoop, feedOf, interleave, isPump, wake } from "../src/entry.ts";
 import { positionClosed } from "../src/trade.ts";
 
 test("entry loop: idles with no fetch when it cannot buy, runs again on a wake, ends on Stop", async () => {
@@ -22,4 +22,20 @@ test("entry loop: idles with no fetch when it cannot buy, runs again on a wake, 
   await stop(false);
   wake();
   await loop; // resolves: the loop ends once the run is stopped
+});
+
+test("the brief takes the two lists in turns", () => {
+  assert.deepEqual(interleave(["t1", "t2", "t3"], ["c1"]), ["t1", "c1", "t2", "t3"]);
+  assert.deepEqual(interleave([], ["c1", "c2"]), ["c1", "c2"]);
+});
+
+test("both lists keep Pump.fun launches on pump pools; feed names the list or lists", () => {
+  assert.equal(isPump({ launchpad: "pump", exchange: "pump" }), true); // a trending row, still on the curve
+  assert.equal(isPump({ launchpad_platform: "pump_mayhem", exchange: "pump_amm" }), true); // a graduated row
+  assert.equal(isPump({ launchpad_platform: "pump_agent", exchange: "pump" }), true);
+  assert.equal(isPump({ launchpad_platform: "pump_mayhem_agent", exchange: "raydium" }), false); // pump family, but a pool not read
+  assert.equal(isPump({ launchpad_platform: "ray_launchpad", exchange: "ray_launchpad" }), false);
+  assert.equal(isPump({ launchpad_platform: "Pump.fun", exchange: "meteora_damm_v2" }), false); // a pool not read on-chain
+  const f = { trending: ["a", "b"], graduated: ["b", "c"] };
+  assert.deepEqual(["a", "b", "c", "w"].map((t) => feedOf(t, f)), ["1h trending", "1h trending + graduated", "graduated", null]);
 });

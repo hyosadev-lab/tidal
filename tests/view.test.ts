@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sanitize } from "../src/config.ts";
+import { status } from "../src/control.ts";
 import { db, openDb } from "../src/db.ts";
 import { buyingPaused } from "../src/trade.ts";
 import { activityBefore, dayStart, overview, runsBefore, trading, zone } from "../src/view.ts";
@@ -81,4 +82,29 @@ test("Agent activity pages through today's runs only, ten at a time", () => {
   assert.equal(tr.activityMore, true);
   const next = activityBefore(7, tr.runsSince);
   assert.deepEqual([ids(next.activity), next.more], [[6, 5, 4, 3, 2], false]);
+});
+
+test("the token list: a tab per list, a token on both in both, a wait off both under the list that last carried it", () => {
+  openDb(":memory:");
+  const now = Date.UTC(2026, 10, 3, 12);
+  const row = (address: string, list: "trending" | "graduated") => ({
+    address, symbol: address, list, mcap: 1, liq: 1, buys: 1, sells: 1, change1h: list === "trending" ? 5 : null,
+    top10: 0.1, bundler: 0.1, rug: 0.1, createdAt: now, migratedAt: list === "graduated" ? now - 60_000 : null,
+  });
+  status.fetch = { at: now, rows: [row("T", "trending"), row("B", "trending"), row("B", "graduated"), row("G", "graduated")] };
+  db.prepare("insert into agent_runs (id, started_at, model, status) values (1, ?, 'm', 'ok')").run(now - 600_000);
+  // waits now due, off both lists: one last briefed as graduated, one before briefs named their feed
+  for (const [token, feed] of [["WG", "graduated"], ["WOLD", null]] as const) {
+    db.prepare("insert into tokens (address, first_seen_at) values (?, ?)").run(token, now);
+    const d = db.prepare("insert into decisions (run_id, token, action, recheck_at) values (1, ?, 'wait', ?)").run(token, now - 1);
+    db.prepare("insert into shadow_tracks (token, source, decision_id, features, started_at) values (?, 'decision', ?, ?, ?)")
+      .run(token, d.lastInsertRowid, JSON.stringify(feed ? { feed } : {}), now - 600_000);
+  }
+  const { lists } = trading(sanitize({}), now, "UTC");
+  assert.deepEqual(lists.trending.rows.map((r) => r.address), ["T", "B", "WOLD"]);
+  assert.deepEqual(lists.graduated.rows.map((r) => r.address), ["B", "G", "WG"]);
+  assert.deepEqual([lists.trending.fetched, lists.graduated.fetched], [2, 2]);
+  const g = lists.graduated.rows[0]!;
+  assert.deepEqual([g.change1h, g.migratedAt], [null, now - 60_000]); // graduated: 24h numbers and a migration time
+  status.fetch = { at: 0, rows: [] };
 });

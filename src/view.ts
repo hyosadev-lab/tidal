@@ -1,8 +1,8 @@
 import type { Message } from "./agent/llm.ts";
 import { loadConfig, type Config } from "./config.ts";
-import { getRun, status } from "./control.ts";
+import { getRun, status, type FeedRow } from "./control.ts";
 import { db } from "./db.ts";
-import { tokenStatus } from "./entry.ts";
+import { LISTS, tokenStatus, type List } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
@@ -371,46 +371,53 @@ export function trading(cfg: Config, now: number, tz: string) {
   const act = activityBefore(Number.MAX_SAFE_INTEGER, midnight);
   const inLatest = new Set((latest ? (briefOf(latest.id) ?? []) : []).map((b) => b.address));
 
-  // The feed: the last fetch's rows, plus waits now due that the fetch did not carry.
-  const fetched = new Map(status.fetch.rows.map((r) => [r.address, r]));
-  const waits = all<{ token: string }>(
-    `select d.token from decisions d where d.action = 'wait' and d.recheck_at <= ?
-     and d.id = (select max(id) from decisions where token = d.token)`,
-    now,
-  ).map((r) => r.token);
-  const feed = [...new Set([...fetched.keys(), ...waits])].map((address) => {
-    const f = fetched.get(address);
+  // The token list, a tab per list: the last fetch's rows, then waits now due that no list carried,
+  // under the list(s) that carried them when the agent last saw them (trending before briefs said).
+  const row = (address: string, list: List, f: FeedRow | undefined) => {
+    const g = list === "graduated";
     const s = one<Record<string, any>>(
-      `select s.id, s.market_cap_usd, s.liquidity_usd, s.top_10_holder_rate, s.top_bundler_trader_percentage, s.price_usd, f.buys, f.sells, f.price_usd p1h
-       from token_snapshots s left join snapshot_flow f on f.snapshot_id = s.id and f.span = '1h'
+      `select s.market_cap_usd, s.liquidity_usd, s.top_10_holder_rate, s.top_bundler_trader_percentage, s.price_usd, f.buys, f.sells, f.price_usd p
+       from token_snapshots s left join snapshot_flow f on f.snapshot_id = s.id and f.span = ?
        where s.token = ? order by s.id desc limit 1`,
+      g ? "24h" : "1h",
       address,
     );
-    const t = one<{ symbol: string | null; created_at: number | null }>("select symbol, created_at from tokens where address = ?", address);
-    const st = tokenStatus(address, cfg, now);
+    const t = one<Record<string, any>>("select symbol, created_at, migrated_at from tokens where address = ?", address);
     return {
       address,
       mint: shortAddr(address),
       symbol: t?.symbol ?? f?.symbol ?? shortAddr(address),
-      source: f?.source ?? "wait due",
-      ...st,
+      ...tokenStatus(address, cfg, now),
       inRun: inLatest.has(address) ? latest!.id : null,
       mcap: f?.mcap ?? s?.market_cap_usd ?? null,
       liq: f?.liq ?? s?.liquidity_usd ?? null,
       buys: f?.buys ?? s?.buys ?? null,
       sells: f?.sells ?? s?.sells ?? null,
-      change1h: f?.change1h ?? (s?.p1h > 0 ? (s!.price_usd / s!.p1h - 1) * 100 : null),
+      change1h: g ? null : (f?.change1h ?? (s?.p > 0 ? (s!.price_usd / s!.p - 1) * 100 : null)),
       top10: f?.top10 ?? s?.top_10_holder_rate ?? null,
       bundler: f?.bundler ?? s?.top_bundler_trader_percentage ?? null,
       rug: f?.rug ?? null,
       createdAt: f?.createdAt ?? t?.created_at ?? null,
+      migratedAt: g ? (f?.migratedAt ?? t?.migrated_at ?? null) : null,
     };
-  });
+  };
+  const carried = new Set(status.fetch.rows.map((r) => r.address));
+  const waits = all<{ token: string; feed: string | null }>(
+    `select d.token, (select json_extract(s.features, '$.feed') from shadow_tracks s where s.token = d.token and s.source = 'decision'
+       order by s.id desc limit 1) feed
+     from decisions d where d.action = 'wait' and d.recheck_at <= ?
+     and d.id = (select max(id) from decisions where token = d.token)`,
+    now,
+  ).filter((w) => !carried.has(w.token));
+  const tab = (list: List) => {
+    const fetched = status.fetch.rows.filter((r) => r.list === list);
+    const later = waits.filter((w) => (w.feed?.includes(LISTS.graduated) ? w.feed.includes(LISTS[list]) : list === "trending"));
+    return { fetched: fetched.length, rows: [...fetched.map((f) => row(f.address, list, f)), ...later.map((w) => row(w.token, list, undefined))] };
+  };
 
   return {
-    feed,
+    lists: { trending: tab("trending"), graduated: tab("graduated") },
     fetchedAt: status.fetch.at,
-    filters: cfg.filters,
     // Agent activity: today's last ten runs; older ones of today page in through activityBefore.
     activity: act.activity,
     activityMore: act.more,
@@ -492,7 +499,7 @@ export function tokenDetail(address: string, cfg: Config, now: number) {
     address,
     mint: shortAddr(address),
     symbol: t?.symbol ?? shortAddr(address),
-    source: status.fetch.rows.find((r) => r.address === address)?.source ?? null,
+    source: status.fetch.rows.filter((r) => r.address === address).map((r) => LISTS[r.list]).join(" + ") || null,
     ...tokenStatus(address, cfg, now),
     verdict: d ? { run: d.run_id, action: d.action, conviction: d.conviction, thesis: d.thesis, until: d.recheck_at, at: d.started_at } : null,
     lookups: all<Record<string, any>>("select at, name, result from tool_calls where args like ? order by id desc limit 10", like).map((c) => ({

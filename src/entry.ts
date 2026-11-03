@@ -1,12 +1,12 @@
-import { inFilters, loadConfig, rankFilters, signalFilters, type Config } from "./config.ts";
+import { inFilters, loadConfig, rankFilters, trenchesFilters, type Config } from "./config.ts";
 import { getRun, lossPaused, status, type FeedRow } from "./control.ts";
 import { db, insert, tx } from "./db.ts";
-import { decide, type Verdict } from "./decide.ts";
+import { decide, type Due, type Verdict } from "./decide.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import { log, short } from "./log.ts";
 import { sampleRank } from "./shadow.ts";
-import { takeSnapshot, writeSignal } from "./snapshot.ts";
+import { takeSnapshot } from "./snapshot.ts";
 import { buy, cashUsd, lossDay, MIN_BUY_USD, openPositions, positionClosed, security, solUsd } from "./trade.ts";
 
 /**
@@ -20,77 +20,88 @@ import { buy, cashUsd, lossDay, MIN_BUY_USD, openPositions, positionClosed, secu
 const MAX_BRIEF = 10;
 const FEED_LIMIT = 40;
 /**
- * One group each, as GMGN returns at most 50 rows a group: smart-money buy, KOL buy, price (spike,
- * all-time high, market-cap key level), community takeover. The warnings (bundler sell, pump
- * claim) are not fetched: every row's signal_times_by_type already counts them for the brief.
+ * pump.fun's launchpads in GMGN's names: their tokens start on a pump curve and migrate to PumpSwap,
+ * the pools the exit loop and shadow tracks read on-chain. Only the first two seen so far (3 Nov 2026).
  */
-const SIGNAL_GROUPS = [[12], [20], [6, 7, 8], [11]];
+const PUMP = ["Pump.fun", "pump_mayhem", "pump_agent", "pump_mayhem_agent"];
+/** The two lists, as the brief's `feed` names them. */
+export const LISTS = { trending: "1h trending", graduated: "graduated" } as const;
+export type List = keyof typeof LISTS;
 
 const num = (v: unknown): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 
-/**
- * GMGN 1h trending + signal, in that order, deduped; each row kept with the feed's own numbers
- * for the dashboard. Field names verified on live rows: the signal route carries no price change,
- * and its 1h buys/sells are always 0, so they show as unknown.
- */
-function feedRow(r: any, source: string, signal: boolean): FeedRow {
-  const created = num(signal ? (r.created_timestamp ?? r.open_timestamp) : (r.creation_timestamp ?? r.open_timestamp));
+/** A pump.fun launch on a pump curve or a PumpSwap pool: the exchange check keeps any other pool out. */
+export const isPump = (r: any): boolean =>
+  (PUMP.includes(r?.launchpad_platform) || r?.launchpad === "pump") && ["pump", "pump_amm"].includes(r?.exchange);
+
+/** One list's row in its own numbers: trenches rows carry 24h buys and sells and no 1h change. */
+function feedRow(r: any, list: List): FeedRow {
+  const g = list === "graduated";
+  const created = num(r.creation_timestamp ?? r.created_timestamp ?? r.open_timestamp);
+  const migrated = g ? num(r.complete_timestamp) : null;
   return {
     address: String(r.address),
     symbol: typeof r.symbol === "string" ? r.symbol.slice(0, 40) : null,
-    source,
+    list,
     mcap: num(r.market_cap),
     liq: num(r.liquidity),
-    buys: signal ? null : num(r.buys),
-    sells: signal ? null : num(r.sells),
-    change1h: signal ? null : num(r.price_change_percent1h),
+    buys: num(g ? r.buys_24h : r.buys),
+    sells: num(g ? r.sells_24h : r.sells),
+    change1h: g ? null : num(r.price_change_percent1h),
     top10: num(r.top_10_holder_rate),
-    bundler: num(r.bundler_rate ?? r.bundler_trader_amount_rate), // trending, then signal
+    bundler: num(r.bundler_rate ?? r.bundler_trader_amount_rate), // trending, then trenches
     rug: num(r.rug_ratio),
     createdAt: created ? created * 1000 : null,
+    migratedAt: migrated ? migrated * 1000 : null,
   };
 }
 
-/** The feeds' tokens, trending first, and the trending rows as GMGN sent them (for rank shadow tracks). */
-async function fetchTokens(cfg: Config): Promise<{ tokens: string[]; rank: Record<string, any>[] }> {
+/** a[0], b[0], a[1], b[1], …: neither list starves the other of brief places. */
+export const interleave = <T>(a: T[], b: T[]): T[] =>
+  Array.from({ length: Math.max(a.length, b.length) }, (_, i) => [a[i], b[i]]).flat().filter((x): x is T => x !== undefined);
+
+type Fetched = Record<List, string[]> & { rank: Record<string, any>[] };
+
+/** The brief's `feed`: the list or lists that carried the token this cycle; null for a wait off both. */
+export const feedOf = (token: string, f: Record<List, string[]>): string | null =>
+  (Object.keys(LISTS) as List[]).filter((k) => f[k].includes(token)).map((k) => LISTS[k]).join(" + ") || null;
+
+/**
+ * GMGN 1h trending and the graduated list (trenches 'completed': fresh PumpSwap migrations),
+ * Pump.fun launches only, each under its own filters. A token on both has a row in each. The
+ * trending rows as GMGN sent them go to rank shadow tracks.
+ */
+async function fetchTokens(cfg: Config): Promise<Fetched> {
   const c = gmgnClient();
-  const [rank, signal] = await Promise.allSettled([
-    c.getTrendingSwaps("sol", "1h", { order_by: "volume", limit: FEED_LIMIT, ...rankFilters(cfg) }),
-    c.getTokenSignalV2("sol", SIGNAL_GROUPS.map((signal_type) => ({ signal_type, ...signalFilters(cfg) }))),
+  const [rank, done] = await Promise.allSettled([
+    c.getTrendingSwaps("sol", "1h", { order_by: "volume", limit: FEED_LIMIT, platforms: PUMP, ...rankFilters(cfg) }),
+    c.getTrenches("sol", ["completed"], PUMP, FEED_LIMIT, trenchesFilters(cfg)),
   ]);
-  const rows = new Map<string, FeedRow>();
-  const rankRows: Record<string, any>[] = [];
+  const rows: FeedRow[] = [];
+  const out: Fetched = { trending: [], graduated: [], rank: [] };
   const failed = (feed: string, e: unknown) => {
     const error = `${feed}: ${short(e)}`;
     if (error !== status.gmgn.error) log("warn", `${feed} feed failed: ${short(e)}`); // once, not every cycle
     status.gmgn = { errorAt: Date.now(), error };
   };
+  // GMGN's platform params narrow both lists; the row check holds whatever slips through.
+  const keep = (list: List, row: any, filters: Record<string, number>) => {
+    if (!row?.address || !isPump(row) || row.is_wash_trading || !inFilters(row, filters)) return false;
+    rows.push(feedRow(row, list));
+    out[list].push(String(row.address));
+    return true;
+  };
   if (rank.status === "fulfilled") {
     // The rank route's data is itself an envelope: { code, data: { rank: [...] } }.
     const r: any = rank.value;
-    for (const row of r?.rank ?? r?.data?.rank ?? [])
-      if (row?.address && !row.is_wash_trading && inFilters(row, cfg)) {
-        rows.set(String(row.address), feedRow(row, "1h trending", false));
-        rankRows.push(row);
-      }
+    for (const row of r?.rank ?? r?.data?.rank ?? []) if (keep("trending", row, cfg.filters)) out.rank.push(row);
   } else failed("Trending", rank.reason);
-  if (signal.status === "fulfilled") {
-    const s: any = signal.value;
-    tx(() => {
-      for (const row of Array.isArray(s) ? s : (s?.list ?? [])) {
-        // cur_data: the fresher top 10 / holders / liquidity; ath: the all-time-high market cap.
-        // visiting_count is always 0 here, unlike on trending, so the viewers bound skips it.
-        const data = { ...row?.data, ...row?.cur_data, ath: row?.ath, visiting_count: null, address: row?.token_address ?? row?.data?.address };
-        if (!data.address || !inFilters(data, cfg)) continue;
-        writeSignal(String(data.address), row);
-        const seen = rows.get(String(data.address));
-        if (seen) seen.source = seen.source === "signal" ? "signal" : "trending + signal";
-        else rows.set(String(data.address), feedRow(data, "signal", true));
-      }
-    });
-  } else failed("Signal", signal.reason);
-  status.fetch = { at: Date.now(), rows: [...rows.values()] };
-  return { tokens: [...rows.keys()], rank: rankRows };
+  if (done.status === "fulfilled") {
+    const d: any = done.value;
+    for (const row of (d?.data ?? d)?.completed ?? []) if (row?.exchange === "pump_amm") keep("graduated", row, cfg.graduatedFilters);
+  } else failed("Graduated", done.reason);
+  status.fetch = { at: Date.now(), rows };
+  return out;
 }
 
 /** Waits whose recheck time has passed, whether or not a feed carried them this cycle. */
@@ -232,8 +243,9 @@ async function entryCycle(): Promise<boolean> {
 
     const now = Date.now();
     const feed = await fetchTokens(cfg);
-    const candidates = [...new Set([...waitsDue(now), ...feed.tokens])];
-    const due = candidates.filter((t) => isDue(t, cfg, now)).slice(0, MAX_BRIEF);
+    const isDueNow = (t: string) => isDue(t, cfg, now);
+    // Waits first, then the two lists turn about; a token on both takes its first place.
+    const due = [...new Set([...waitsDue(now).filter(isDueNow), ...interleave(feed.trending.filter(isDueNow), feed.graduated.filter(isDueNow))])].slice(0, MAX_BRIEF);
     try {
       sampleRank(feed.rank, new Set(due));
     } catch (e) {
@@ -241,10 +253,10 @@ async function entryCycle(): Promise<boolean> {
     }
     if (!due.length) return true;
 
-    const snaps: { token: string; snapshotId: number }[] = [];
+    const snaps: Due[] = [];
     for (const token of due) {
       try {
-        snaps.push({ token, snapshotId: await takeSnapshot(token, "decision") });
+        snaps.push({ token, snapshotId: await takeSnapshot(token, "decision"), feed: feedOf(token, feed) });
       } catch (e) {
         log("warn", `Snapshot ${token.slice(0, 6)}… failed: ${short(e)} — asked again next cycle.`);
       }

@@ -64,6 +64,7 @@ const S = {
   run: null,
   runPicked: false,
   filtersOpen: false,
+  list: "trending", // the token list's open tab; its Filters edit that list's set
   confirmStop: false,
   draft: null,
   rmodel: null, // the research agent's model as typed on Settings, saved apart from the config; null = as saved
@@ -477,8 +478,11 @@ const statusNote = (t) => (t.until ? `${t.note} ${hm(t.until)}` : t.note);
 
 function trading(d) {
   const tr = d.trading;
-  const active = Object.keys(tr.filters).length;
-  const feedRows = tr.feed
+  const L = LISTS[S.list];
+  const cur = tr.lists[S.list];
+  const g = S.list === "graduated";
+  const active = Object.keys(d.config[L.key]).length;
+  const feedRows = cur.rows
     .map((t) => {
       const on = S.sel === t.address;
       const age = t.createdAt ? mins(Math.max(0, Math.floor((d.now - t.createdAt) / 60_000))) : "—";
@@ -487,7 +491,7 @@ function trading(d) {
         <span class="stack" style="align-items:flex-start"><span class="pill ${t.status}">${STATUS[t.status]}</span><span class="muted nowrap" style="font-size:11px;line-height:14px;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(statusNote(t))}</span></span>
         <span class="r">${k$(t.mcap)}</span><span class="r">${k$(t.liq)}</span>
         <span class="stack" style="align-items:flex-end"><span>${fin(t.buys) && fin(t.sells) ? (t.buys + t.sells).toLocaleString("en-US") : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${kn(t.buys)} / ${kn(t.sells)}</span></span>
-        <span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span><span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
+        ${g ? `<span class="r soft">${t.migratedAt ? `${mins(Math.max(0, Math.floor((d.now - t.migratedAt) / 60_000)))} ago` : "—"}</span>` : `<span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span>`}<span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
         <span class="r" style="color:${fin(t.rug) && t.rug >= 0.7 ? "var(--red)" : "var(--ink)"}">${fin(t.rug) ? t.rug.toFixed(2) : "—"}</span><span class="r soft">${age}</span></button></li>`;
     })
     .join("");
@@ -502,10 +506,11 @@ function trading(d) {
   return `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Entry loop · agent</span><h1>Trading</h1><p>The tokens the agent reads, what it decided and why, and the positions it holds.</p></div></div>
   <div class="row" style="align-items:flex-start">
     <section class="card flush tall" style="flex:999 1 760px;gap:14px;padding-top:16px;padding-bottom:0" aria-labelledby="feed-title">
-      <div class="head"><span class="ico">${I.eye}</span><div class="stack"><h2 id="feed-title" class="big">What the agent sees</h2><span class="s13 muted">${tr.fetchedAt ? `${plural(tr.feed.length, "token")} from the fetch at ${hms(tr.fetchedAt)}, plus waits now due` : "no fetch yet"}</span></div>
-        <button class="btn sm light" style="margin-left:auto" data-a="openFilters" aria-label="Edit filters, ${active} active">${I.filter}<span>Filters</span>${active ? `<span class="cnt" aria-hidden="true">${active}</span>` : ""}</button></div>
-      <div class="fill fade" data-scroll="feed"><div style="min-width:910px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Rug</span><span class="r">Age</span></div>
-        <ul class="feed" aria-label="Tokens the agent reads">${feedRows || `<li class="empty">Nothing fetched yet.</li>`}</ul></div></div>
+      <div class="head"><span class="ico">${I.eye}</span><div class="stack"><h2 id="feed-title" class="big">What the agent sees</h2><span class="s13 muted">${tr.fetchedAt ? `${plural(cur.fetched, "Pump.fun token")} from the fetch at ${hms(tr.fetchedAt)}, plus waits now due` : "no fetch yet"}</span></div></div>
+      <div class="head"><div class="seg sm" role="group" aria-label="Token list">${Object.entries(LISTS).map(([k, l]) => `<button data-a="feedList" data-v="${k}" aria-pressed="${S.list === k}">${l.label}<span class="n">${tr.lists[k].rows.length}</span></button>`).join("")}</div>
+        <button class="btn sm light" style="margin-left:auto" data-a="openFilters" aria-label="Edit ${L.label} filters, ${active} active">${I.filter}<span>Filters</span>${active ? `<span class="cnt" aria-hidden="true">${active}</span>` : ""}</button></div>
+      <div class="fill fade" data-scroll="feed"><div style="min-width:910px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">${L.tx}</span><span class="r">${L.c1}</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Rug</span><span class="r">Age</span></div>
+        <ul class="feed" aria-label="${L.label} tokens the agent reads">${feedRows || `<li class="empty">Nothing on this list yet.</li>`}</ul></div></div>
     </section>
     <section class="card flush tall" style="flex:1 1 440px;padding-top:16px;padding-bottom:0;position:relative" aria-labelledby="agent-title">
       <div class="head"><span class="ico vio">${I.chat}</span><div class="stack"><div class="inline" style="gap:2px"><h2 id="agent-title" class="big">Agent activity</h2>${helpTip("agent-help", "About agent activity", AGENT_HELP)}</div><span class="s13 muted inline" style="gap:6px"><span class="dot" style="background:${d.health.run === "running" ? "var(--lime)" : "var(--dim)"}"></span>${d.health.run === "running" ? "cycle running" : d.health.run}${tr.lastRun ? ` · last run #${tr.lastRun}` : ""}</span></div></div>
@@ -524,7 +529,7 @@ const helpTip = (id, label, html) =>
   `<button class="helpbtn" data-a="help" data-v="${id}" aria-label="${label}" aria-describedby="${id}" aria-expanded="${S.help === id}"><span aria-hidden="true">${I.help}</span></button><div class="helptip" id="${id}" role="tooltip">${html}</div>`;
 
 const AGENT_HELP = `<b style="color:var(--ink)">What the agent does</b>
-  <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h list or signals, or a wait that has ended. Up to 10 tokens per run.</span>
+  <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h trending or graduated list (Pump.fun launches only), or a wait that has ended. Up to 10 tokens per run.</span>
   <span>In a run it may look up holders, top traders, candles or the dev's earlier tokens, then gives each token a verdict:</span>
   <span class="stack" style="gap:2px;padding-left:2px"><span><b class="pos">buy</b> · conviction 0–100; bought only if a slot, the security check and cash allow</span><span><b class="vio">wait</b> · looked at again at the time it sets</span><span><b class="soft">skip</b> · a hard refusal, final</span></span>
   <span>No run starts while every slot is taken or buying is paused.</span>
@@ -629,22 +634,39 @@ function transcriptDock(r) {
     <ol class="transcript">${r.transcript.map((m) => `<li><span class="tag ${ROLE_TAG[m.role] ?? "tool"}">${esc(m.role)}</span><pre>${esc(m.text)}</pre></li>`).join("")}</ol></details></section>`;
 }
 
-// GMGN trending's filters, in its order and units ($K = thousands of dollars).
+// GMGN's filters, in trending's order and units ($K = thousands of dollars). Trenches rows carry
+// no initial liquidity or ATH, and count volume and transactions over 24h.
 const FILTERS = [
   ["age", "Age, minutes"], ["liquidity", "Liquidity, $K"], ["initialLiquidity", "Initial liquidity, $K"], ["marketCap", "Market cap, $K"],
   ["athMarketCap", "ATH market cap, $K"], ["volume", "1h volume, $K"], ["swaps", "1h transactions"], ["fee", "Total fees, SOL"],
   ["holders", "Holders"], ["botDegens", "Bot degens"], ["viewing", "Currently viewing"], ["smartMoney", "Smart-money wallets"], ["kol", "KOL wallets"],
   ["top10", "Top 10 holders, %"], ["devHolding", "Dev holding, %"], ["insider", "Insiders, %"], ["bundler", "Bundlers, %"], ["phishing", "Phishing, %"], ["sniper", "Snipers hold, %"],
 ];
+const TRENDING_ONLY = new Set(["initialLiquidity", "athMarketCap"]);
+const GRADUATED_LABEL = { volume: "24h volume, $K", swaps: "24h transactions" };
+/** The token list's tabs; each list keeps its own fetch filters under `key` in the config. */
+const LISTS = {
+  trending: {
+    label: "1h trending", key: "filters", tx: "TXs 1h", c1: "1h", sub: "sent to GMGN with the 1h trending request",
+    note: "Pump.fun launches only, on a pump curve or PumpSwap. GMGN applies these to the 1h trending request; initial liquidity is checked on each row.",
+  },
+  graduated: {
+    label: "Graduated", key: "graduatedFilters", tx: "TXs 24h", c1: "Migrated", sub: "sent to GMGN with the trenches 'completed' request",
+    note: "Fresh migrations off the Pump.fun curve to PumpSwap, pump.fun launchpads only (Pump.fun, mayhem, agent). GMGN applies these to the trenches request; bot degens and dev holding are checked on each row. Volume and transactions here count 24 hours; initial liquidity and ATH are not offered, as trenches rows do not carry them.",
+  },
+};
 
 function filtersDialog(d) {
-  const f = d.config.filters;
+  const L = LISTS[S.list];
+  const g = S.list === "graduated";
+  const f = d.config[L.key];
+  const list = FILTERS.filter(([k]) => !g || !TRENDING_ONLY.has(k)).map(([k, l]) => [k, (g && GRADUATED_LABEL[k]) || l]);
   return `<div class="overlay"><div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="ff-title">
-    <div class="head"><span class="ico">${I.filter}</span><div class="stack"><h2 id="ff-title" style="font-size:18px;line-height:24px">Fetch filters</h2><span class="s13 muted">sent to GMGN with every trending and signal request</span></div>
+    <div class="head"><span class="ico">${I.filter}</span><div class="stack"><h2 id="ff-title" style="font-size:18px;line-height:24px">Fetch filters · ${L.label}</h2><span class="s13 muted">${L.sub}</span></div>
       <button class="btn line" style="margin-left:auto;width:44px;min-height:44px;padding:0;border-radius:50%" aria-label="Close" data-a="closeFilters">${I.x}</button></div>
-    <p class="s13 muted" style="color:var(--muted)">Tokens outside these ranges are never snapshotted, so they cost no rate limit and never reach the agent. GMGN applies them to trending; initial liquidity and the signal feed are checked on each row. They only narrow the pool; the risk check still runs on every buy. Leave a side empty for no limit.</p>
-    <form id="filters" class="filters">${FILTERS.map(([k, l]) => `<div><span class="s13 b">${l}</span><div class="inline" style="gap:8px"><input class="inp" type="number" min="0" step="any" name="${k}Min" aria-label="${l} minimum" placeholder="Min" value="${esc(f[k + "Min"] ?? "")}"><span class="s13 muted" aria-hidden="true">to</span><input class="inp" type="number" min="0" step="any" name="${k}Max" aria-label="${l} maximum" placeholder="Max" value="${esc(f[k + "Max"] ?? "")}"></div></div>`).join("")}</form>
-    <div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-a="clearFilters">Clear all</button><button class="btn inner" style="margin-left:auto" data-a="closeFilters">Cancel</button><button class="btn lime" data-a="applyFilters">Apply filters</button></div>
+    <p class="s13 muted" style="color:var(--muted)">Tokens outside these ranges are never snapshotted, so they cost no rate limit and never reach the agent. ${L.note} They only narrow the pool; the risk check still runs on every buy. Leave a side empty for no limit.</p>
+    <form id="filters" class="filters">${list.map(([k, l]) => `<div><span class="s13 b">${l}</span><div class="inline" style="gap:8px"><input class="inp" type="number" min="0" step="any" name="${k}Min" aria-label="${l} minimum" placeholder="Min" value="${esc(f[k + "Min"] ?? "")}"><span class="s13 muted" aria-hidden="true">to</span><input class="inp" type="number" min="0" step="any" name="${k}Max" aria-label="${l} maximum" placeholder="Max" value="${esc(f[k + "Max"] ?? "")}"></div></div>`).join("")}</form>
+    <div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-a="clearFilters">Clear this list</button><button class="btn inner" style="margin-left:auto" data-a="closeFilters">Cancel</button><button class="btn lime" data-a="applyFilters">Apply filters</button></div>
   </div></div>`;
 }
 
@@ -1014,7 +1036,7 @@ function settings(d) {
     mode: `<fieldset class="choices"><legend class="sr">Trading mode</legend>${radio("mode", "paper", c.mode === "paper", "Paper", "Real prices, simulated fills. The wallet is never touched.")}${radio("mode", "live", c.mode === "live", "Live", "Jupiter swaps, signed inside this process with the wallet key.", !d.liveAvailable)}</fieldset>
       ${d.liveAvailable ? `<div class="banner amber" style="border-radius:16px;font-size:13px;line-height:18px">Live trades real funds from the wallet SOLANA_PRIVATE_KEY signs for. Every buy and sell is irreversible.</div>` : `<div class="banner amber" style="border-radius:16px;font-size:13px;line-height:18px">Live stays off while <code class="mono small">SOLANA_PRIVATE_KEY</code> is unset. It is read from the environment only, never from this page.</div>`}
       ${fieldNum("Paper starting equity", "paperStartUsd", c.paperStartUsd, "", { cls: "mid", help: "Paper cash = this + every sell − every buy." })}`,
-    cycle: `<div class="note"><span class="small muted">Source</span><span class="big">GMGN 1h trending + signal, plus waits that are due</span></div>
+    cycle: `<div class="note"><span class="small muted">Source</span><span class="big">GMGN 1h trending + graduated, Pump.fun launches only, plus waits that are due</span></div>
       <div class="fgrid three">${fieldNum("Longest wait", "maxWaitMinutes", c.maxWaitMinutes, "minutes", { step: 1, help: "A wait's recheck time is clamped to this." })}${fieldNum("Cooldown after close", "cooldownMinutes", c.cooldownMinutes, "minutes", { step: 1, help: "A sold token can come back after this." })}</div>`,
     risk: `<div class="note"><span class="small muted">Checked before every buy</span><span class="big">Token security, a free slot, a size above the floor and cash on hand. Any fail = no buy.</span></div>
       <div class="fgrid">${fieldNum("Position size", "sizeSol", c.sizeSol, `<span data-sol>${sol}</span>`, { step: 0.01 })}${fieldNum("Max open positions", "maxOpenPositions", c.maxOpenPositions, "", { step: 1 })}${fieldNum("Max daily loss", "maxDailyLossPct", c.maxDailyLossPct, "% of day start", { help: "Past this, buying pauses. Exits keep running." })}${fieldNum("Slippage", "slippagePct", Number(c.slippagePct) > 0 ? c.slippagePct : "", "%", { step: 0.1, placeholder: "Auto", help: "Empty = auto: Jupiter picks the tolerance per route." })}</div>
@@ -1236,15 +1258,17 @@ const A = {
     const p = S.data.overview.positions.find((x) => String(x.id) === String(id));
     if (p && confirm(`Close ${p.symbol} at market${p.mode === "live" ? " — a real, irreversible sell" : ""}?`)) act("/api/close", { id: Number(id) });
   },
+  feedList: (v) => ((S.list = v), render()),
   openFilters: () => ((S.filtersOpen = true), render()),
   closeFilters: () => ((S.filtersOpen = false), render()),
   clearFilters: () => document.querySelectorAll("#filters input").forEach((i) => (i.value = "")),
   applyFilters: async () => {
+    const L = LISTS[S.list];
     const filters = {};
     for (const i of document.querySelectorAll("#filters input")) if (i.value !== "") filters[i.name] = Number(i.value);
     S.filtersOpen = false;
-    const r = await act("/api/settings", { config: { filters } }, "Filters saved for the next fetch. The run in progress is not affected.");
-    if (r?.config && S.draft) S.draft.filters = r.config.filters;
+    const r = await act("/api/settings", { config: { [L.key]: filters } }, `${L.label} filters saved for the next fetch. The run in progress is not affected.`);
+    if (r?.config && S.draft) S.draft[L.key] = r.config[L.key];
   },
   section: (v) => ((S.section = v), render(true)),
   addRule: () => (S.draft.plan.push({ kind: "tp", at: 100, sell: 0 }), render(true)),
