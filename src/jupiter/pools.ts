@@ -103,11 +103,11 @@ export function migratedPool(mint: string, quote = WSOL): string {
 
 /**
  * A PumpSwap pool's virtual quote reserve (raw), priced on top of its quote vault; 0 on the older,
- * shorter layout. Not in a published IDL: found live (Nov 2026) as the u64 at 245 that makes
- * Jupiter's sell quote sit one fee under (vault + this) / token on every pool tried (~17.5 SOL,
- * drifting with trades); the vaults alone read 15% to 15× low.
+ * shorter layout. The IDL's `virtual_quote_reserves`: a signed i128 at 245 (~17.5 SOL, drifting with
+ * trades, and it can go negative); the vaults alone read 15% to 15× low. Read as a u64, a negative
+ * one came out ~1.8e10 SOL and priced the token ~1e8× too high.
  */
-export const ammVirtualQuote = (d: Buffer): bigint => (d.length >= 253 ? d.readBigUInt64LE(245) : 0n);
+export const ammVirtualQuote = (d: Buffer): bigint => (d.length >= 261 ? (d.readBigInt64LE(253) << 64n) + d.readBigUInt64LE(245) : 0n);
 /** An SPL token account's raw amount — the same offset in Token and Token-2022. */
 export const tokenAmount = (d: Buffer): bigint => d.readBigUInt64LE(64);
 /** An SPL mint's decimals. */
@@ -209,7 +209,7 @@ export async function resolvePools(items: { mint: string; pool: string }[]): Pro
     const tokenIsBase = layout.baseMint === mint;
     if (!tokenIsBase && layout.quoteMint !== mint) return "pool does not hold this token";
     // The virtual reserve sits on the pool's quote side; with the token there it would price the other way round.
-    if (!tokenIsBase && ammVirtualQuote(acc!.data) > 0n) return "pool quotes in this token, not read on-chain";
+    if (!tokenIsBase && ammVirtualQuote(acc!.data) !== 0n) return "pool quotes in this token, not read on-chain";
     const quoteMint = tokenIsBase ? layout.quoteMint : layout.baseMint;
     return { kind: "amm" as const, mint, quoteMint, accounts: tokenIsBase ? [layout.baseVault, layout.quoteVault, pool] : [layout.quoteVault, layout.baseVault, pool] };
   });
@@ -238,7 +238,7 @@ export function poolReading(r: Pick<Resolved, "kind" | "decimals">, data: Buffer
   const token = Number(tokenAmount(data[0]!)) / 10 ** r.decimals[0]!;
   const quote = Number(tokenAmount(data[1]!)) / 10 ** r.decimals[1]!;
   const virtual = Number(ammVirtualQuote(data[2]!)) / 10 ** r.decimals[1]!;
-  return token > 0 ? { price: (quote + virtual) / token, liquidity: quote } : null;
+  return token > 0 && quote + virtual > 0 ? { price: (quote + virtual) / token, liquidity: quote } : null;
 }
 
 async function resolve(w: Watch): Promise<void> {
@@ -290,7 +290,7 @@ function apply(w: Watch, i: number, data: Buffer, slot: number): void {
   // The vaults must agree on a slot; the pool's virtual reserve drifts slowly, so its latest reading does.
   w.seen[i] = { amount: Number(i === 2 ? ammVirtualQuote(data) : tokenAmount(data)) / 10 ** w.decimals[Math.min(i, 1)]!, slot };
   const [token, quote, pool] = w.seen;
-  if (token && quote && token.slot === quote.slot && token.amount > 0) commit(w, (quote.amount + (pool?.amount ?? 0)) / token.amount, quote.amount, slot);
+  if (token && quote && token.slot === quote.slot && token.amount > 0 && quote.amount + (pool?.amount ?? 0) > 0) commit(w, (quote.amount + (pool?.amount ?? 0)) / token.amount, quote.amount, slot);
 }
 
 function commit(w: Watch, price: number, liquidity: number, slot: number): void {

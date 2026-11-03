@@ -17,7 +17,8 @@ const u64 = (d: Buffer, at: number, v: bigint) => (d.writeBigUInt64LE(v, at), d)
 const mint = (decimals: number) => Object.assign(Buffer.alloc(82), { 44: decimals });
 const tokenAccount = (amount: bigint) => u64(Buffer.alloc(165), 64, amount);
 function ammPool(virtualQuote = 0n): Buffer {
-  const d = u64(Buffer.alloc(301), 245, virtualQuote);
+  const d = Buffer.alloc(301);
+  d.writeBigUInt64LE(BigInt.asUintN(64, virtualQuote), 245), d.writeBigInt64LE(virtualQuote >> 64n, 253); // i128
   for (const [at, k] of [[43, MINT], [75, WSOL], [139, BASE_VAULT], [171, QUOTE_VAULT]] as const) b58decode(k).copy(d, at);
   return d;
 }
@@ -172,4 +173,12 @@ test("addresses: a pump token's curve and the PumpSwap pool it migrates into, of
     pools.migratedPool("93FWFR63nwQcq5zuXNmTits5BYcKFjmUZzccMvhmpump", "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"),
     "646NHe5TmrAHa6y6TxGBnW94bhu5sgXCqMH6oLD1pkvb",
   );
+});
+
+test("PumpSwap: the virtual quote is a signed i128, so a negative one lowers the price", () => {
+  const r = { kind: "amm" as const, decimals: [6, 9] };
+  const vaults = [tokenAccount(2_000_000_000_000n), tokenAccount(100_000_000_000n)]; // 2,000,000 tokens, 100 SOL
+  assert.equal(pools.ammVirtualQuote(ammPool(-5_000_000_000n)), -5_000_000_000n);
+  assert.equal((pools.poolReading(r, [...vaults, ammPool(-5_000_000_000n)]) as { price: number }).price, 95 / 2_000_000);
+  assert.equal(pools.poolReading(r, [...vaults, ammPool(-100_000_000_000n)]), null, "no positive quote side, no price");
 });
