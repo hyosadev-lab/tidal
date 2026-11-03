@@ -60,7 +60,8 @@ function feedRow(r: any, list: List): FeedRow {
 export const interleave = <T>(a: T[], b: T[]): T[] =>
   Array.from({ length: Math.max(a.length, b.length) }, (_, i) => [a[i], b[i]]).flat().filter((x): x is T => x !== undefined);
 
-type Fetched = Record<List, string[]> & { rank: Record<string, any>[] };
+/** `wash`: tokens GMGN flagged as wash-traded on either list — kept, and told to the agent. */
+type Fetched = Record<List, string[]> & { rank: Record<string, any>[]; wash: Set<string> };
 
 /** The brief's `feed`: the list or lists that carried the token this cycle; null for a wait off both. */
 export const feedOf = (token: string, f: Record<List, string[]>): string | null =>
@@ -78,7 +79,7 @@ async function fetchTokens(cfg: Config): Promise<Fetched> {
     c.getTrenches("sol", ["completed"], PUMP, FEED_LIMIT, trenchesFilters(cfg)),
   ]);
   const rows: FeedRow[] = [];
-  const out: Fetched = { trending: [], graduated: [], rank: [] };
+  const out: Fetched = { trending: [], graduated: [], rank: [], wash: new Set() };
   const failed = (feed: string, e: unknown) => {
     const error = `${feed}: ${short(e)}`;
     if (error !== status.gmgn.error) log("warn", `${feed} feed failed: ${short(e)}`); // once, not every cycle
@@ -86,7 +87,8 @@ async function fetchTokens(cfg: Config): Promise<Fetched> {
   };
   // GMGN's platform params narrow both lists; the row check holds whatever slips through.
   const keep = (list: List, row: any, filters: Record<string, number>) => {
-    if (!row?.address || !isPump(row) || row.is_wash_trading || !inFilters(row, filters)) return false;
+    if (!row?.address || !isPump(row) || !inFilters(row, filters)) return false;
+    if (row.is_wash_trading) out.wash.add(String(row.address));
     rows.push(feedRow(row, list));
     out[list].push(String(row.address));
     return true;
@@ -256,7 +258,7 @@ async function entryCycle(): Promise<boolean> {
     const snaps: Due[] = [];
     for (const token of due) {
       try {
-        snaps.push({ token, snapshotId: await takeSnapshot(token, "decision"), feed: feedOf(token, feed) });
+        snaps.push({ token, snapshotId: await takeSnapshot(token, "decision"), feed: feedOf(token, feed), wash: feed.wash.has(token) });
       } catch (e) {
         log("warn", `Snapshot ${token.slice(0, 6)}… failed: ${short(e)} — asked again next cycle.`);
       }
