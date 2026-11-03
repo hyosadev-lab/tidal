@@ -174,7 +174,7 @@ export type Feed = "trending" | "graduated";
  * risk check still runs on every buy.
  */
 const FILTERS: Record<string, { api?: string; trenches?: string; fields: string[]; hi: number; scale?: number; trendingOnly?: true }> = {
-  age: { api: "created", trenches: "created", fields: ["creation_timestamp", "created_timestamp", "open_timestamp"], hi: 100_000 },
+  age: { api: "created", trenches: "created", fields: ["creation_timestamp", "open_timestamp", "created_timestamp"], hi: 100_000 },
   liquidity: { api: "liquidity", trenches: "liquidity", fields: ["liquidity"], hi: 1e9, scale: 1000 },
   initialLiquidity: { fields: ["initial_liquidity"], hi: 1e9, scale: 1000, trendingOnly: true },
   marketCap: { api: "marketcap", trenches: "marketcap", fields: ["market_cap"], hi: 1e9, scale: 1000 },

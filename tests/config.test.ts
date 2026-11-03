@@ -34,6 +34,8 @@ test("inFilters checks a trending or trenches row against its own feed's bounds;
   assert.equal(inFilters({ ...trench, dev_team_hold_rate: 0.2 }, cfg.graduatedFilters, now), false); // no trenches param: the row check holds it
   assert.equal(inFilters({ ...trench, volume_24h: 5_000 }, cfg.graduatedFilters, now), false);
   assert.equal(inFilters({ ...trench, created_timestamp: ts }, cfg.graduatedFilters, now), false); // an hour old, over 30 minutes
+  // GMGN's trenches age runs from the pool's open (the migration), not the curve's creation.
+  assert.equal(inFilters({ ...trench, created_timestamp: ts, open_timestamp: now / 1000 - 10 * 60 }, cfg.graduatedFilters, now), true);
 });
 
 test("every save lands in config_history too: the version trades and tracks are scored under", () => {
