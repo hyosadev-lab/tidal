@@ -49,3 +49,11 @@ test("every save lands in config_history too: the version trades and tracks are 
   assert.equal(JSON.parse(last.value).prompt, "v2");
   assert.equal(last.value, (db.prepare("select value from settings where key = 'config'").get() as { value: string }).value);
 });
+
+test("a save that changes nothing is no new version", () => {
+  openDb(":memory:");
+  loadConfig();
+  saveConfig(loadConfig()); // Save with nothing changed, or Apply with the same filters
+  saveConfig({ ...loadConfig() });
+  assert.equal((db.prepare("select count(*) n from config_history").get() as { n: number }).n, 1);
+});

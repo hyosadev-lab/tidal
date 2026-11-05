@@ -980,7 +980,7 @@ function versionsSection(r) {
     <td class="r b ${v.trades ? sign(v.avgPct) : "muted"}">${pct(v.avgPct)}</td><td class="r b ${v.trades ? sign(v.totalUsd) : "muted"}">${v.trades ? susd(v.totalUsd) : "—"}</td>
     <td class="soft">${v.from ? `${esc(v.from)} · ${v.trades >= r.judgeN ? "judged" : "too few trades to judge"}` : ""}</td></tr>`);
   return `<section class="card flush" aria-labelledby="ver-title"><div class="head"><span class="ico">${SVG(R_ICON.versions)}</span><h2 id="ver-title">Settings versions</h2>
-      <span class="s13 muted">one row per save in Settings, prompt and exits together · judged after ${r.judgeN} trades</span>
+      <span class="s13 muted">one row per save that changes Settings, prompt and exits together · judged after ${r.judgeN} trades</span>
       <button class="btn sm line" style="margin-left:auto" data-a="verOpen" aria-expanded="${S.verOpen}">${S.verOpen ? "Hide" : `Show ${plural(vs.length, "version")}`}${SVG(S.verOpen ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6", "ic s16")}</button></div>
     ${S.verOpen ? (vs.length ? `<div class="scroll-x" data-scroll="versions" tabindex="0" role="region" aria-label="Settings versions table"><table style="min-width:680px"><thead><tr><th>Version</th><th>Saved</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg / trade</th><th class="r">Total</th><th>From</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>` : `<p class="empty">No settings saved yet.</p>`) : ""}
   </section>`;

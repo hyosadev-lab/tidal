@@ -156,12 +156,16 @@ export function loadConfig(): Config {
   return DEFAULTS;
 }
 
-/** Stores the config, and appends it to config_history: the version every trade and track is scored under. */
+/**
+ * Stores the config, and appends it to config_history: the version every trade and track is scored
+ * under. A save that changes nothing is no new version (it would pause a paper or live test).
+ */
 export function saveConfig(cfg: Config): void {
   const value = JSON.stringify(cfg);
   const at = Date.now();
   db.prepare("insert or replace into settings (key, value, updated_at) values ('config', ?, ?)").run(value, at);
-  db.prepare("insert or replace into config_history (at, value) values (?, ?)").run(at, value);
+  const last = db.prepare("select value from config_history order by at desc limit 1").get() as { value: string } | undefined;
+  if (last?.value !== value) db.prepare("insert or replace into config_history (at, value) values (?, ?)").run(at, value);
 }
 
 // ── fetch filters ─────────────────────────────────────────────────────
