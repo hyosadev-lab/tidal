@@ -29,13 +29,13 @@ test("the brief takes the two lists in turns", () => {
   assert.deepEqual(interleave([], ["c1", "c2"]), ["c1", "c2"]);
 });
 
-test("both lists keep Pump.fun launches on pump pools; feed names the list or lists", () => {
-  assert.equal(isPump({ launchpad: "pump", exchange: "pump" }), true); // a trending row, still on the curve
-  assert.equal(isPump({ launchpad_platform: "pump_mayhem", exchange: "pump_amm" }), true); // a graduated row
-  assert.equal(isPump({ launchpad_platform: "pump_agent", exchange: "pump" }), true);
+test("signal rows keep Pump.fun launches on pump pools; feed names the list or lists", () => {
+  assert.equal(isPump({ launchpad: "pump", exchange: "pump" }), true); // still on the curve
+  assert.equal(isPump({ launchpad_platform: "Pump.fun", exchange: "pump" }), true); // a live signal row's fields
+  assert.equal(isPump({ launchpad_platform: "pump_mayhem", exchange: "pump_amm" }), true); // migrated to PumpSwap
   assert.equal(isPump({ launchpad_platform: "pump_mayhem_agent", exchange: "raydium" }), false); // pump family, but a pool not read
   assert.equal(isPump({ launchpad_platform: "ray_launchpad", exchange: "ray_launchpad" }), false);
   assert.equal(isPump({ launchpad_platform: "Pump.fun", exchange: "meteora_damm_v2" }), false); // a pool not read on-chain
-  const f = { trending: ["a", "b"], graduated: ["b", "c"] };
-  assert.deepEqual(["a", "b", "c", "w"].map((t) => feedOf(t, f)), ["1h trending", "1h trending + graduated", "graduated", null]);
+  const f = { trending: ["a", "b"], signals: ["b", "c"] };
+  assert.deepEqual(["a", "b", "c", "w"].map((t) => feedOf(t, f)), ["1h trending", "1h trending + signals", "signals", null]);
 });

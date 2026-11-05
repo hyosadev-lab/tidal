@@ -480,7 +480,7 @@ function trading(d) {
   const tr = d.trading;
   const L = LISTS[S.list];
   const cur = tr.lists[S.list];
-  const g = S.list === "graduated";
+  const sig = S.list === "signals";
   const active = Object.keys(d.config[L.key]).length;
   const feedRows = cur.rows
     .map((t) => {
@@ -491,7 +491,7 @@ function trading(d) {
         <span class="stack" style="align-items:flex-start"><span class="pill ${t.status}">${STATUS[t.status]}</span><span class="muted nowrap" style="font-size:11px;line-height:14px;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(statusNote(t))}</span></span>
         <span class="r">${k$(t.mcap)}</span><span class="r">${k$(t.liq)}</span>
         <span class="stack" style="align-items:flex-end"><span>${fin(t.buys) && fin(t.sells) ? (t.buys + t.sells).toLocaleString("en-US") : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${kn(t.buys)} / ${kn(t.sells)}</span></span>
-        ${g ? `<span class="r soft">${t.migratedAt ? `${mins(Math.max(0, Math.floor((d.now - t.migratedAt) / 60_000)))} ago` : "—"}</span>` : `<span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span>`}<span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
+        ${sig ? `<span class="stack" style="align-items:flex-end"><span class="soft nowrap">${t.signal ? esc(t.signal.replace(/_/g, " ")) : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${t.signalAt ? `${mins(Math.max(0, Math.floor((d.now - t.signalAt) / 60_000)))} ago` : ""}</span></span>` : `<span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span>`}<span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
         <span class="r" style="color:${fin(t.rug) && t.rug >= 0.7 ? "var(--red)" : "var(--ink)"}">${fin(t.rug) ? t.rug.toFixed(2) : "—"}</span><span class="r soft">${age}</span></button></li>`;
     })
     .join("");
@@ -529,7 +529,7 @@ const helpTip = (id, label, html) =>
   `<button class="helpbtn" data-a="help" data-v="${id}" aria-label="${label}" aria-describedby="${id}" aria-expanded="${S.help === id}"><span aria-hidden="true">${I.help}</span></button><div class="helptip" id="${id}" role="tooltip">${html}</div>`;
 
 const AGENT_HELP = `<b style="color:var(--ink)">What the agent does</b>
-  <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h trending or graduated list (Pump.fun launches only), or a wait that has ended. Up to 10 tokens per run.</span>
+  <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h trending or signal list (smart money buy, pump claim; Pump.fun launches only), or a wait that has ended. Up to 10 tokens per run.</span>
   <span>In a run it may look up holders, top traders, candles or the dev's earlier tokens, then gives each token a verdict:</span>
   <span class="stack" style="gap:2px;padding-left:2px"><span><b class="pos">buy</b> · conviction 0–100; bought only if a slot, the security check and cash allow</span><span><b class="vio">wait</b> · looked at again at the time it sets</span><span><b class="soft">skip</b> · a hard refusal, final</span></span>
   <span>No run starts while every slot is taken or buying is paused.</span>
@@ -634,40 +634,55 @@ function transcriptDock(r) {
     <ol class="transcript">${r.transcript.map((m) => `<li><span class="tag ${ROLE_TAG[m.role] ?? "tool"}">${esc(m.role)}</span><pre>${esc(m.text)}</pre></li>`).join("")}</ol></details></section>`;
 }
 
-// GMGN's filters, in trending's order and units ($K = thousands of dollars). Trenches rows carry
-// no initial liquidity or ATH, and count volume and transactions over 24h.
+// GMGN's filters, in trending's order and units ($K = thousands of dollars). The signal route
+// takes market cap and total fees only, so those are all its list offers.
 const FILTERS = [
   ["age", "Age, minutes"], ["liquidity", "Liquidity, $K"], ["initialLiquidity", "Initial liquidity, $K"], ["marketCap", "Market cap, $K"],
   ["athMarketCap", "ATH market cap, $K"], ["volume", "1h volume, $K"], ["swaps", "1h transactions"], ["fee", "Total fees, SOL"],
   ["holders", "Holders"], ["botDegens", "Bot degens"], ["viewing", "Currently viewing"], ["smartMoney", "Smart-money wallets"], ["kol", "KOL wallets"],
   ["top10", "Top 10 holders, %"], ["devHolding", "Dev holding, %"], ["insider", "Insiders, %"], ["bundler", "Bundlers, %"], ["phishing", "Phishing, %"], ["sniper", "Snipers hold, %"],
 ];
-const TRENDING_ONLY = new Set(["initialLiquidity", "athMarketCap"]);
-const GRADUATED_LABEL = { volume: "24h volume, $K", swaps: "24h transactions" };
+const SIGNAL_KEYS = new Set(["marketCap", "fee"]);
+// GMGN's signal types the token signal route takes, grouped as the modal shows them. It refuses
+// 14–16 (large buy, multi buy, multi large buy). Each checked type is one group of up to 50 rows.
+const SIGNAL_TYPES = [
+  ["Buying", [[12, "Smart money buy"], [20, "KOL buy"]]],
+  ["Price", [[1, "K-line spike"], [6, "Price spike"], [7, "All-time high"], [8, "Market cap key level"]]],
+  ["Promotion", [[2, "Dex ad"], [3, "Dex link update"], [4, "Dex trending bar"], [5, "Dex boost"], [13, "Platform call"], [19, "Platform call v2"]]],
+  ["Other", [[9, "Live stream"], [11, "Community takeover"]]],
+  ["Claims and warnings", [[10, "Bundler sell"], [17, "Bags claim"], [18, "Pump claim"]]],
+];
 /** The token list's tabs; each list keeps its own fetch filters under `key` in the config. */
 const LISTS = {
   trending: {
     label: "1h trending", key: "filters", tx: "TXs 1h", c1: "1h", sub: "sent to GMGN with the 1h trending request",
-    note: "Pump.fun launches only, on a pump curve or PumpSwap. GMGN applies these to the 1h trending request; initial liquidity is checked on each row.",
+    note: "Pump.fun launchpads only (Pump.fun, mayhem, agent), by GMGN's platforms param. GMGN applies these to the 1h trending request; initial liquidity is checked on each row.",
   },
-  graduated: {
-    label: "Graduated", key: "graduatedFilters", tx: "TXs 24h", c1: "Migrated", sub: "sent to GMGN with the trenches 'completed' request",
-    note: "Fresh migrations off the Pump.fun curve to PumpSwap, pump.fun launchpads only (Pump.fun, mayhem, agent). GMGN applies these to the trenches request; bot degens and dev holding are checked on each row. Volume and transactions here count 24 hours; initial liquidity and ATH are not offered, as trenches rows do not carry them.",
+  signals: {
+    label: "Signals", key: "signalFilters", tx: "TXs 1h", c1: "Last signal", sub: "sent to GMGN with the token signal request",
+    note: "Tokens GMGN fires one of the checked signal types on, Pump.fun launches on a pump curve or PumpSwap only (checked on each row). The signal route takes market cap and total fees only, so those are the bounds offered. Its rows carry no transactions; the column shows the last snapshot's 1h count.",
   },
 };
 
 function filtersDialog(d) {
   const L = LISTS[S.list];
-  const g = S.list === "graduated";
   const f = d.config[L.key];
-  const list = FILTERS.filter(([k]) => !g || !TRENDING_ONLY.has(k)).map(([k, l]) => [k, (g && GRADUATED_LABEL[k]) || l]);
+  const list = FILTERS.filter(([k]) => S.list !== "signals" || SIGNAL_KEYS.has(k));
   return `<div class="overlay"><div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="ff-title">
     <div class="head"><span class="ico">${I.filter}</span><div class="stack"><h2 id="ff-title" style="font-size:18px;line-height:24px">Fetch filters · ${L.label}</h2><span class="s13 muted">${L.sub}</span></div>
       <button class="btn line" style="margin-left:auto;width:44px;min-height:44px;padding:0;border-radius:50%" aria-label="Close" data-a="closeFilters">${I.x}</button></div>
     <p class="s13 muted" style="color:var(--muted)">Tokens outside these ranges are never snapshotted, so they cost no rate limit and never reach the agent. ${L.note} They only narrow the pool; the risk check still runs on every buy. Leave a side empty for no limit.</p>
+    ${S.list === "signals" ? sigTypes(d.config.signalTypes) : ""}
     <form id="filters" class="filters">${list.map(([k, l]) => `<div><span class="s13 b">${l}</span><div class="inline" style="gap:8px"><input class="inp" type="number" min="0" step="any" name="${k}Min" aria-label="${l} minimum" placeholder="Min" value="${esc(f[k + "Min"] ?? "")}"><span class="s13 muted" aria-hidden="true">to</span><input class="inp" type="number" min="0" step="any" name="${k}Max" aria-label="${l} maximum" placeholder="Max" value="${esc(f[k + "Max"] ?? "")}"></div></div>`).join("")}</form>
     <div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-a="clearFilters">Clear this list</button><button class="btn inner" style="margin-left:auto" data-a="closeFilters">Cancel</button><button class="btn lime" data-a="applyFilters">Apply filters</button></div>
   </div></div>`;
+}
+
+function sigTypes(on) {
+  const box = ([t, l]) => `<label><input type="checkbox" value="${t}" ${on.includes(t) ? "checked" : ""}>${l}</label>`;
+  return `<form id="sigtypes" class="sigtypes"><fieldset><legend class="s13 b">Signal types</legend>
+    <p class="s13 muted">One group of up to 50 rows per checked type, all in one request. Price types fill their 50 at once; the agent sees 10 tokens a run. None checked turns this list off.</p>
+    ${SIGNAL_TYPES.map(([g, ts]) => `<div class="grp"><span class="s13 muted">${g}</span><div class="chips">${ts.map(box).join("")}</div></div>`).join("")}</fieldset></form>`;
 }
 
 // ── research ──────────────────────────────────────────────────────────
@@ -1036,7 +1051,7 @@ function settings(d) {
     mode: `<fieldset class="choices"><legend class="sr">Trading mode</legend>${radio("mode", "paper", c.mode === "paper", "Paper", "Real prices, simulated fills. The wallet is never touched.")}${radio("mode", "live", c.mode === "live", "Live", "Jupiter swaps, signed inside this process with the wallet key.", !d.liveAvailable)}</fieldset>
       ${d.liveAvailable ? `<div class="banner amber" style="border-radius:16px;font-size:13px;line-height:18px">Live trades real funds from the wallet SOLANA_PRIVATE_KEY signs for. Every buy and sell is irreversible.</div>` : `<div class="banner amber" style="border-radius:16px;font-size:13px;line-height:18px">Live stays off while <code class="mono small">SOLANA_PRIVATE_KEY</code> is unset. It is read from the environment only, never from this page.</div>`}
       ${fieldNum("Paper starting equity", "paperStartUsd", c.paperStartUsd, "", { cls: "mid", help: "Paper cash = this + every sell − every buy." })}`,
-    cycle: `<div class="note"><span class="small muted">Source</span><span class="big">GMGN 1h trending + graduated, Pump.fun launches only, plus waits that are due</span></div>
+    cycle: `<div class="note"><span class="small muted">Source</span><span class="big">GMGN 1h trending + signals (smart money buy, pump claim), Pump.fun launches only, plus waits that are due</span></div>
       <div class="fgrid three">${fieldNum("Longest wait", "maxWaitMinutes", c.maxWaitMinutes, "minutes", { step: 1, help: "A wait's recheck time is clamped to this." })}${fieldNum("Cooldown after close", "cooldownMinutes", c.cooldownMinutes, "minutes", { step: 1, help: "A sold token can come back after this." })}</div>`,
     risk: `<div class="note"><span class="small muted">Checked before every buy</span><span class="big">Token security, a free slot, a size above the floor and cash on hand. Any fail = no buy.</span></div>
       <div class="fgrid">${fieldNum("Position size", "sizeSol", c.sizeSol, `<span data-sol>${sol}</span>`, { step: 0.01 })}${fieldNum("Max open positions", "maxOpenPositions", c.maxOpenPositions, "", { step: 1 })}${fieldNum("Max daily loss", "maxDailyLossPct", c.maxDailyLossPct, "% of day start", { help: "Past this, buying pauses. Exits keep running." })}${fieldNum("Slippage", "slippagePct", Number(c.slippagePct) > 0 ? c.slippagePct : "", "%", { step: 0.1, placeholder: "Auto", help: "Empty = auto: Jupiter picks the tolerance per route." })}</div>
@@ -1266,9 +1281,11 @@ const A = {
     const L = LISTS[S.list];
     const filters = {};
     for (const i of document.querySelectorAll("#filters input")) if (i.value !== "") filters[i.name] = Number(i.value);
+    const config = { [L.key]: filters };
+    if (S.list === "signals") config.signalTypes = [...document.querySelectorAll("#sigtypes input:checked")].map((i) => Number(i.value));
     S.filtersOpen = false;
-    const r = await act("/api/settings", { config: { [L.key]: filters } }, `${L.label} filters saved for the next fetch. The run in progress is not affected.`);
-    if (r?.config && S.draft) S.draft[L.key] = r.config[L.key];
+    const r = await act("/api/settings", { config }, `${L.label} filters saved for the next fetch. The run in progress is not affected.`);
+    if (r?.config && S.draft) for (const k of Object.keys(config)) S.draft[k] = r.config[k];
   },
   section: (v) => ((S.section = v), render(true)),
   addRule: () => (S.draft.plan.push({ kind: "tp", at: 100, sell: 0 }), render(true)),

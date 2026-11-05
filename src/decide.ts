@@ -4,7 +4,7 @@ import { db, insert, tx } from "./db.ts";
 import { tools } from "./gmgn/tools.ts";
 import { log, short } from "./log.ts";
 import { track } from "./shadow.ts";
-import { briefRow } from "./snapshot.ts";
+import { briefRow, signalName } from "./snapshot.ts";
 
 /**
  * One agent run: every due token in one brief, one runAgent() call, one verdict per token —
@@ -13,7 +13,7 @@ import { briefRow } from "./snapshot.ts";
  * are due again next cycle.
  */
 
-/** `feed`: the list that carried the token this cycle; null for a wait that came due off both lists. */
+/** `feed`: the list or lists that carried the token this cycle; null for a wait that came due off both lists. */
 export type Due = { token: string; snapshotId: number; feed?: string | null; wash?: boolean };
 
 export type Verdict = {
@@ -50,8 +50,9 @@ Each run shows you every token that is due, in one brief. Answer every one of th
 You never sell. ${exitText(cfg)}
 
 READING THE BRIEF
-Each token is one GMGN /v1/token/info snapshot taken seconds ago, by its column names. Rates (*_rate, *_percentage, locked_ratio, launchpad_progress) are 0–1. *_wallets are counts of tagged wallets among the holders. USD fields end in _usd; trade_fee/total_fee are USD paid in fees so far. creator_* and dev_* describe the deployer; creator_created_count is how many tokens it launched. flow.<window> holds change_pct (price now against one window ago), buys, sells, swaps and the buy/sell volume split in USD; on a token younger than a window, that window repeats the next shorter one. A missing field was not reported — a blank, not a zero. \`last\` is your own previous verdict on the token.
-\`feed\` is the GMGN list that carried the token this cycle, Pump.fun launches only: "1h trending", "graduated" (a fresh migration off the Pump.fun curve to PumpSwap), or "1h trending + graduated"; a wait that came due off both lists has none.
+Each token is one GMGN /v1/token/info snapshot taken seconds ago, by its column names. Rates (*_rate, *_percentage, locked_ratio, launchpad_progress) are 0–1. *_wallets are counts of tagged wallets among the holders. USD fields end in _usd; trade_fee/total_fee are SOL paid in fees so far (total_fee adds priority fees and tips). creator_* and dev_* describe the deployer; creator_created_count is how many tokens it launched. flow.<window> holds change_pct (price now against one window ago), buys, sells, swaps and the buy/sell volume split in USD; on a token younger than a window, that window repeats the next shorter one. A missing field was not reported — a blank, not a zero. \`last\` is your own previous verdict on the token.
+\`feed\` is the GMGN list that carried the token this cycle, Pump.fun launches only: "1h trending", "signals" (GMGN fired one of the fetched signal types on it recently), or "1h trending + signals"; a wait that came due off both lists has none.
+\`signals\`, when present, are GMGN's signal events on the token: \`counts\` per type since launch, \`first_mc_usd\` the market cap at its first signal, \`recent\` the latest five with minutes_ago and the market cap then. smart_money_buy and kol_buy are tagged wallets buying; price_spike, price_ath, mcap_key_level and kline_spike are price moves; cto is a community takeover; dex_* and platform_call* are paid or platform promotion; bundler_sell is launch-bundle wallets selling (insider sell pressure); pump_claim is the deployer claiming its creator fees. ${cfg.signalTypes.length ? `Only ${cfg.signalTypes.map(signalName).join(", ")} events are fetched` : "No signal types are fetched"}, so a token none of those reached has no \`signals\`, even if GMGN shows other signals on it.
 \`wash: true\`: GMGN flagged the token as wash-traded this cycle, so its volume, swaps and buy/sell counts are partly fake; absent means not flagged or not on a list.
 
 TOOLS

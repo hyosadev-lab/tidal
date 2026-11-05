@@ -6,6 +6,7 @@ import { LISTS, tokenStatus, type List } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
+import { signalName } from "./snapshot.ts";
 import {
   BAR_N, cliRunning, exitFields, FALLBACK_MODEL, friction, inTest, nextResearchAt, paperLine, promptOf, RESEARCH_STEPS, researchModel,
   researchSettings, tries, usedBy,
@@ -374,15 +375,17 @@ export function trading(cfg: Config, now: number, tz: string) {
   // The token list, a tab per list: the last fetch's rows, then waits now due that no list carried,
   // under the list(s) that carried them when the agent last saw them (trending before briefs said).
   const row = (address: string, list: List, f: FeedRow | undefined) => {
-    const g = list === "graduated";
+    const sig = list === "signals";
     const s = one<Record<string, any>>(
       `select s.market_cap_usd, s.liquidity_usd, s.top_10_holder_rate, s.top_bundler_trader_percentage, s.price_usd, f.buys, f.sells, f.price_usd p
        from token_snapshots s left join snapshot_flow f on f.snapshot_id = s.id and f.span = ?
        where s.token = ? order by s.id desc limit 1`,
-      g ? "24h" : "1h",
+      "1h",
       address,
     );
-    const t = one<Record<string, any>>("select symbol, created_at, migrated_at from tokens where address = ?", address);
+    const t = one<Record<string, any>>("select symbol, created_at from tokens where address = ?", address);
+    // The signal tab's column: the token's latest signal event on record.
+    const e = sig ? one<{ signal_type: number; trigger_at: number }>("select signal_type, trigger_at from token_signals where token = ? order by trigger_at desc limit 1", address) : undefined;
     return {
       address,
       mint: shortAddr(address),
@@ -393,12 +396,13 @@ export function trading(cfg: Config, now: number, tz: string) {
       liq: f?.liq ?? s?.liquidity_usd ?? null,
       buys: f?.buys ?? s?.buys ?? null,
       sells: f?.sells ?? s?.sells ?? null,
-      change1h: g ? null : (f?.change1h ?? (s?.p > 0 ? (s!.price_usd / s!.p - 1) * 100 : null)),
+      change1h: f?.change1h ?? (s?.p > 0 ? (s!.price_usd / s!.p - 1) * 100 : null),
       top10: f?.top10 ?? s?.top_10_holder_rate ?? null,
       bundler: f?.bundler ?? s?.top_bundler_trader_percentage ?? null,
       rug: f?.rug ?? null,
       createdAt: f?.createdAt ?? t?.created_at ?? null,
-      migratedAt: g ? (f?.migratedAt ?? t?.migrated_at ?? null) : null,
+      signal: e ? signalName(e.signal_type) : null,
+      signalAt: e?.trigger_at ?? null,
     };
   };
   const carried = new Set(status.fetch.rows.map((r) => r.address));
@@ -411,12 +415,12 @@ export function trading(cfg: Config, now: number, tz: string) {
   ).filter((w) => !carried.has(w.token));
   const tab = (list: List) => {
     const fetched = status.fetch.rows.filter((r) => r.list === list);
-    const later = waits.filter((w) => (w.feed?.includes(LISTS.graduated) ? w.feed.includes(LISTS[list]) : list === "trending"));
+    const later = waits.filter((w) => (w.feed?.includes(LISTS.signals) ? w.feed.includes(LISTS[list]) : list === "trending"));
     return { fetched: fetched.length, rows: [...fetched.map((f) => row(f.address, list, f)), ...later.map((w) => row(w.token, list, undefined))] };
   };
 
   return {
-    lists: { trending: tab("trending"), graduated: tab("graduated") },
+    lists: { trending: tab("trending"), signals: tab("signals") },
     fetchedAt: status.fetch.at,
     // Agent activity: today's last ten runs; older ones of today page in through activityBefore.
     activity: act.activity,

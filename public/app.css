@@ -246,6 +246,12 @@ fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 10px; }
 .filters > div { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 16px; background: var(--inner); }
 .filters .inp { flex: 1 1 0; min-width: 0; width: auto; height: 44px; padding: 0 14px; border-radius: 22px; }
+.sigtypes fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.sigtypes legend { padding: 0; margin-bottom: 4px; }
+.sigtypes .grp { display: flex; flex-direction: column; gap: 6px; }
+.sigtypes .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.sigtypes label { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border-radius: 22px; background: var(--inner); font-size: 13px; cursor: pointer; }
+.sigtypes input { accent-color: var(--lime); width: 16px; height: 16px; margin: 0; }
 .msg { font-size: 13px; line-height: 18px; }
 .cnt { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #161618; color: var(--lime); font-size: 12px; font-weight: 700; }
 

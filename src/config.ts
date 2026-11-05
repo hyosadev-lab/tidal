@@ -42,8 +42,10 @@ export type Config = {
   prompt: string;
   /** Fetch filters on 1h trending, `<field>Min` / `<field>Max` (see FILTERS). Absent = no limit on that side. */
   filters: Record<string, number>;
-  /** The same, on the graduated list: GMGN trenches 'completed', fresh PumpSwap migrations. */
-  graduatedFilters: Record<string, number>;
+  /** The same, on the signal list: market cap and fee only. */
+  signalFilters: Record<string, number>;
+  /** GMGN signal types the signal list fetches, one group each (SIGNAL_TYPES); none = the list is off. */
+  signalTypes: number[];
 };
 
 export const DEFAULTS: Config = {
@@ -71,7 +73,8 @@ export const DEFAULTS: Config = {
   maxSteps: 24,
   prompt: "",
   filters: {},
-  graduatedFilters: {},
+  signalFilters: {},
+  signalTypes: [12, 18], // smart money buy, pump claim: picked off the bought-token data (4 Nov 2026)
 };
 
 const clamp = (v: unknown, lo: number, hi: number, dflt: number): number => {
@@ -132,7 +135,10 @@ export function sanitize(input: Record<string, any>): Config {
     maxSteps: limit(input.maxSteps, 1, 100, d.maxSteps),
     prompt: typeof input.prompt === "string" ? input.prompt.slice(0, 8000) : d.prompt,
     filters: cleanFilters(input.filters, "trending"),
-    graduatedFilters: cleanFilters(input.graduatedFilters, "graduated"),
+    signalFilters: cleanFilters(input.signalFilters, "signals"),
+    signalTypes: Array.isArray(input.signalTypes)
+      ? SIGNAL_TYPES.filter((t) => input.signalTypes.map(Number).includes(t))
+      : d.signalTypes,
   };
 }
 
@@ -160,39 +166,45 @@ export function saveConfig(cfg: Config): void {
 
 // ── fetch filters ─────────────────────────────────────────────────────
 
+/**
+ * GMGN's signal types the token_signal route takes (names: snapshot.ts SIGNAL_NAMES). It refuses
+ * 14–16 (large buy, multi buy, multi large buy: HTTP 400 "not supported", 4 Nov 2026), and the
+ * whole request with them. 21 (banker claim) is left out for now: Base only, always empty on Solana.
+ */
+export const SIGNAL_TYPES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 18, 19, 20];
+
 /** The two lists the entry loop fetches; each has its own filters. */
-export type Feed = "trending" | "graduated";
+export type Feed = "trending" | "signals";
 
 /**
  * The Fetch filters modal: one min/max pair per key, in GMGN's own units ($K, % of supply, fees
  * in SOL; `scale` turns them into GMGN's $ and 0–1 ratios, age is minutes). `api` is the 1h rank
- * param stem, each one checked live to narrow the result; `trenches` the trenches one (names from
- * GMGN's own CLI). `fields` is the value on a trending row, then on a trenches row: on trenches,
- * volume and transactions are 24h. A bound with no param for its feed is checked on the row only
- * (initial liquidity on trending: GMGN ignores every name tried). `trendingOnly`: trenches rows
- * carry no such field, so the bound is not offered there. They narrow what reaches the agent; the
- * risk check still runs on every buy.
+ * param stem, each one checked live to narrow the result; `signal` the token signal route's (it
+ * takes market cap and total fee only, so those are all the signal list offers). `fields` is the
+ * value on a trending row, then on a signal row. A bound with no param is checked on the row only
+ * (initial liquidity on trending: GMGN ignores every name tried). They narrow what reaches the
+ * agent; the risk check still runs on every buy.
  */
-const FILTERS: Record<string, { api?: string; trenches?: string; fields: string[]; hi: number; scale?: number; trendingOnly?: true }> = {
-  age: { api: "created", trenches: "created", fields: ["creation_timestamp", "open_timestamp", "created_timestamp"], hi: 100_000 },
-  liquidity: { api: "liquidity", trenches: "liquidity", fields: ["liquidity"], hi: 1e9, scale: 1000 },
-  initialLiquidity: { fields: ["initial_liquidity"], hi: 1e9, scale: 1000, trendingOnly: true },
-  marketCap: { api: "marketcap", trenches: "marketcap", fields: ["market_cap"], hi: 1e9, scale: 1000 },
-  athMarketCap: { api: "history_highest_marketcap", fields: ["history_highest_market_cap"], hi: 1e9, scale: 1000, trendingOnly: true },
-  volume: { api: "volume", trenches: "volume_24h", fields: ["volume", "volume_24h"], hi: 1e9, scale: 1000 },
-  swaps: { api: "swaps", trenches: "swaps_24h", fields: ["swaps", "swaps_24h"], hi: 1e9 },
-  fee: { api: "gas_fee", trenches: "total_fee", fields: ["gas_fee", "total_fee"], hi: 1e6 },
-  holders: { api: "holder_count", trenches: "holder_count", fields: ["holder_count"], hi: 1e9 },
+const FILTERS: Record<string, { api?: string; signal?: string; fields: string[]; hi: number; scale?: number }> = {
+  age: { api: "created", fields: ["creation_timestamp", "open_timestamp", "created_timestamp"], hi: 100_000 },
+  liquidity: { api: "liquidity", fields: ["liquidity"], hi: 1e9, scale: 1000 },
+  initialLiquidity: { fields: ["initial_liquidity"], hi: 1e9, scale: 1000 },
+  marketCap: { api: "marketcap", signal: "mc", fields: ["market_cap"], hi: 1e9, scale: 1000 },
+  athMarketCap: { api: "history_highest_marketcap", fields: ["history_highest_market_cap"], hi: 1e9, scale: 1000 },
+  volume: { api: "volume", fields: ["volume"], hi: 1e9, scale: 1000 },
+  swaps: { api: "swaps", fields: ["swaps"], hi: 1e9 },
+  fee: { api: "gas_fee", signal: "total_fee", fields: ["gas_fee", "total_fee"], hi: 1e6 },
+  holders: { api: "holder_count", fields: ["holder_count"], hi: 1e9 },
   botDegens: { api: "bot_degen_count", fields: ["bot_degen_count"], hi: 1e6 },
-  viewing: { api: "visiting_count", trenches: "visiting_count", fields: ["visiting_count"], hi: 1e6 },
-  smartMoney: { api: "smart_degen_count", trenches: "smart_degen_count", fields: ["smart_degen_count"], hi: 10_000 },
-  kol: { api: "renowned_count", trenches: "renowned_count", fields: ["renowned_count"], hi: 10_000 },
-  top10: { api: "top10_holder_rate", trenches: "top_holder_rate", fields: ["top_10_holder_rate"], hi: 100, scale: 0.01 },
+  viewing: { api: "visiting_count", fields: ["visiting_count"], hi: 1e6 },
+  smartMoney: { api: "smart_degen_count", fields: ["smart_degen_count"], hi: 10_000 },
+  kol: { api: "renowned_count", fields: ["renowned_count"], hi: 10_000 },
+  top10: { api: "top10_holder_rate", fields: ["top_10_holder_rate"], hi: 100, scale: 0.01 },
   devHolding: { api: "dev_team_hold_rate", fields: ["dev_team_hold_rate"], hi: 100, scale: 0.01 },
-  insider: { api: "insider_rate", trenches: "insider_ratio", fields: ["rat_trader_amount_rate"], hi: 100, scale: 0.01 },
-  bundler: { api: "bundler_rate", trenches: "bundler_rate", fields: ["bundler_rate", "bundler_trader_amount_rate"], hi: 100, scale: 0.01 },
-  phishing: { api: "entrapment_ratio", trenches: "entrapment_ratio", fields: ["entrapment_ratio"], hi: 100, scale: 0.01 },
-  sniper: { api: "top70_sniper_hold_rate", trenches: "top70_sniper_hold_rate", fields: ["top70_sniper_hold_rate"], hi: 100, scale: 0.01 },
+  insider: { api: "insider_rate", fields: ["rat_trader_amount_rate"], hi: 100, scale: 0.01 },
+  bundler: { api: "bundler_rate", fields: ["bundler_rate", "bundler_trader_amount_rate"], hi: 100, scale: 0.01 },
+  phishing: { api: "entrapment_ratio", fields: ["entrapment_ratio"], hi: 100, scale: 0.01 },
+  sniper: { api: "top70_sniper_hold_rate", fields: ["top70_sniper_hold_rate"], hi: 100, scale: 0.01 },
 };
 
 function cleanFilters(input: unknown, feed: Feed): Record<string, number> {
@@ -201,7 +213,7 @@ function cleanFilters(input: unknown, feed: Feed): Record<string, number> {
   for (const [key, f] of Object.entries(FILTERS))
     for (const side of ["Min", "Max"]) {
       const raw = src[key + side];
-      if (raw === undefined || raw === null || raw === "" || (f.trendingOnly && feed === "graduated")) continue;
+      if (raw === undefined || raw === null || raw === "" || (feed === "signals" && !f.signal)) continue;
       const v = Number(raw);
       if (Number.isFinite(v)) out[key + side] = Math.min(f.hi, Math.max(0, v));
     }
@@ -214,19 +226,27 @@ const bound = (k: string) => ({ key: k.slice(0, -3), min: k.endsWith("Min") });
 /** A bound in GMGN's unit: $, a 0–1 ratio, or minutes for age. */
 const gmgnUnit = (key: string, v: number) => v * (FILTERS[key]!.scale ?? 1);
 
-/** A feed's bounds as its route's params, `min_<stem>` / `max_<stem>`; bounds with no param are left to `inFilters`. */
-function params(filters: Record<string, number>, stem: "api" | "trenches"): Record<string, string | number> {
+/** Trending's bounds as rank params, `min_<stem>` / `max_<stem>`; bounds with no param are left to `inFilters`. */
+export function rankFilters(cfg: Config): Record<string, string | number> {
   const q: Record<string, string | number> = {};
-  for (const [k, v] of Object.entries(filters)) {
+  for (const [k, v] of Object.entries(cfg.filters)) {
     const { key, min } = bound(k);
-    const name = FILTERS[key]?.[stem];
+    const name = FILTERS[key]?.api;
     if (name) q[`${min ? "min" : "max"}_${name}`] = key === "age" ? `${v}m` : gmgnUnit(key, v);
   }
   return q;
 }
 
-export const rankFilters = (cfg: Config) => params(cfg.filters, "api");
-export const trenchesFilters = (cfg: Config) => params(cfg.graduatedFilters, "trenches");
+/** The signal list's bounds as one token_signal group's params, `<stem>_min` / `<stem>_max`. */
+export function signalFilters(cfg: Config): Record<string, number> {
+  const q: Record<string, number> = {};
+  for (const [k, v] of Object.entries(cfg.signalFilters)) {
+    const { key, min } = bound(k);
+    const name = FILTERS[key]?.signal;
+    if (name) q[`${name}_${min ? "min" : "max"}`] = gmgnUnit(key, v);
+  }
+  return q;
+}
 
 /** The row's value for a filter in GMGN's unit (age in minutes); undefined when the row lacks it. */
 function rowValue(row: Record<string, unknown>, key: string, now: number): number | undefined {
