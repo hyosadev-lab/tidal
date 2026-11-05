@@ -17,7 +17,7 @@ const rate = (v) => (fin(v) ? (v * 100).toFixed(1) + "%" : "—");
 const hms = (t) => new Date(t).toLocaleTimeString("en-GB", { hour12: false });
 const hm = (t) => hms(t).slice(0, 5);
 const dayLabel = (t) => new Date(t).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }).replace(",", "");
-const mins = (m) => (m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`);
+const mins = (m) => (m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`);
 const ini = (s) => esc(String(s ?? "?").slice(0, 2).toUpperCase());
 const sign = (v) => (fin(v) && v < 0 ? "neg" : "pos");
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -473,8 +473,10 @@ function equityChart(c, equityNow, now) {
 
 // ── trading desk ──────────────────────────────────────────────────────
 
-const STATUS = { due: "Due", waiting: "Waiting", holding: "Holding", cooldown: "Cooldown", skipped: "Skipped" };
-const statusNote = (t) => (t.until ? `${t.note} ${hm(t.until)}` : t.note);
+const STATUS = { new: "New", due: "Due", waiting: "Waiting", holding: "Holding", cooldown: "Cooldown", skipped: "Skipped" };
+// Display only: a due token with no verdict yet shows as New, as the canvas draws it. The engine still calls it due.
+const pillOf = (t) => (t.status === "due" && t.note === "new" ? "new" : t.status);
+const statusNote = (t) => (pillOf(t) === "new" ? "no verdict yet" : t.until ? `${t.note} ${hm(t.until)}` : t.note);
 
 function trading(d) {
   const tr = d.trading;
@@ -487,12 +489,12 @@ function trading(d) {
     .map((t) => {
       const on = S.sel === t.address;
       const age = t.createdAt ? mins(Math.max(0, Math.floor((d.now - t.createdAt) / 60_000))) : "—";
-      return `<li><button class="grid-feed" data-a="pick" data-v="${esc(t.address)}" aria-pressed="${on}" aria-label="${esc(`${t.symbol}, ${STATUS[t.status]}, ${statusNote(t)}`)}">
+      return `<li><button class="grid-feed${sig ? " sig" : ""}" data-a="pick" data-v="${esc(t.address)}" aria-pressed="${on}" aria-label="${esc(`${t.symbol}, ${STATUS[pillOf(t)]}, ${statusNote(t)}`)}">
         <span class="tok"><span class="av sm" aria-hidden="true">${ini(t.symbol)}</span><span class="stack"><span class="inline" style="gap:6px"><span class="nm">${esc(t.symbol)}</span>${t.inRun ? `<span class="runbadge">#${t.inRun}</span>` : ""}</span><span class="mono dim" style="font-size:11px;line-height:14px">${esc(t.mint)}</span></span></span>
-        <span class="stack" style="align-items:flex-start"><span class="pill ${t.status}">${STATUS[t.status]}</span><span class="muted nowrap" style="font-size:11px;line-height:14px;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(statusNote(t))}</span></span>
+        <span class="stack" style="align-items:flex-start"><span class="pill ${pillOf(t)}">${STATUS[pillOf(t)]}</span><span class="muted nowrap" style="font-size:11px;line-height:14px;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(statusNote(t))}</span></span>
         <span class="r">${k$(t.mcap)}</span><span class="r">${k$(t.liq)}</span>
         <span class="stack" style="align-items:flex-end"><span>${fin(t.buys) && fin(t.sells) ? (t.buys + t.sells).toLocaleString("en-US") : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${kn(t.buys)} / ${kn(t.sells)}</span></span>
-        ${sig ? `<span class="stack" style="align-items:flex-end"><span class="soft nowrap">${t.signal ? esc(t.signal.replace(/_/g, " ")) : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${t.signalAt ? `${mins(Math.max(0, Math.floor((d.now - t.signalAt) / 60_000)))} ago` : ""}</span></span>` : `<span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span>`}<span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
+        ${sig ? `<span class="stack" style="align-items:flex-end"><span class="soft nowrap cut">${t.signal ? esc(t.signal.replace(/_/g, " ")) : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${t.signalAt ? `${mins(Math.max(0, Math.floor((d.now - t.signalAt) / 60_000)))} ago` : ""}</span></span>` : `<span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span>`}<span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
         <span class="r" style="color:${fin(t.rug) && t.rug >= 0.7 ? "var(--red)" : "var(--ink)"}">${fin(t.rug) ? t.rug.toFixed(2) : "—"}</span><span class="r soft">${age}</span></button></li>`;
     })
     .join("");
@@ -510,7 +512,7 @@ function trading(d) {
       <div class="head"><span class="ico">${I.eye}</span><div class="stack"><h2 id="feed-title" class="big">What the agent sees</h2><span class="s13 muted">${tr.fetchedAt ? `${plural(cur.fetched, "Pump.fun token")} from the fetch at ${hms(tr.fetchedAt)}, plus waits now due` : "no fetch yet"}</span></div></div>
       <div class="head"><div class="seg sm" role="group" aria-label="Token list">${Object.entries(LISTS).map(([k, l]) => `<button data-a="feedList" data-v="${k}" aria-pressed="${S.list === k}">${l.label}<span class="n">${tr.lists[k].rows.length}</span></button>`).join("")}</div>
         <button class="btn sm light" style="margin-left:auto" data-a="openFilters" aria-label="Edit ${L.label} filters, ${active} active">${I.filter}<span>Filters</span>${active ? `<span class="cnt" aria-hidden="true">${active}</span>` : ""}</button></div>
-      <div class="fill fade" data-scroll="feed"><div style="min-width:910px"><div class="grid-feed ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">${L.tx}</span><span class="r">${L.c1}</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Rug</span><span class="r">Age</span></div>
+      <div class="fill fade" data-scroll="feed"><div style="min-width:940px"><div class="grid-feed${sig ? " sig" : ""} ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">${L.tx}</span><span class="r">${L.c1}</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Rug</span><span class="r">Age</span></div>
         <ul class="feed" aria-label="${L.label} tokens the agent reads">${feedRows || `<li class="empty">Nothing on this list yet.</li>`}</ul></div></div>
     </section>
     <section class="card flush tall" style="flex:1 1 440px;padding-top:16px;padding-bottom:0;position:relative" aria-labelledby="agent-title">

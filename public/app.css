@@ -105,6 +105,7 @@ h2.big { font-size: 18px; line-height: 24px; font-weight: 600; }
 .pill.due { background: var(--lime); color: #161618; } .pill.waiting { background: var(--violet); color: #161618; }
 .pill.holding { background: var(--ink); color: #161618; } .pill.cooldown { border-color: var(--line4); color: var(--soft); }
 .pill.skipped { background: var(--line3); color: var(--soft); }
+.pill.new { border: 1px dashed var(--lime); color: var(--lime); }
 .side { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
 .side.buy { background: var(--ink); color: #161618; } .side.sell { border: 1px solid var(--line4); }
 .av { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; font-size: 13px; font-weight: 700; background: var(--violet); color: #161618; }
@@ -175,6 +176,8 @@ h3 { margin: 8px 0 0; padding: 0 20px; font-size: 13px; line-height: 18px; font-
 .tall { height: 720px; }
 .fill { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .grid-feed { display: grid; grid-template-columns: minmax(150px, 1.5fr) 120px 70px 70px 96px 70px 58px 60px 46px 56px; column-gap: 10px; align-items: center; }
+.grid-feed.sig { grid-template-columns: minmax(150px, 1.5fr) 120px 70px 70px 56px 120px 58px 60px 46px 56px; }
+.grid-feed .cut { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .grid-brief { display: grid; grid-template-columns: minmax(150px, 1.4fr) 110px 76px 80px 80px 72px 76px 64px; column-gap: 10px; align-items: center; }
 .ghead { position: sticky; top: 0; z-index: 1; background: var(--card); align-items: end; padding: 6px 18px 8px; border-bottom: 1px solid var(--line); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--dim); white-space: nowrap; }
 .feed { list-style: none; margin: 0; padding: 4px 8px 0; }
@@ -257,7 +260,7 @@ fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 
 /* research: the canvas's Research board */
 .rgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px; }
-.pill { margin-left: auto; display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 11px; border: 1px solid rgba(22, 22, 24, 0.3); font-size: 11px; font-weight: 700; }
+.rgrid .pill { margin-left: auto; display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 11px; border: 1px solid rgba(22, 22, 24, 0.3); font-size: 11px; font-weight: 700; }
 .meter.dark { background: rgba(22, 22, 24, 0.18); } .meter.dark > i { background: #161618; }
 .meter.vio > i { background: var(--violet); }
 .meter.thin { height: 6px; border-radius: 3px; } .meter.thin > i { border-radius: 3px; }
