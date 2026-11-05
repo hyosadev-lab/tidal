@@ -77,7 +77,7 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
   in any quote (reserve in SOL at the quote's price at start); a completed curve's pool comes off
   the mint (`pools.migratedPool`, a PDA). Runs started or stopped; a restart ends open tracks as
-  'restart'. Every `saveConfig` also appends to `config_history`. `replay.ts` replays an exit plan
+  'restart'. A `saveConfig` that changes more than the fetch filters (`filters`, `signalFilters`, `signalTypes`) appends to `config_history`: a new version. `replay.ts` replays an exit plan
   on a track's path the way `evaluate` runs it (impact off the stored reserve); `calibration()`
   replays every trade closed by its rules on its own track. The Research page (`view.research`,
   `GET /api/research`, read every 15s while open) is laid out as the canvas's Research board: six

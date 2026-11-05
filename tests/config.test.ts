@@ -57,3 +57,19 @@ test("a save that changes nothing is no new version", () => {
   saveConfig({ ...loadConfig() });
   assert.equal((db.prepare("select count(*) n from config_history").get() as { n: number }).n, 1);
 });
+
+test("a save that changes only the Filters modal's fields is no new version; anything else is", () => {
+  openDb(":memory:");
+  loadConfig();
+  saveConfig({ ...loadConfig(), filters: { marketCapMin: 30 }, signalFilters: { feeMin: 2 }, signalTypes: [6, 12] });
+  const n = () => (db.prepare("select count(*) n from config_history").get() as { n: number }).n;
+  assert.equal(n(), 1);
+  assert.deepEqual(loadConfig().signalTypes, [6, 12]); // the config itself is saved
+  saveConfig({ ...loadConfig(), prompt: "v2" });
+  assert.equal(n(), 2);
+  // A version saved by an older release, with a key since dropped: a filter save is still no version.
+  const old = { ...JSON.parse(JSON.stringify(loadConfig())), graduatedFilters: { ageMax: 120 } };
+  db.prepare("update config_history set value = ? where at = (select max(at) from config_history)").run(JSON.stringify(old));
+  saveConfig({ ...loadConfig(), signalTypes: [12] });
+  assert.equal(n(), 2);
+});

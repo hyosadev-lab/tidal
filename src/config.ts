@@ -156,16 +156,26 @@ export function loadConfig(): Config {
   return DEFAULTS;
 }
 
+/** What the Filters modal saves: changing only these is no new Settings version. */
+const FETCH_KEYS = ["filters", "signalFilters", "signalTypes"] as const;
+/** The version part of a stored config, sanitised so a key a later release dropped or added is no change. */
+const versionOf = (value: string) => {
+  const c: Partial<Config> = sanitize(JSON.parse(value));
+  for (const k of FETCH_KEYS) delete c[k];
+  return JSON.stringify(c);
+};
+
 /**
  * Stores the config, and appends it to config_history: the version every trade and track is scored
- * under. A save that changes nothing is no new version (it would pause a paper or live test).
+ * under. A save that changes nothing, or only the fetch filters, is no new version (it would pause
+ * a paper or live test); the history keeps the filters as they were when the version was saved.
  */
 export function saveConfig(cfg: Config): void {
   const value = JSON.stringify(cfg);
   const at = Date.now();
   db.prepare("insert or replace into settings (key, value, updated_at) values ('config', ?, ?)").run(value, at);
   const last = db.prepare("select value from config_history order by at desc limit 1").get() as { value: string } | undefined;
-  if (last?.value !== value) db.prepare("insert or replace into config_history (at, value) values (?, ?)").run(at, value);
+  if (!last || versionOf(last.value) !== versionOf(value)) db.prepare("insert or replace into config_history (at, value) values (?, ?)").run(at, value);
 }
 
 // ── fetch filters ─────────────────────────────────────────────────────

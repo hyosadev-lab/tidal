@@ -481,7 +481,8 @@ function trading(d) {
   const L = LISTS[S.list];
   const cur = tr.lists[S.list];
   const sig = S.list === "signals";
-  const active = Object.keys(d.config[L.key]).length;
+  // Signals: each checked signal type counts too.
+  const active = Object.keys(d.config[L.key]).length + (sig ? d.config.signalTypes.length : 0);
   const feedRows = cur.rows
     .map((t) => {
       const on = S.sel === t.address;
