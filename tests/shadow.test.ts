@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { db, insert, openDb } from "../src/db.ts";
 import { b58decode, b58encode, WSOL } from "../src/jupiter/client.ts";
 import { migratedPool, PUMP_AMM, PUMP_CURVE } from "../src/jupiter/pools.ts";
-import { endRestarted, outcome, SAMPLE_MAX, sampleRank, shadowTick, track, tracking, WINDOW_MS, type Point } from "../src/shadow.ts";
+import { loadConfig } from "../src/config.ts";
+import { endRestarted, outcome, pickSignals, SAMPLES_PER_MIN, shadowTick, track, tracking, WINDOW_MS, type Point } from "../src/shadow.ts";
+import { signalName } from "../src/snapshot.ts";
 import { noteSol } from "../src/trade.ts";
 
 // Shadow tracks against a fake RPC: a pump curve priced every step, written once when it ends.
@@ -13,7 +15,7 @@ const MINT = key(1);
 const CURVE = key(2);
 const ELSEWHERE = key(3);
 const QUOTE = key(4);
-const none = { decision: 0, rank: 0, migration: 0 };
+const none = { decision: 0, signal: 0 };
 
 const u64 = (d: Buffer, at: number, v: bigint) => (d.writeBigUInt64LE(v, at), d);
 const mint = (decimals: number) => ({ owner: key(9), data: Object.assign(Buffer.alloc(82), { 44: decimals }) });
@@ -165,20 +167,28 @@ test("a drained pool ends as a rug; a pool off the feed, or none, ends at once; 
   assert.deepEqual([row(open).end_reason, row(open).ended_at], ["restart", t0 + 9]);
 });
 
-test("rank rows passed over are sampled once each, off the pool their mint implies, up to the cap", () => {
+test("signal picks: unpicked types only, fresh, pump, in filters, once per token × type, never decided, 5 a minute", () => {
   openDb(":memory:");
-  const t0 = Date.now();
-  const rows = Array.from({ length: SAMPLE_MAX + 5 }, (_, i) => ({ address: key(100 + i), launchpad: "pump", exchange: "pump", logo: "x" }));
-  const briefed = key(100);
-  decided(key(101)); // decided before: the decided population, not this one
-  rows.push({ address: key(99), launchpad: "pump", exchange: "pump_amm", logo: "x" });
-  rows.unshift({ address: key(98), launchpad: "bonk", exchange: "pump_amm", logo: "x" });
-  sampleRank([rows.at(-1)!, ...rows], new Set([briefed]), t0);
-
-  const got = db.prepare("select token, features from shadow_tracks where source = 'rank' order by id").all() as { token: string; features: string }[];
-  assert.equal(got.length, SAMPLE_MAX);
-  assert.equal(got[0]!.token, key(99)); // sampled once, though listed twice
-  assert.ok(!got.some((g) => [briefed, key(101), key(98)].includes(g.token)));
-  assert.deepEqual(JSON.parse(got[1]!.features), { address: key(102), launchpad: "pump", exchange: "pump" });
-  assert.equal(tracking().rank, SAMPLE_MAX);
+  const now = Date.now();
+  const cfg = { ...loadConfig(), signalTypes: [12], signalFilters: { marketCapMin: 10 } }; // ≥ $10K
+  const pump = { launchpad_platform: "Pump.fun", exchange: "pump", market_cap: "20000" };
+  const ev = (token: string, type: number, agoS: number, data: Record<string, unknown> = {}) =>
+    ({ token_address: token, signal_type: type, trigger_at: Math.floor((now - agoS * 1000) / 1000), trigger_mc: 20000, data: { ...pump, ...data } });
+  decided("F");
+  insert("shadow_tracks", { token: "G", source: "signal", features: JSON.stringify({ signal_type: signalName(6) }), started_at: 1 });
+  const events = [
+    ev("A", 6, 30), ev("A", 6, 31), ev("A", 7, 20), // two types of one token: two picks; the repeat: none
+    ev("B", 12, 5), // a type the Signals list fetches: tracked as a decision, if at all
+    ev("C", 6, 600), // fired 10 min ago: stale
+    ev("D", 6, 5, { exchange: "raydium" }), // a pool not read on-chain
+    ev("E", 6, 5, { market_cap: "5000" }), // under the Signals filters
+    ev("F", 6, 5), // decided before
+    ev("G", 6, 5), // this token × type is tracked already
+    ...["H", "I", "J", "K"].map((t, i) => ev(t, 1, 100 - i * 10)),
+  ];
+  // Six left; five a minute, oldest first: A at 20s waits for next minute.
+  const got = pickSignals(events, cfg, now).map((p) => `${p.token}${p.type}`);
+  assert.deepEqual(got, ["H1", "I1", "J1", "K1", "A6"]);
+  assert.equal(SAMPLES_PER_MIN, 5);
+  assert.deepEqual(pickSignals(events, { ...cfg, signalTypes: [1, 6, 7, 12] }, now), []);
 });

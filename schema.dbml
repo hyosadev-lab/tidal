@@ -50,7 +50,7 @@ Table token_snapshots {
   id integer [pk, increment]
   token text [not null, ref: > tokens.address]
   taken_at integer [not null]
-  kind text [not null, note: 'entry | exit | decision — entry is taken by code right before every buy, never skipped']
+  kind text [not null, note: 'entry | exit | decision | sample — entry is taken by code right before every buy, never skipped; sample starts a signal shadow track']
   decision_id integer [ref: > decisions.id, note: 'the decision this snapshot informed, if any']
 
   // market
@@ -322,9 +322,9 @@ Table logs {
 Table shadow_tracks {
   id integer [pk, increment]
   token text [not null, note: 'mint; no ref: rank and migration tracks may never have been snapshotted']
-  source text [not null, note: "decision | rank (trending rows that passed the fetch filters but were not briefed, never decided, pump-launched) | migration (GMGN trenches 'completed' PumpSwap pools, seen within 3 min). Rank and migration are tracked, never bought; 20 open at a time each, one track per token per source"]
+  source text [not null, note: "decision | signal (since 5 Nov 2026: GMGN signal events of the types the Signals list does not fetch, fired within 3 min, pump-launched on a pump pool, inside the Signals filters, never decided; one track per token and type, 20 open at a time, 5 new a minute) | rank (trending rows that passed the fetch filters but were not briefed, never decided, pump-launched) | migration (GMGN trenches 'completed' PumpSwap pools, seen within 3 min). Signal, rank and migration are tracked, never bought; rank and migration were sampled until 5 Nov 2026, 20 open at a time each, one track per token per source"]
   decision_id integer [unique, ref: - decisions.id, note: "set exactly when source is decision (a check): the agent's own buy, wait and skip alike. A risk-check skip after a buy shares that buy's track"]
-  features text [not null, note: 'JSON: the brief row exactly as the agent got it (decision), or the feed row (rank, migration). Copied at the start, never rebuilt: briefRow reads tokens.migrated_at, which is overwritten later. A decision brief carries `feed` (the list that carried the token: 1h trending, graduated, or both, 3–4 Nov 2026; 1h trending, signals, or 1h trending + signals since 4 Nov), and `signals` before 3 Nov and again since 4 Nov']
+  features text [not null, note: 'JSON: the brief row exactly as the agent got it (decision); the brief row of a snapshot taken at the start (kind sample) plus signal_type, signal_mc_usd and signal_age_s (signal); or the feed row (rank, migration). Copied at the start, never rebuilt: briefRow reads tokens.migrated_at, which is overwritten later. A decision brief carries `feed` (the list that carried the token: 1h trending, graduated, or both, 3–4 Nov 2026; 1h trending, signals, or 1h trending + signals since 4 Nov), and `signals` before 3 Nov and again since 4 Nov']
   started_at integer [not null]
   start_price_usd real [note: "the first price off the pool, in USD at that moment's prices. Every % below is against that first price in the pool's quote"]
   ended_at integer [note: 'null = still tracking; set together with end_reason (a check)']
@@ -375,7 +375,7 @@ Table hypotheses {
   rule text [not null, note: 'in words, as it would go into the operator prompt']
   conditions text [not null, note: 'JSON [{path, op, value}] over shadow_tracks.features (brief fields only, never tool results): the same rule as checks code runs. Never SQL from a model. During paper, code runs them on every decision and logs where the agent and the rule differ']
   exit text [not null, note: "JSON {sl, tp: [{at, sell}], time_min (1–60), drain, slots, size_sol}: the exit plus Settings' liquidity drain, slots and size copied at registration, so the test never moves. Each SL/TP variant is its own row: its own try"]
-  source text [not null, default: 'decision', note: 'decision | rank | migration: the tracks it is judged on']
+  source text [not null, default: 'decision', note: 'decision | signal (rank | migration: tries from before 5 Nov 2026, no longer registered): the tracks it is judged on, each token\'s first']
   need_pct real [not null, note: 'the random-pick percentile to beat, 100 − 5 / try (try = id), set at registration so nobody can move it. Draws: 400 × try (at least 1,000), so the bar\'s tail holds ~20 of them; seeded by the id, so a verdict is the same every time']
   backtest text [note: 'JSON on tracks before created_at: n, win, avg_pct, per half-day. Context, never the verdict']
   result text [note: 'JSON on tracks after created_at: n, win, avg_pct, halves, rnd_pct (vs random picks of as many tokens from the same source and window, before friction on both sides), draws, pool_n, friction_pct used. The verdict comes from this']

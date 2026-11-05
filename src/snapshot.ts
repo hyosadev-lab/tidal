@@ -9,7 +9,8 @@ import { gmgnClient } from "./gmgn/client.ts";
  */
 
 export const SPANS = ["1m", "5m", "1h", "6h", "24h"] as const;
-export type SnapshotKind = "entry" | "exit" | "decision";
+/** sample: the start of a sampled signal track (shadow.ts), never briefed. */
+export type SnapshotKind = "entry" | "exit" | "decision" | "sample";
 
 const n = (v: unknown): number | null => {
   if (v === null || v === undefined || v === "") return null;
@@ -181,6 +182,15 @@ export const SIGNAL_NAMES: Record<number, string> = {
   21: "banker_claim",
 };
 export const signalName = (t: unknown) => SIGNAL_NAMES[Number(t)] ?? `type_${t}`;
+
+/**
+ * One signal event as a feed row. cur_data: the fresher top 10 / holders / liquidity, though it
+ * reads 0 on many curve tokens, so only its non-zero values are taken.
+ */
+export function signalRow(ev: any): Record<string, any> {
+  const cur = Object.fromEntries(Object.entries(ev?.cur_data ?? {}).filter(([, v]) => Number(v) > 0));
+  return { ...ev?.data, ...cur, address: ev?.token_address ?? ev?.data?.address };
+}
 
 /**
  * One /v1/market/token_signal row: one event, keyed by GMGN's id. Seen again, only its counts

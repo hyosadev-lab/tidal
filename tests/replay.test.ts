@@ -77,17 +77,18 @@ test("research: 1 track per token, bought vs all decided, conviction bands, sour
   tracked("decision", "A", 50, "buy", 90); // A's second track: not in "all decided", but A's buy
   tracked("decision", "B", 4, "buy", 72);
   tracked("decision", "C", -20, "skip", 30);
-  tracked("rank", "D", -4);
-  tracked("migration", "E", 2);
-  insert("shadow_tracks", { token: "F", source: "rank", features: "{}", started_at: now - 1, ended_at: now, end_reason: "unreadable" });
+  tracked("signal", "D", -4);
+  tracked("signal", "D", 9); // D's second type: its first counts
+  tracked("rank", "E", 2); // sampled before 5 Nov: in today's total, no row of its own
+  insert("shadow_tracks", { token: "F", source: "signal", features: "{}", started_at: now - 1, ended_at: now, end_reason: "unreadable" });
 
   const r = research(now, "UTC");
   assert.deepEqual(r.candidates.decided, { avg: (-10 + 4 - 20) / 3, n: 3 });
   assert.deepEqual(r.candidates.bought, { avg: (50 + 4) / 2, n: 2 });
   assert.deepEqual(r.conviction.map((b) => b.n), [1, 1, 0, 1]);
-  assert.deepEqual(r.sources.map((s) => [s.source, s.n]), [["decision", 3], ["rank", 1], ["migration", 1]]);
-  assert.deepEqual([r.today.done, r.today.unreadable, r.today.readable], [6, 1, 6 / 7]);
-  assert.deepEqual(r.today.bySource.map((x) => [x.source, x.started, x.readable]), [["decision", 4, 1], ["rank", 2, 0.5], ["migration", 1, 1]]);
+  assert.deepEqual(r.sources.map((s) => [s.source, s.avg, s.n]), [["decision", (-10 + 4 - 20) / 3, 3], ["signal", -4, 1]]);
+  assert.deepEqual([r.today.done, r.today.unreadable, r.today.readable], [7, 1, 7 / 8]);
+  assert.deepEqual(r.today.bySource.map((x) => [x.source, x.started, x.readable]), [["decision", 4, 1], ["signal", 3, 2 / 3]]);
   assert.equal(r.agent.last, null);
 
   // The research agent's closing message is its report; a model wrote it, the page escapes it.

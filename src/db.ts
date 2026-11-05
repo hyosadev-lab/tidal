@@ -80,7 +80,7 @@ create table if not exists token_snapshots (
   id integer primary key,
   token text not null references tokens(address),
   taken_at integer not null,
-  kind text not null check (kind in ('entry', 'exit', 'decision')),
+  kind text not null check (kind in ('entry', 'exit', 'decision', 'sample')),
   decision_id integer references decisions(id),
 
   price_usd real not null,
@@ -254,7 +254,7 @@ create table if not exists logs (
 create table if not exists shadow_tracks (
   id integer primary key,
   token text not null,
-  source text not null check (source in ('decision', 'rank', 'migration')),
+  source text not null check (source in ('decision', 'rank', 'migration', 'signal')),
   decision_id integer unique references decisions(id),
   features text not null,
   started_at integer not null,
@@ -289,7 +289,7 @@ create table if not exists hypotheses (
   rule text not null,
   conditions text not null,
   exit text not null,
-  source text not null default 'decision' check (source in ('decision', 'rank', 'migration')),
+  source text not null default 'decision' check (source in ('decision', 'rank', 'migration', 'signal')),
   need_pct real not null check (need_pct between 0 and 100),
   backtest text,
   result text,
@@ -308,6 +308,23 @@ function addColumn(table: string, column: string, def: string): void {
     db.exec(`alter table ${table} add column ${column} ${def}`);
 }
 
+/**
+ * Rewrites a CHECK in a table's stored SQL, for a ledger made before SCHEMA widened it. Only for a
+ * wider list every stored row already meets: SQLite's documented writable_schema path, no rebuild.
+ */
+function widenCheck(table: string, from: string, to: string): void {
+  const t = db.prepare("select sql from sqlite_schema where type = 'table' and name = ?").get(table) as { sql: string } | undefined;
+  if (!t?.sql.includes(from)) return;
+  const v = Number((db.prepare("pragma schema_version").get() as { schema_version: number }).schema_version);
+  db.exec("pragma writable_schema = on");
+  try {
+    db.prepare("update sqlite_schema set sql = replace(sql, ?, ?) where type = 'table' and name = ?").run(from, to, table);
+    db.exec(`pragma schema_version = ${v + 1}`);
+  } finally {
+    db.exec("pragma writable_schema = off");
+  }
+}
+
 /** The process's ledger, set by the last `openDb`. One per process: tests reopen it on ":memory:". */
 export let db!: DatabaseSync;
 
@@ -321,9 +338,14 @@ export function openDb(path = dbPath()): DatabaseSync {
   addColumn("equity", "mode", "text not null default 'paper' check (mode in ('paper', 'live'))");
   addColumn("agent_runs", "kind", "text not null default 'entry' check (kind in ('entry', 'research'))");
   addColumn("trades", "quote_price_usd", "real");
-  addColumn("hypotheses", "source", "text not null default 'decision' check (source in ('decision', 'rank', 'migration'))");
+  addColumn("hypotheses", "source", "text not null default 'decision' check (source in ('decision', 'rank', 'migration', 'signal'))");
   addColumn("shadow_tracks", "end_reason",
     "text check (end_reason in ('done', 'rug', 'restart', 'unreadable')) check ((ended_at is null) = (end_reason is null))");
+  // 5 Nov 2026: signal tracks, and the snapshots they start from.
+  const sources = ["('decision', 'rank', 'migration')", "('decision', 'rank', 'migration', 'signal')"] as const;
+  widenCheck("shadow_tracks", ...sources);
+  widenCheck("hypotheses", ...sources);
+  widenCheck("token_snapshots", "('entry', 'exit', 'decision')", "('entry', 'exit', 'decision', 'sample')");
   // A ledger from before config_history: the config in force starts the history, as of its last save.
   db.exec("insert into config_history (at, value) select updated_at, value from settings where key = 'config' and not exists (select 1 from config_history)");
   return db;

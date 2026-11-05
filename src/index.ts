@@ -6,7 +6,7 @@ import { exitIdle, exitTick, POLL_MS } from "./exit.ts";
 import { log, short } from "./log.ts";
 import { startServer } from "./server.ts";
 import { judgeDue, researchDue, runCli, seedTries, stopCli } from "./research.ts";
-import { endRestarted, sampleMigrations, shadowTick, STEP_MS } from "./shadow.ts";
+import { endRestarted, sampleSignals, shadowTick, STEP_MS } from "./shadow.ts";
 import { openPositions, sampleEquity } from "./trade.ts";
 
 /**
@@ -45,9 +45,9 @@ const timers = [
   setInterval(() => void equity(), 60_000),
   // Shadow tracks run whether trading is started or not: a stop must not cut their 60 minutes.
   setInterval(() => void shadowTick(), STEP_MS),
-  // Fresh PumpSwap migrations, never bought: while running only. A stopped process spends no
-  // GMGN budget, which the same key may be spending on another host.
-  setInterval(() => void (running() ? sampleMigrations() : undefined), 60_000),
+  // Signal tracks, never bought: while running only. A stopped process spends no GMGN budget,
+  // which the same key may be spending on another host.
+  setInterval(() => void (running() ? sampleSignals(loadConfig()) : undefined), 60_000),
   setInterval(() => void (judgeDue() && runCli("judge", 5 * 60_000)), 10 * 60_000), // in a child process
   // The research agent once a day, while running only: a stopped process spends no model budget.
   setInterval(() => void (running() && researchDue() && runCli("agent", 15 * 60_000)), 10 * 60_000),

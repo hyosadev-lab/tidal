@@ -1,15 +1,17 @@
+import { inFilters, isPump, signalFilters, SIGNAL_TYPES, type Config } from "./config.ts";
 import { db, insert } from "./db.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import * as pools from "./jupiter/pools.ts";
 import { log, short } from "./log.ts";
+import { briefRow, signalName, signalRow, takeSnapshot } from "./snapshot.ts";
 import { solUsd } from "./trade.ts";
 
 /**
  * Shadow tracking: every token the agent decides on (buy, wait or skip) is followed for WINDOW_MS
- * off its pool's own reserves, so every candidate gets an outcome, bought or not. Two sampled
- * sources are tracked the same way and never bought: trending rows the agent was not briefed on
- * ('rank') and fresh PumpSwap migrations ('migration'), SAMPLE_MAX open at a time each.
+ * off its pool's own reserves, so every candidate gets an outcome, bought or not. One sampled
+ * source is tracked the same way and never bought: GMGN signal events of the types the Signals list
+ * does not fetch ('signal'), one track per token and type, SAMPLE_MAX open at a time.
  *
  * One batched `getMultipleAccounts` read every STEP_MS prices every open track. This is its own
  * read, not the exit loop's watches: ending a track must never stop the price feed of a position
@@ -21,8 +23,10 @@ import { solUsd } from "./trade.ts";
 
 export const WINDOW_MS = 60 * 60_000;
 export const STEP_MS = 2_000;
-/** Open tracks per sampled source, at most: what the read budget leaves after every decided token. */
+/** Open signal tracks, at most: what the read budget leaves after every decided token. */
 export const SAMPLE_MAX = 20;
+/** New signal tracks a minute, at most: each costs a /v1/token/info read off the entry loop's GMGN budget. */
+export const SAMPLES_PER_MIN = 5;
 /** The quote reserve under this share of its first reading: the pool drained, the track ends as a rug. */
 const RUG_SHARE = 0.05;
 /** A completed curve's PumpSwap pool is looked for this often, this many times (2 min). */
@@ -31,7 +35,7 @@ const MOVE_TRIES = 12;
 /** A horizon takes the last point at most this many steps before it (30s); older is no answer. */
 const STALE_STEPS = 15;
 const HORIZONS = [60, 300, 900, 1800, 3600] as const;
-/** A migration seen this long after it completed is no longer fresh. */
+/** A signal event seen this long after it fired is no longer fresh: its track would start late. */
 const FRESH_MS = 3 * 60_000;
 /** A non-SOL quote's SOL price is asked of Jupiter again after this. */
 const RATE_MS = 10 * 60_000;
@@ -40,7 +44,8 @@ const BACKOFF_MS = 10_000;
 
 /** [% vs the first price, the quote reserve in SOL] at index × STEP_MS after the start; null where no read landed. */
 export type Point = [number, number] | null;
-export type Source = "decision" | "rank" | "migration";
+/** rank and migration: sampled until 5 Nov 2026, kept for the tracks they left. */
+export type Source = "decision" | "signal" | "rank" | "migration";
 
 type Track = {
   id: number;
@@ -72,59 +77,80 @@ export function track(decisionId: number, token: string, features: Record<string
   open(id, "decision", token, typeof features["pool_address"] === "string" ? features["pool_address"] : null, now);
 }
 
-/** Room for one more sampled track of `token`: under SAMPLE_MAX open, and never tracked from `source` before. */
-function room(source: Source, token: string): boolean {
-  let n = 0;
-  for (const t of tracks.values()) if (t.source === source) n++;
-  return n < SAMPLE_MAX && !db.prepare("select 1 from shadow_tracks where token = ? and source = ?").get(token, source);
-}
-
-/** A feed row without its images and GMGN's routing blobs. */
-const slim = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).filter(([k]) => !/logo|^route_|^trans_/.test(k)));
-
-function sample(source: Source, token: string, row: Record<string, unknown>, pool: string, now: number): void {
-  const id = insert("shadow_tracks", { token, source, features: JSON.stringify(slim(row)), started_at: now });
-  open(id, source, token, pool, now);
-}
+/** A signal event to start a track for. */
+export type Pick = { token: string; type: number; at: number; mc: number | null };
 
 /**
- * Trending rows passed over this cycle: not briefed, never decided, pump-launched. The pool comes
- * off the mint (its curve, or the PumpSwap pool it migrated into), so no request is spent on it.
+ * The signal events to track, oldest first: of a type the Signals list does not fetch, fresh, a
+ * pump.fun launch on a pump pool, inside the Signals filters, its token never decided, its token ×
+ * type never tracked; as many as SAMPLES_PER_MIN and the room under SAMPLE_MAX allow. The rest are
+ * offered again next minute while still fresh.
  */
-export function sampleRank(rows: Record<string, any>[], briefed: Set<string>, now = Date.now()): void {
-  for (const r of rows) {
-    const token = String(r["address"] ?? "");
-    if (!token || briefed.has(token) || r["launchpad"] !== "pump" || !["pump", "pump_amm"].includes(r["exchange"])) continue;
-    if (!room("rank", token) || db.prepare("select 1 from decisions where token = ? limit 1").get(token)) continue;
-    const quote = typeof r["launch_quote_address"] === "string" && r["launch_quote_address"] ? r["launch_quote_address"] : jup.WSOL;
-    sample("rank", token, r, r["exchange"] === "pump" ? pools.curveOf(token) : pools.migratedPool(token, quote), now);
+export function pickSignals(events: any[], cfg: Config, now: number): Pick[] {
+  const seen = new Set<string>();
+  const fresh: Pick[] = [];
+  for (const ev of events) {
+    const row = signalRow(ev);
+    const token = String(row.address ?? "");
+    const type = Number(ev?.signal_type);
+    const at = Number(ev?.trigger_at) * 1000;
+    const key = `${token} ${type}`;
+    if (!token || seen.has(key) || cfg.signalTypes.includes(type) || !(now - at <= FRESH_MS)) continue;
+    if (!isPump(row) || !inFilters(row, cfg.signalFilters, now)) continue;
+    seen.add(key);
+    fresh.push({ token, type, at, mc: Number.isFinite(Number(ev?.trigger_mc)) ? Number(ev.trigger_mc) : null });
   }
+  let n = 0;
+  for (const t of tracks.values()) if (t.source === "signal") n++;
+  const room = Math.min(SAMPLES_PER_MIN, SAMPLE_MAX - n);
+  const decided = db.prepare("select 1 from decisions where token = ? limit 1");
+  const tracked = db.prepare("select 1 from shadow_tracks where token = ? and source = 'signal' and json_extract(features, '$.signal_type') = ?");
+  const out: Pick[] = [];
+  for (const p of fresh.sort((a, b) => a.at - b.at)) {
+    if (out.length >= room) break;
+    if (!decided.get(p.token) && !tracked.get(p.token, signalName(p.type))) out.push(p);
+  }
+  return out;
 }
 
-let trenchesError = "";
+let sampling = false;
+let signalError = "";
 
-/** Fresh PumpSwap migrations off GMGN trenches ('completed'), each tracked once from when it is first seen. */
-export async function sampleMigrations(now = Date.now()): Promise<void> {
-  if (!process.env.GMGN_API_KEY) return;
+/**
+ * Once a minute while running: one token_signal request for every type the Signals list does not
+ * fetch, under its filters, then a track per pick. `features` is the brief row of a fresh snapshot
+ * (one per token, though two of its types start) plus the event: `signal_type`, `signal_mc_usd`
+ * (the market cap it fired at) and `signal_age_s` (how long before the snapshot it fired).
+ */
+export async function sampleSignals(cfg: Config, now = Date.now()): Promise<void> {
+  const types = SIGNAL_TYPES.filter((t) => !cfg.signalTypes.includes(t));
+  if (sampling || !process.env.GMGN_API_KEY || !types.length) return;
+  sampling = true;
   try {
-    const res: any = await gmgnClient().getTrenches("sol", ["completed"], undefined, 20);
-    for (const r of (res?.data ?? res)?.completed ?? []) {
-      const token = String(r?.address ?? "");
-      const fresh = now - Number(r?.complete_timestamp) * 1000 <= FRESH_MS;
-      if (token && fresh && r.exchange === "pump_amm" && typeof r.pool_address === "string" && room("migration", token))
-        sample("migration", token, r, r.pool_address, now);
+    const res: any = await gmgnClient().getTokenSignalV2("sol", types.map((t) => ({ signal_type: [t], ...signalFilters(cfg) })));
+    const rows = new Map<string, Record<string, unknown>>();
+    for (const p of pickSignals(Array.isArray(res) ? res : (res?.list ?? []), cfg, now)) {
+      let row = rows.get(p.token);
+      if (!row) rows.set(p.token, (row = briefRow(await takeSnapshot(p.token, "sample"))));
+      const at = Date.now();
+      const features = { ...row, signal_type: signalName(p.type), signal_mc_usd: p.mc, signal_age_s: Math.round((at - p.at) / 1000) };
+      const id = insert("shadow_tracks", { token: p.token, source: "signal", features: JSON.stringify(features), started_at: at });
+      open(id, "signal", p.token, typeof row["pool_address"] === "string" ? row["pool_address"] : null, at);
     }
-    trenchesError = "";
+    signalError = "";
   } catch (e) {
-    if (short(e) !== trenchesError) log("warn", `Migrations feed failed: ${short(e)} — no migration tracks until it is back.`);
-    trenchesError = short(e);
+    // The picks left over are offered again next minute, while still fresh.
+    if (short(e) !== signalError) log("warn", `Signal tracks: ${short(e)} — tried again next minute.`);
+    signalError = short(e);
+  } finally {
+    sampling = false;
   }
 }
 
 /** Tracks open right now, by source, for the dashboard. */
-export function tracking(): Record<Source, number> {
-  const n = { decision: 0, rank: 0, migration: 0 };
-  for (const t of tracks.values()) n[t.source]++;
+export function tracking(): { decision: number; signal: number } {
+  const n = { decision: 0, signal: 0 };
+  for (const t of tracks.values()) if (t.source === "decision" || t.source === "signal") n[t.source]++;
   return n;
 }
 

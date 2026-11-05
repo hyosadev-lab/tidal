@@ -11,8 +11,11 @@ code judges; the operator decides. Nothing you do changes trading.
 ## The data
 
 Every token the trading agent decides on is followed for 60 minutes after the decision off its
-pool's reserves: a **shadow track** (`shadow_tracks`). Two more sources are tracked, never
-bought: `rank` (trending rows a cycle passed over) and `migration` (fresh PumpSwap migrations).
+pool's reserves: a **shadow track** (`shadow_tracks`). One more source is tracked, never bought:
+`signal`, since 5 Nov 2026: GMGN signal events of the types the Signals list does *not* fetch (every
+type but `signalTypes` in the config), pump.fun tokens inside the Signals filters, never decided, one
+track per token and type, up to 20 open and 5 new a minute. `rank` and `migration` tracks (sampled
+until 5 Nov) are history: new ideas take `decision` or `signal`.
 
 - `features`: JSON, what was known at the start, frozen then. For `decision` tracks it is the brief
   row exactly as the trading agent got it: `migrated`, `age_minutes`, `pool_exchange`, `price_usd`,
@@ -21,8 +24,12 @@ bought: `rank` (trending rows a cycle passed over) and `migration` (fresh PumpSw
   `flow.<1m|5m|1h|6h|24h>.<change_pct|buys|sells|swaps|volume_usd|buy_volume_usd|sell_volume_usd>`,
   `feed` (3–4 Nov 2026: `1h trending`, `graduated`, or both; since 4 Nov: `1h trending`, `signals`, or
   `1h trending + signals`), `signals.counts.<type>` (before 3 Nov 2026, and again since 4 Nov: only on
-  tokens an event of a fetched type reached: `signalTypes` in the config, default smart money buy + pump claim), and more: read one row before writing a condition. For `rank` and
-  `migration` it is GMGN's feed row, with other field names.
+  tokens an event of a fetched type reached: `signalTypes` in the config, default smart money buy + pump claim), and more: read one row before writing a condition. For `signal`
+  it is the same brief row off a snapshot taken when the track starts (no `feed`, `wash` or
+  `last`), plus `signal_type` (the event's type name, e.g. `price_spike`), `signal_mc_usd` (the
+  market cap it fired at) and `signal_age_s` (seconds from the event to the snapshot). A token with
+  two types has two tracks; the judge takes each token's first. For `rank` and `migration` it is
+  GMGN's feed row, with other field names.
 - `path`: `[[pct, liquidity_sol] | null, …]`, a point every 2 seconds; pct is against the first
   price. `ret_1m … ret_60m`, `max_pct`, `min_pct` summarise it.
 - `end_reason`: done, rug (counted, −100% from then), unreadable, restart (left out).

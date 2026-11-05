@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start, status, stop } from "../src/control.ts";
 import { openDb } from "../src/db.ts";
-import { entryLoop, feedOf, interleave, isPump, wake } from "../src/entry.ts";
+import { isPump } from "../src/config.ts";
+import { entryLoop, feedOf, interleave, wake } from "../src/entry.ts";
 import { positionClosed } from "../src/trade.ts";
 
 test("entry loop: idles with no fetch when it cannot buy, runs again on a wake, ends on Stop", async () => {

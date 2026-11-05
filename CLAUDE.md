@@ -66,14 +66,17 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   positions are matched against the wallet every ~30s; tokens gone without a sell are booked `external`.
 - Shadow tracks (`shadow.ts`, edge research capture): every verdict in `decide` starts a 60-min
   track of its token, `features` = the brief row exactly as sent (never rebuilt later: look-ahead).
-  Sampled, never bought: trending rows the cycle passed over ('rank', `sampleRank`) and fresh
-  PumpSwap migrations off GMGN trenches ('migration', every 60s while running: a stopped process
-  spends no GMGN budget), 20 open each. Its own
+  Sampled, never bought ('signal', `sampleSignals`, every 60s while running: a stopped process
+  spends no GMGN budget): one token_signal request for every type the Signals list does not fetch,
+  under its filters; `pickSignals` keeps fresh (≤3 min) pump.fun events, never decided, one track
+  per token × type, 20 open, 5 new a minute; `features` = the brief row of a fresh 'sample'
+  snapshot + `signal_type` / `signal_mc_usd` / `signal_age_s`. 'rank' and 'migration' were sampled
+  until 5 Nov 2026 (their tracks stay; new ideas take decision or signal). Its own
   `getMultipleAccounts` read every 2s (`pools.resolvePools` / `poolReading`), not the exit loop's
   watches (an unwatch would cut a held position's feed); it shares the public RPC with the exit
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
-  in any quote (reserve in SOL at the quote's price at start); pools come off the mint
-  (`pools.curveOf` / `migratedPool`, PDAs). Runs started or stopped; a restart ends open tracks as
+  in any quote (reserve in SOL at the quote's price at start); a completed curve's pool comes off
+  the mint (`pools.migratedPool`, a PDA). Runs started or stopped; a restart ends open tracks as
   'restart'. Every `saveConfig` also appends to `config_history`. `replay.ts` replays an exit plan
   on a track's path the way `evaluate` runs it (impact off the stored reserve); `calibration()`
   replays every trade closed by its rules on its own track. The Research page (`view.research`,

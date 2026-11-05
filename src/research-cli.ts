@@ -49,7 +49,7 @@ const IDEA = {
       },
       required: ["sl", "tp", "time_min"],
     },
-    source: { type: "string", enum: ["decision", "rank", "migration"] },
+    source: { type: "string", enum: ["decision", "signal"] },
     parent_id: { type: ["integer", "null"] },
   },
   required: ["rule", "conditions", "exit"],

@@ -272,3 +272,16 @@ export function inFilters(row: Record<string, unknown>, filters: Record<string, 
   }
   return true;
 }
+
+/**
+ * pump.fun's launchpads in GMGN's names: their tokens start on a pump curve and migrate to PumpSwap,
+ * the pools the exit loop and shadow tracks read on-chain. Only the first two seen so far (3 Nov 2026).
+ */
+export const PUMP = ["Pump.fun", "pump_mayhem", "pump_agent", "pump_mayhem_agent"];
+
+/**
+ * A pump.fun launch on a pump curve or a PumpSwap pool: the exchange check keeps any other pool out.
+ * Signal rows only: the signal route has no platform param, while trending's `platforms` does it.
+ */
+export const isPump = (r: any): boolean =>
+  (PUMP.includes(r?.launchpad_platform) || r?.launchpad === "pump") && ["pump", "pump_amm"].includes(r?.exchange);

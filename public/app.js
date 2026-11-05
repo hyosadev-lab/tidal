@@ -689,7 +689,7 @@ function sigTypes(on) {
 // Laid out as the design canvas's "Proposal · Dashboard · Research" board: six tiles, the tries
 // beside the open one, Settings versions folded at the bottom.
 
-const SOURCE = { decision: "decided", rank: "rank 11+", migration: "migrations" };
+const SOURCE = { decision: "decided", signal: "other signals", rank: "rank 11+", migration: "migrations" };
 const HYP_FILTERS = [["all", "All"], ["testing", "Testing"], ["passed", "Passed"], ["paper", "Paper"], ["live", "Live, small"], ["kept", "Kept"], ["closed", "Closed"]];
 const R_ICON = {
   settings: "M7 4h7l4 4v12H7z M14 4v4h4 M10 13h5 M10 17h5",
@@ -760,8 +760,8 @@ function researchTiles(r) {
       r.sources.some((s) => s.n) ? rbars(r.sources, (s) => SOURCE[s.source], "84px") : `<p class="empty" style="padding:0 6px">No track has finished 30 minutes yet.</p>`,
       "30-min return before costs, last 7 days, 1 track per token · a source is worth researching only above 0 after size impact and friction")}
     ${tile(R_ICON.shadow, "Shadow tracking",
-      `<div class="in"><span class="inline" style="align-items:baseline"><span class="num">${o.decision + o.rank + o.migration}</span><span class="s13 muted">tracking now · one RPC read every 2s</span></span>
-      <span class="s13 muted">${ink(o.decision)} decided · ${ink(o.rank + o.migration)} sampled from rank 11+ and fresh migrations</span>
+      `<div class="in"><span class="inline" style="align-items:baseline"><span class="num">${o.decision + o.signal}</span><span class="s13 muted">tracking now · one RPC read every 2s</span></span>
+      <span class="s13 muted">${ink(o.decision)} decided · ${ink(o.signal)} of ${r.sampleMax} sampled from the signal types the Signals list does not fetch</span>
       <span class="s13 muted">${ink(t.started)} tracks today · ${ink(readable(t.readable))} readable on-chain (${t.bySource.map((x) => `${SOURCE[x.source]} ${readable(x.readable)}`).join(", ")})</span>
       <span class="s13 muted">ended: ${ink(t.done)} done · <b class="neg">${t.rug}</b> rug · <b class="warn">${t.unreadable}</b> unreadable · <b class="warn">${t.restart}</b> restart</span></div>`,
       "pool reserves, 60 min each · follows curve → PumpSwap · a rug counts as a result; only restarts leave the counts")}

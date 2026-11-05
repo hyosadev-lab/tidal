@@ -1,12 +1,11 @@
-import { inFilters, loadConfig, rankFilters, signalFilters, type Config } from "./config.ts";
+import { inFilters, isPump, loadConfig, PUMP, rankFilters, signalFilters, type Config } from "./config.ts";
 import { getRun, lossPaused, status, type FeedRow } from "./control.ts";
 import { db, insert, tx } from "./db.ts";
 import { decide, type Due, type Verdict } from "./decide.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
 import { log, short } from "./log.ts";
-import { sampleRank } from "./shadow.ts";
-import { takeSnapshot, writeSignal } from "./snapshot.ts";
+import { signalRow, takeSnapshot, writeSignal } from "./snapshot.ts";
 import { buy, cashUsd, lossDay, MIN_BUY_USD, openPositions, positionClosed, security, solUsd } from "./trade.ts";
 
 /**
@@ -19,23 +18,11 @@ import { buy, cashUsd, lossDay, MIN_BUY_USD, openPositions, positionClosed, secu
 /** Due tokens per agent run, at most; the rest stay due for the next cycle. */
 const MAX_BRIEF = 10;
 const FEED_LIMIT = 40;
-/**
- * pump.fun's launchpads in GMGN's names: their tokens start on a pump curve and migrate to PumpSwap,
- * the pools the exit loop and shadow tracks read on-chain. Only the first two seen so far (3 Nov 2026).
- */
-const PUMP = ["Pump.fun", "pump_mayhem", "pump_agent", "pump_mayhem_agent"];
 /** The two lists, as the brief's `feed` names them. */
 export const LISTS = { trending: "1h trending", signals: "signals" } as const;
 export type List = keyof typeof LISTS;
 
 const num = (v: unknown): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
-
-/**
- * A pump.fun launch on a pump curve or a PumpSwap pool: the exchange check keeps any other pool out.
- * Signal rows only: the signal route has no platform param, while trending's `platforms` does it.
- */
-export const isPump = (r: any): boolean =>
-  (PUMP.includes(r?.launchpad_platform) || r?.launchpad === "pump") && ["pump", "pump_amm"].includes(r?.exchange);
 
 /** One list's row in its own numbers: signal rows carry no 1h change, and their 1h buys/sells are always 0. */
 function feedRow(r: any, list: List): FeedRow {
@@ -62,7 +49,7 @@ export const interleave = <T>(a: T[], b: T[]): T[] =>
   Array.from({ length: Math.max(a.length, b.length) }, (_, i) => [a[i], b[i]]).flat().filter((x): x is T => x !== undefined);
 
 /** `wash`: tokens GMGN flagged as wash-traded on either list — kept, and told to the agent. */
-type Fetched = Record<List, string[]> & { rank: Record<string, any>[]; wash: Set<string> };
+type Fetched = Record<List, string[]> & { wash: Set<string> };
 
 /** The brief's `feed`: the list or lists that carried the token this cycle; null for a wait off both. */
 export const feedOf = (token: string, f: Record<List, string[]>): string | null =>
@@ -71,8 +58,8 @@ export const feedOf = (token: string, f: Record<List, string[]>): string | null 
 /**
  * GMGN 1h trending (Pump.fun launchpads, by the `platforms` param) and the signal list (the
  * types in `signalTypes`; Pump.fun launches on pump pools, checked on the row), each under its own
- * filters. A token on both has a row in each. The trending rows as GMGN sent them go to rank
- * shadow tracks; every kept signal event goes to token_signals, for the brief.
+ * filters. A token on both has a row in each. Every kept signal event goes to token_signals, for
+ * the brief.
  */
 async function fetchTokens(cfg: Config): Promise<Fetched> {
   const c = gmgnClient();
@@ -82,7 +69,7 @@ async function fetchTokens(cfg: Config): Promise<Fetched> {
     cfg.signalTypes.length ? c.getTokenSignalV2("sol", cfg.signalTypes.map((t) => ({ signal_type: [t], ...signalFilters(cfg) }))) : Promise.resolve([]),
   ]);
   const rows: FeedRow[] = [];
-  const out: Fetched = { trending: [], signals: [], rank: [], wash: new Set() };
+  const out: Fetched = { trending: [], signals: [], wash: new Set() };
   const failed = (feed: string, e: unknown) => {
     const error = `${feed}: ${short(e)}`;
     if (error !== status.gmgn.error) log("warn", `${feed} feed failed: ${short(e)}`); // once, not every cycle
@@ -97,19 +84,13 @@ async function fetchTokens(cfg: Config): Promise<Fetched> {
     // The rank route's data is itself an envelope: { code, data: { rank: [...] } }.
     const r: any = rank.value;
     for (const row of r?.rank ?? r?.data?.rank ?? [])
-      if (row?.address && inFilters(row, cfg.filters)) {
-        keep("trending", row);
-        out.rank.push(row);
-      }
+      if (row?.address && inFilters(row, cfg.filters)) keep("trending", row);
   } else failed("Trending", rank.reason);
   if (sig.status === "fulfilled") {
     const s: any = sig.value;
     tx(() => {
       for (const ev of Array.isArray(s) ? s : (s?.list ?? [])) {
-        // One event per row, often several per token. cur_data: the fresher top 10 / holders /
-        // liquidity, though it reads 0 on many curve tokens, so only its non-zero values are taken.
-        const cur = Object.fromEntries(Object.entries(ev?.cur_data ?? {}).filter(([, v]) => Number(v) > 0));
-        const row = { ...ev?.data, ...cur, address: ev?.token_address ?? ev?.data?.address };
+        const row = signalRow(ev); // one event per row, often several per token
         if (!row.address || !isPump(row) || !inFilters(row, cfg.signalFilters)) continue;
         writeSignal(String(row.address), ev);
         if (!out.signals.includes(String(row.address))) keep("signals", row);
@@ -262,11 +243,6 @@ async function entryCycle(): Promise<boolean> {
     const isDueNow = (t: string) => isDue(t, cfg, now);
     // Waits first, then the two lists turn about; a token on both takes its first place.
     const due = [...new Set([...waitsDue(now).filter(isDueNow), ...interleave(feed.trending.filter(isDueNow), feed.signals.filter(isDueNow))])].slice(0, MAX_BRIEF);
-    try {
-      sampleRank(feed.rank, new Set(due));
-    } catch (e) {
-      log("warn", `Rank shadow tracks not started: ${short(e)}`); // research only: never stops a cycle
-    }
     if (!due.length) return true;
 
     const snaps: Due[] = [];

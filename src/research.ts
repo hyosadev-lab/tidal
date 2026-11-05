@@ -89,7 +89,8 @@ export function validate(x: any): Idea | string {
   if (Math.abs(e.tp.reduce((s: number, t: any) => s + t.sell, 0) - 100) > 0.01) return "exit.tp: the sells must add up to 100%";
   if (!Number.isInteger(e.time_min) || !num(e.time_min, 1, 60)) return "exit.time_min: whole minutes, 1–60 (a track is 60 minutes)";
   const source = x.source ?? "decision";
-  if (!["decision", "rank", "migration"].includes(source)) return "source: decision, rank or migration";
+  // rank and migration are no longer sampled: an idea on them would never meet a track to judge it.
+  if (!["decision", "signal"].includes(source)) return "source: decision or signal";
   const parent = x.parent_id ?? null;
   if (parent !== null && !(Number.isInteger(parent) && db.prepare("select 1 from hypotheses where id = ?").get(parent))) return "parent_id: an earlier idea's id, or null";
   return { rule, conditions, exit: { sl: e.sl, tp: e.tp.map((t: any) => ({ at: t.at, sell: t.sell })), time_min: e.time_min }, source, parent_id: parent };
@@ -394,7 +395,7 @@ export function move(id: number, to: Move, now = Date.now()): string | null {
   }
   if (to === "paper") {
     if (h.status !== "passed") return "only an idea that passed goes to paper";
-    if (h.source !== "decision") return "only an idea on decided tokens goes on paper: the engine does not brief rank or migration tokens to the agent";
+    if (h.source !== "decision") return "only an idea on decided tokens goes on paper: the engine does not brief sampled tokens to the agent";
     const other = inTest(id);
     if (other) return `#${other.id} is ${other.status === "paper" ? "on paper" : "on its live stake"}: one test at a time, #${id} waits its turn`;
     const head = paperLine()[0];

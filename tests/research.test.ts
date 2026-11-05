@@ -44,6 +44,7 @@ test("validate: the shape a model must send, and what it is told when it does no
     [idea({ exit: { sl: -30, tp: [{ at: 15, sell: 60 }], time_min: 30 } }), /add up to 100/],
     [idea({ exit: { sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 90 } }), /1–60/],
     [idea({ source: "kline" }), /source/],
+    [idea({ source: "rank" }), /source: decision or signal/], // no longer sampled: nothing would ever judge it
     [idea({ parent_id: 7 }), /parent_id/],
   ] as const)
     assert.match(validate(bad) as string, why);
@@ -225,7 +226,7 @@ test("proposed change: a prompt written from the conditions, and the exit fields
   // An idea on rank tokens passed, Settings saved after: still no paper test, the agent never sees those tokens.
   insert("hypotheses", { id: 1, created_at: 1, author: "m", rule: "r", conditions: "[]", exit: JSON.stringify({ sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30 }), source: "rank", need_pct: 95, status: "passed", decided_at: 1 });
   insert("config_history", { at: 2, value: "{}" });
-  assert.match(move(1, "paper")!, /does not brief rank or migration tokens/);
+  assert.match(move(1, "paper")!, /does not brief sampled tokens/);
 });
 
 test("paper line: passed ideas take the one test in the order they passed, never on another test's version", () => {
@@ -286,7 +287,7 @@ test("register: a repeat of any try is refused, whatever its words; a variant is
   assert.equal(count(), 5);
   // Another stop, or another source: a variant, so a new try with a higher bar.
   assert.equal(reg(idea({ exit: { ...two, sl: -25 } }), "m").id, 6);
-  assert.equal(reg(idea({ exit: two, source: "rank" }), "m").id, 7);
+  assert.equal(reg(idea({ exit: two, source: "signal" }), "m").id, 7);
   assert.notEqual(
     sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.7 } }], two, "decision"),
     sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.8 } }], two, "decision"),

@@ -66,7 +66,8 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
         at integer not null, side text not null, qty text not null, price_usd real not null, usd real not null,
         pnl_usd real, reason text not null, tx_signature text unique) strict;
       create table equity (at integer primary key, equity_usd real not null, cash_usd real not null) strict;
-      create table shadow_tracks (id integer primary key, token text not null, source text not null,
+      create table shadow_tracks (id integer primary key, token text not null,
+        source text not null check (source in ('decision', 'rank', 'migration')),
         decision_id integer unique, features text not null, started_at integer not null, ended_at integer) strict;
       create table settings (key text primary key, value text not null, updated_at integer not null) strict;
       insert into settings values ('config', '{"prompt":"v1"}', 7);
@@ -84,6 +85,11 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
       assert.deepEqual([h.length, h[0]?.at, h[0]?.value], [1, 7, '{"prompt":"v1"}']);
       // The added column brings its checks: an end needs a reason.
       assert.throws(() => db.prepare("insert into shadow_tracks (token, source, features, started_at, ended_at) values ('M', 'rank', '{}', 1, 2)").run(), /CHECK/);
+      // The source check is widened in place (5 Nov 2026): signal tracks go in, an unknown source still does not.
+      const src = "insert into shadow_tracks (token, source, features, started_at) values ('M', ?, '{}', 1)";
+      db.prepare(src).run("signal");
+      assert.throws(() => db.prepare(src).run("kline"), /CHECK/);
+      assert.equal(db.prepare("pragma integrity_check").get()?.integrity_check, "ok");
       db.close();
     }
   } finally {
