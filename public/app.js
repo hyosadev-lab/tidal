@@ -310,7 +310,7 @@ function overview(d) {
     <section class="card" style="flex:2 1 380px;padding-bottom:0" aria-labelledby="pos-title">
       <div class="head"><span class="ico">${I.case}</span><div class="stack"><h2 id="pos-title">Open positions</h2><span class="sub">exits run by code on every price poll</span></div>
         <a class="btn sm line" href="#trading" style="margin-left:auto">Manage in Trading${I.arrow}</a></div>
-      ${o.positions.length ? `<div class="fill fade" data-scroll="pos" tabindex="0" role="region" aria-label="Open positions list" style="max-height:384px;display:flex;flex-direction:column;gap:12px">${o.positions.map(posCard).join("")}</div>` : `<p class="empty">No open positions.</p>`}
+      ${o.positions.length ? `<div class="fill fade" data-scroll="pos" tabindex="0" role="region" aria-label="Open positions list" style="contain:size;min-height:240px;display:flex;flex-direction:column;gap:12px">${o.positions.map(posCard).join("")}</div>` : `<p class="empty">No open positions.</p>`}
     </section>
   </div>
   <div class="row">

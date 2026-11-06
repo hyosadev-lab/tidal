@@ -61,6 +61,7 @@ a { color: var(--lime); } a:hover { color: #E8FA9E; }
 .card.flush { padding: 14px 0 8px; gap: 8px; overflow: clip; } /* rows run edge to edge: keep their borders inside the rounded corners */
 .card.flush > [tabindex]:focus-visible { outline-offset: -2px; } /* the clip would cut an outside ring */
 .card.flush > .head { padding: 0 16px; }
+.card.flush:has(> .head:only-child) { padding-bottom: 14px; } /* folded: head alone, same space above and below */
 .head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
 .head .tail { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
 .ico { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line3); }
@@ -75,6 +76,7 @@ h2.big { font-size: 18px; line-height: 24px; font-weight: 600; }
 .title p { margin: 0; font-size: 15px; line-height: 22px; color: var(--muted); }
 .empty { margin: 0; padding: 4px 20px 10px; font-size: 13px; line-height: 18px; color: var(--muted); }
 .card:not(.flush) > .empty { padding: 0; }
+.row > .card > .empty:last-child { flex: 1 1 auto; display: grid; place-items: center; padding-bottom: 16px; } /* a row stretches the card: centre the note in what is left */
 
 /* banners and dialogs */
 .banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 14px 18px; border-radius: 20px; }
