@@ -22,6 +22,19 @@ const ini = (s) => esc(String(s ?? "?").slice(0, 2).toUpperCase());
 /** A short mint that copies the full address on click. A span inside the feed's row button (no button in a button). */
 const mintCopy = (addr, short, tag = "button") =>
   `<${tag} class="mint" data-a="copyAddr" data-v="${esc(addr)}" title="Copy ${esc(addr)}"${tag === "button" ? ` aria-label="Copy address ${esc(short)}"` : ""}>${S.copiedAddr === addr ? "Copied" : esc(short)}</${tag}>`;
+/** navigator.clipboard exists only on https or localhost; on plain http (the dashboard on a server IP) fall back to execCommand. */
+const copyText = (text) => {
+  if (navigator.clipboard) return navigator.clipboard.writeText(text);
+  const ta = Object.assign(document.createElement("textarea"), { value: text, readOnly: true });
+  ta.style.cssText = "position:fixed;top:0;opacity:0";
+  const was = document.activeElement;
+  document.body.append(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  was?.focus?.({ preventScroll: true });
+  return ok ? Promise.resolve() : Promise.reject(new Error("copy failed"));
+};
 const sign = (v) => (fin(v) && v < 0 ? "neg" : "pos");
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
@@ -1241,7 +1254,7 @@ const A = {
     if (await act("/api/research/move", { id: Number(id), to }, `Idea #${id}: ${said}.`)) (S.researchAt = 0), await loadResearch(), render();
   },
   copyAddr: (v) =>
-    navigator.clipboard?.writeText(v).then(
+    copyText(v).then(
       () => {
         S.copiedAddr = v;
         render();
@@ -1251,7 +1264,7 @@ const A = {
     ),
   copyPrompt: (v) => {
     const h = S.research?.hypotheses.find((x) => x.id === Number(v));
-    if (h?.proposal) navigator.clipboard?.writeText(h.proposal.prompt).then(() => ((S.copied = h.id), render()), () => {});
+    if (h?.proposal) copyText(h.proposal.prompt).then(() => ((S.copied = h.id), render()), () => {});
   },
   runBtn: () => (S.data.overview.positions.length ? ((S.confirmStop = true), render()) : act("/api/stop", { closeAll: false })),
   cancelStop: () => ((S.confirmStop = false), render()),
