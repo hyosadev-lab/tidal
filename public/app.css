@@ -188,6 +188,9 @@ h3 { margin: 8px 0 0; padding: 0 20px; font-size: 13px; line-height: 18px; font-
 .feed button:hover { background: var(--deep); }
 .tok { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tok .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.mint { all: unset; cursor: copy; }
+.mint:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.mint:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; border-radius: 4px; }
 .runbadge { flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--violet); color: #161618; font-size: 10px; font-weight: 700; }
 .events { list-style: none; margin: 0; padding: 0; }
 .events li { display: flex; align-items: flex-start; gap: 10px; padding: 9px 16px; border-top: 1px solid var(--line); }

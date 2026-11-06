@@ -19,6 +19,9 @@ const hm = (t) => hms(t).slice(0, 5);
 const dayLabel = (t) => new Date(t).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }).replace(",", "");
 const mins = (m) => (m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`);
 const ini = (s) => esc(String(s ?? "?").slice(0, 2).toUpperCase());
+/** A short mint that copies the full address on click. A span inside the feed's row button (no button in a button). */
+const mintCopy = (addr, short, tag = "button") =>
+  `<${tag} class="mint" data-a="copyAddr" data-v="${esc(addr)}" title="Copy ${esc(addr)}"${tag === "button" ? ` aria-label="Copy address ${esc(short)}"` : ""}>${S.copiedAddr === addr ? "Copied" : esc(short)}</${tag}>`;
 const sign = (v) => (fin(v) && v < 0 ? "neg" : "pos");
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
@@ -84,6 +87,7 @@ const S = {
   hypFilter: "all", // the hypotheses list's status filter
   verOpen: false, // Settings versions, folded as the canvas draws them
   copied: null, // id of the idea whose prompt was just copied
+  copiedAddr: null, // token address just copied, shown as "Copied" for a moment
 };
 const PAGES = ["overview", "trading", "research", "settings"];
 const page = () => (PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
@@ -350,7 +354,7 @@ function ruleChips(p, compact) {
 
 function posCard(p, i) {
   return `<article class="poscard" aria-label="${esc(p.symbol)}"><div class="top2"><span class="av ${i % 2 ? "alt" : ""}" aria-hidden="true">${ini(p.symbol)}</span>
-    <div class="stack" style="flex:1 1 auto"><span class="b">${esc(p.symbol)}</span><span class="mono small muted">${esc(p.mint)} · held ${mins(p.heldMin)}</span></div>
+    <div class="stack" style="flex:1 1 auto"><span class="b">${esc(p.symbol)}</span><span class="mono small muted">${mintCopy(p.token, p.mint)} · held ${mins(p.heldMin)}</span></div>
     <div class="stack" style="align-items:flex-end"><span class="${sign(p.pnlPct)}" style="font-size:18px;line-height:24px;font-weight:600">${pct(p.pnlPct)}</span><span class="small muted">${susd(p.pnlUsd)} · peak ${pct(p.peakPct)}</span></div></div>
     <div class="chips">${ruleChips(p, true)}<span class="chip">time stop in ${mins(p.timeLeftMin)}</span></div></article>`;
 }
@@ -485,12 +489,15 @@ function trading(d) {
   const sig = S.list === "signals";
   // Signals: each checked signal type counts too.
   const active = Object.keys(d.config[L.key]).length + (sig ? d.config.signalTypes.length : 0);
+  // The badge marks the tokens of the run in the dock (picked by hand, or the latest); the state's own until that loads.
+  const inPicked = S.run && new Set(S.run.brief.map((b) => b.address));
   const feedRows = cur.rows
     .map((t) => {
       const on = S.sel === t.address;
+      const inRun = inPicked ? (inPicked.has(t.address) ? S.run.id : null) : t.inRun;
       const age = t.createdAt ? mins(Math.max(0, Math.floor((d.now - t.createdAt) / 60_000))) : "—";
       return `<li><button class="grid-feed${sig ? " sig" : ""}" data-a="pick" data-v="${esc(t.address)}" aria-pressed="${on}" aria-label="${esc(`${t.symbol}, ${STATUS[pillOf(t)]}, ${statusNote(t)}`)}">
-        <span class="tok"><span class="av sm" aria-hidden="true">${ini(t.symbol)}</span><span class="stack"><span class="inline" style="gap:6px"><span class="nm">${esc(t.symbol)}</span>${t.inRun ? `<span class="runbadge">#${t.inRun}</span>` : ""}</span><span class="mono dim" style="font-size:11px;line-height:14px">${esc(t.mint)}</span></span></span>
+        <span class="tok"><span class="av sm" aria-hidden="true">${ini(t.symbol)}</span><span class="stack"><span class="inline" style="gap:6px"><span class="nm">${esc(t.symbol)}</span>${inRun ? `<span class="runbadge">#${inRun}</span>` : ""}</span><span class="mono dim" style="font-size:11px;line-height:14px">${mintCopy(t.address, t.mint, "span")}</span></span></span>
         <span class="stack" style="align-items:flex-start"><span class="pill ${pillOf(t)}">${STATUS[pillOf(t)]}</span><span class="muted nowrap" style="font-size:11px;line-height:14px;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(statusNote(t))}</span></span>
         <span class="r">${k$(t.mcap)}</span><span class="r">${k$(t.liq)}</span>
         <span class="stack" style="align-items:flex-end"><span>${fin(t.buys) && fin(t.sells) ? (t.buys + t.sells).toLocaleString("en-US") : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${kn(t.buys)} / ${kn(t.sells)}</span></span>
@@ -544,7 +551,7 @@ function activityPanel(tr) {
     const v = t.verdict;
     return `<div style="display:flex;flex-direction:column;gap:12px;padding:0 16px 8px">
       <div class="inline" style="gap:12px;padding:12px 14px;border-radius:18px;background:var(--inner)"><span class="av dark" aria-hidden="true">${ini(t.symbol)}</span>
-        <div class="stack" style="flex:1 1 auto"><span style="font-size:16px;line-height:22px;font-weight:600">${esc(t.symbol)}</span><span class="mono small muted">${esc(t.mint)}${t.source ? ` · ${esc(t.source)}` : ""}</span></div>
+        <div class="stack" style="flex:1 1 auto"><span style="font-size:16px;line-height:22px;font-weight:600">${esc(t.symbol)}</span><span class="mono small muted">${mintCopy(t.address, t.mint)}${t.source ? ` · ${esc(t.source)}` : ""}</span></div>
         <button class="btn line" style="width:40px;min-height:40px;padding:0;border-radius:50%" aria-label="Back to all activity" data-a="clearSel">${I.x}</button></div>
       ${v ? `<div class="boxed"><div class="inline" style="flex-wrap:wrap;gap:6px 10px"><span class="small muted">Latest verdict</span><span class="tag ${esc(v.action)}">${esc(v.action)}</span><span class="mono small muted">conviction ${v.conviction ?? "—"}</span><span class="small muted" style="margin-left:auto">run #${v.run} · ${v.action === "wait" && v.until ? `until ${hm(v.until)}` : hm(v.at)}</span></div>
         <span class="convbar" aria-hidden="true"><i style="width:${v.conviction ?? 0}%"></i></span><p style="margin:0;line-height:21px;color:var(--body)">${esc(v.thesis ?? "No thesis given.")}</p>
@@ -600,7 +607,7 @@ function positionsTable(d) {
   return `<section class="card flush" aria-labelledby="pos-title2"><div class="head"><span class="ico">${I.case}</span><h2 id="pos-title2">Open positions</h2><span class="s13 muted">exits run by code on every price poll · click a token to see why the agent bought it</span></div>
     ${pos.length ? `<div class="scroll-x" data-scroll="positions"><table style="min-width:920px"><thead><tr><th>Token</th><th class="r">PnL</th><th class="r">Now / entry, USD</th><th class="r">Held</th><th>Exit plan</th><th class="r">Time stop</th><th><span class="sr">Actions</span></th></tr></thead><tbody>${pos
       .map(
-        (p, i) => `<tr><td class="nowrap"><div class="inline" style="gap:12px"><span class="av ${i % 2 ? "alt" : ""}" aria-hidden="true">${ini(p.symbol)}</span><span class="stack"><button class="namebtn" data-a="pick" data-v="${esc(p.token)}" aria-label="Show the agent's view of ${esc(p.symbol)}">${esc(p.symbol)}</button><span class="mono small muted">${esc(p.mint)} · held ${mins(p.heldMin)}${p.mode === "live" ? " · live" : ""}</span></span></div></td>
+        (p, i) => `<tr><td class="nowrap"><div class="inline" style="gap:12px"><span class="av ${i % 2 ? "alt" : ""}" aria-hidden="true">${ini(p.symbol)}</span><span class="stack"><button class="namebtn" data-a="pick" data-v="${esc(p.token)}" aria-label="Show the agent's view of ${esc(p.symbol)}">${esc(p.symbol)}</button><span class="mono small muted">${mintCopy(p.token, p.mint)} · held ${mins(p.heldMin)}${p.mode === "live" ? " · live" : ""}</span></span></div></td>
         <td class="r nowrap"><div class="${sign(p.pnlPct)}" style="font-size:18px;line-height:24px;font-weight:600">${pct(p.pnlPct)}</div><div class="small muted">${susd(p.pnlUsd)} · peak ${pct(p.peakPct)}</div></td>
         <td class="r nowrap mono small" style="line-height:18px"><div>${px(p.price)}</div><div class="muted">${px(p.entry)}</div></td>
         <td class="r nowrap"><div>${Math.round(p.heldPct)}%</div><div class="small muted">${kn(p.qtyLeft)} left</div></td>
@@ -621,7 +628,7 @@ function runDock(r, tr) {
       ${failed ? `<div class="banner red" role="status" style="border-radius:16px;font-size:13px;line-height:19px"><span><code class="mono small">agent_runs.error</code> ${esc(r.error)}</span></div>` : ""}</section>
     <section class="card flush" aria-labelledby="brief-title"><div class="head" style="padding:0 20px;align-items:baseline"><h2 id="brief-title">Brief</h2><span class="s13 muted">${plural(r.brief.length, "due token")} · the numbers the model saw, from token_snapshots</span></div>
       <div class="scroll-x" data-scroll="brief"><div style="min-width:820px"><div class="grid-brief ghead" style="padding:6px 20px 8px"><span>Token</span><span>Why due</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">Vol 1h</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span></div>
-      ${r.brief.map((b) => `<div class="grid-brief" style="padding:10px 20px;border-bottom:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums"><span class="stack"><span class="b" style="overflow:hidden;text-overflow:ellipsis">${esc(b.symbol)}</span><span class="mono small muted">${esc(b.mint)}</span></span><span class="s13 soft">${esc(b.why)}</span><span class="r">${k$(b.mcap)}</span><span class="r">${k$(b.liq)}</span><span class="r">${k$(b.vol)}</span><span class="r">${kn(b.txs)}</span><span class="r ${sign(b.change1h)}">${pct(b.change1h)}</span><span class="r">${rate(b.top10)}</span></div>`).join("") || `<p class="empty">No brief on record.</p>`}</div></div></section>
+      ${r.brief.map((b) => `<div class="grid-brief" style="padding:10px 20px;border-bottom:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums"><span class="stack"><span class="b" style="overflow:hidden;text-overflow:ellipsis">${esc(b.symbol)}</span><span class="mono small muted">${mintCopy(b.address, b.mint)}</span></span><span class="s13 soft">${esc(b.why)}</span><span class="r">${k$(b.mcap)}</span><span class="r">${k$(b.liq)}</span><span class="r">${k$(b.vol)}</span><span class="r">${kn(b.txs)}</span><span class="r ${sign(b.change1h)}">${pct(b.change1h)}</span><span class="r">${rate(b.top10)}</span></div>`).join("") || `<p class="empty">No brief on record.</p>`}</div></div></section>
   </div><div style="flex:1 1 460px;min-width:0;display:flex;flex-direction:column;gap:12px">
     <section class="card flush" aria-labelledby="verdicts-title"><div class="head" style="padding:0 20px;align-items:baseline"><h2 id="verdicts-title">Verdicts</h2><span class="s13 muted">saved to decisions · model-written, read as data</span></div>
       ${r.verdicts.length ? `<ul class="lst">${r.verdicts.map((v) => `<li><span class="av ${v.action === "buy" ? "alt" : v.action === "skip" ? "grey" : ""}" aria-hidden="true">${ini(v.symbol)}</span><div class="stack" style="flex:1 1 auto;gap:4px"><div class="inline" style="flex-wrap:wrap;gap:4px 10px"><span class="b" style="font-size:15px">${esc(v.symbol)}</span><span class="small b ${v.action === "buy" ? "pos" : v.action === "wait" ? "vio" : "muted"}">${esc(v.action)}</span><span class="mono small muted">conviction ${v.conviction ?? "—"}</span><span class="small muted nowrap" style="margin-left:auto">${v.action === "wait" && v.recheck_at ? `until ${hm(v.recheck_at)}` : ""}</span></div><p class="s13 soft" style="margin:0;line-height:19px">${esc(v.thesis ?? "")}</p></div></li>`).join("")}</ul>`
@@ -1233,6 +1240,15 @@ const A = {
     const said = { paper: "on paper", live: "live", keep: "kept", cancel: "test cancelled", drop: "dropped", undrop: "drop undone" }[to];
     if (await act("/api/research/move", { id: Number(id), to }, `Idea #${id}: ${said}.`)) (S.researchAt = 0), await loadResearch(), render();
   },
+  copyAddr: (v) =>
+    navigator.clipboard?.writeText(v).then(
+      () => {
+        S.copiedAddr = v;
+        render();
+        setTimeout(() => S.copiedAddr === v && ((S.copiedAddr = null), render()), 1500);
+      },
+      () => {},
+    ),
   copyPrompt: (v) => {
     const h = S.research?.hypotheses.find((x) => x.id === Number(v));
     if (h?.proposal) navigator.clipboard?.writeText(h.proposal.prompt).then(() => ((S.copied = h.id), render()), () => {});
