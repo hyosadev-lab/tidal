@@ -644,8 +644,10 @@ export const researchDue = (now = Date.now()): boolean => !!process.env.OPENROUT
 
 // ── the research agent's own settings ─────────────────────────────────
 
-/** Model steps a research run may take, and tool calls it may make. */
-export const RESEARCH_STEPS = 40;
+/** Reads (ledger_query, test_rule) a research run may make; register_hypothesis is never one of them. */
+export const RESEARCH_READS = 40;
+/** Model steps a research run may take: a read a step, then the register and the report. */
+export const RESEARCH_STEPS = RESEARCH_READS + 2;
 /** The model a run falls back to when neither the research row nor OPENROUTER_MODEL names one. */
 export const FALLBACK_MODEL = "anthropic/claude-sonnet-4.5";
 

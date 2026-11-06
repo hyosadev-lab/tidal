@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadConfig, saveConfig } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
 import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, FALLBACK_MODEL, nextResearchAt, register, researchDue, RESEARCH_EVERY_MS, researchModel, researchSettings, sameIdea, saveResearchSettings, seedTries, tries, validate, type Idea } from "../src/research.ts";
-import { query } from "../src/research-cli.ts";
+import { agent, query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
 const DEEP = 1e9;
@@ -315,5 +318,29 @@ test("research model: its own settings row, then OPENROUTER_MODEL, then the defa
   } finally {
     if (env === undefined) delete process.env.OPENROUTER_MODEL;
     else process.env.OPENROUTER_MODEL = env;
+  }
+});
+
+test("research agent: the register still works once every read is spent", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), "tta-research-")), "t.db");
+  const [env, realFetch] = [process.env.TTA_DB, globalThis.fetch];
+  process.env.TTA_DB = file; // the agent's read-only connection opens the same file
+  openDb(file);
+  const call = (i: number, name: string, args: unknown) => ({ id: `c${i}`, function: { name, arguments: JSON.stringify(args) } });
+  const replies = [
+    { role: "assistant", content: null, tool_calls: [...Array.from({ length: 41 }, (_, i) => call(i, "ledger_query", { sql: "select 1" })), call(41, "register_hypothesis", idea())] },
+    { role: "assistant", content: "report" },
+  ];
+  globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: replies.shift() }] }))) as any;
+  try {
+    const before = tries().length;
+    await agent();
+    const calls = db.prepare("select result from tool_calls order by id").all() as { result: string }[];
+    assert.match(calls[40]!.result, /budget spent/); // the 41st read is refused
+    assert.equal(tries().length, before + 1); // the register is not
+  } finally {
+    globalThis.fetch = realFetch;
+    if (env === undefined) delete process.env.TTA_DB;
+    else process.env.TTA_DB = env;
   }
 });
