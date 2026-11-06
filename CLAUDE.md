@@ -43,7 +43,7 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   Filters modal, default smart money buy + pump claim, `SIGNAL_TYPES` = what the route takes (it
   refuses 14–16), none = no request; `isPump` on the row, a pump curve or PumpSwap, as the route has
   no platform param; every kept event → `token_signals`, `writeSignal`). Each has its own fetch filters (`filters` / `signalFilters`,
-  `rankFilters` / `signalFilters()` — the signal route takes market cap and fee only — rechecked on
+  `rankFilters` / `signalFilters()` — the signal route takes age, market cap and fee only — rechecked on
   the row by `inFilters`) and its own tab on the Trading page; a token on both has a row in each
   (`FeedRow.list`). Plus waits now due → `isDue` (new; wait over; bought and cooldown over; never
   skipped, held or blocked) → waits first, then the two lists in turns (`interleave`) → up to 10

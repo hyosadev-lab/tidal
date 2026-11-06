@@ -194,13 +194,13 @@ export type Feed = "trending" | "signals";
  * The Fetch filters modal: one min/max pair per key, in GMGN's own units ($K, % of supply, fees
  * in SOL; `scale` turns them into GMGN's $ and 0–1 ratios, age is minutes). `api` is the 1h rank
  * param stem, each one checked live to narrow the result; `signal` the token signal route's (it
- * takes market cap and total fee only, so those are all the signal list offers). `fields` is the
+ * takes market cap, total fee and age only, so those are all the signal list offers). `fields` is the
  * value on a trending row, then on a signal row. A bound with no param is checked on the row only
  * (initial liquidity on trending: GMGN ignores every name tried). They narrow what reaches the
  * agent; the risk check still runs on every buy.
  */
 const FILTERS: Record<string, { api?: string; signal?: string; fields: string[]; hi: number; scale?: number }> = {
-  age: { api: "created", fields: ["creation_timestamp", "open_timestamp", "created_timestamp"], hi: 100_000 },
+  age: { api: "created", signal: "create_or_open_ts", fields: ["creation_timestamp", "open_timestamp", "created_timestamp"], hi: 100_000 },
   liquidity: { api: "liquidity", fields: ["liquidity"], hi: 1e9, scale: 1000 },
   initialLiquidity: { fields: ["initial_liquidity"], hi: 1e9, scale: 1000 },
   marketCap: { api: "marketcap", signal: "mc", fields: ["market_cap"], hi: 1e9, scale: 1000 },
@@ -251,13 +251,19 @@ export function rankFilters(cfg: Config): Record<string, string | number> {
   return q;
 }
 
-/** The signal list's bounds as one token_signal group's params, `<stem>_min` / `<stem>_max`. */
-export function signalFilters(cfg: Config): Record<string, number> {
-  const q: Record<string, number> = {};
+/**
+ * The signal list's bounds as one token_signal group's params, `<stem>_min` / `<stem>_max`. Age is
+ * `min_` / `max_create_or_open_ts` and, despite the name, an age like rank's ("60m" = an hour old):
+ * a timestamp string is ignored, a number refused (checked live, 6 Nov 2026).
+ */
+export function signalFilters(cfg: Config): Record<string, string | number> {
+  const q: Record<string, string | number> = {};
   for (const [k, v] of Object.entries(cfg.signalFilters)) {
     const { key, min } = bound(k);
     const name = FILTERS[key]?.signal;
-    if (name) q[`${name}_${min ? "min" : "max"}`] = gmgnUnit(key, v);
+    if (!name) continue;
+    if (key === "age") q[`${min ? "min" : "max"}_${name}`] = `${v}m`;
+    else q[`${name}_${min ? "min" : "max"}`] = gmgnUnit(key, v);
   }
   return q;
 }

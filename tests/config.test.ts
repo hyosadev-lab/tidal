@@ -17,9 +17,9 @@ test("filters keep known keys, clamped, in GMGN's units, each feed under its own
     max_top10_holder_rate: 0.3,
     max_insider_rate: 1,
   }); // initial liquidity has no rank param
-  // The signal route takes market cap and total fee only: the other bounds are dropped there, not ignored.
-  assert.deepEqual(cfg.signalFilters, { marketCapMin: 20, marketCapMax: 500, feeMin: 1 });
-  assert.deepEqual(signalFilters(cfg), { mc_min: 20_000, mc_max: 500_000, total_fee_min: 1 });
+  // The signal route takes age, market cap and total fee only: the other bounds are dropped there, not ignored.
+  assert.deepEqual(cfg.signalFilters, { ageMax: 60, marketCapMin: 20, marketCapMax: 500, feeMin: 1 });
+  assert.deepEqual(signalFilters(cfg), { max_create_or_open_ts: "60m", mc_min: 20_000, mc_max: 500_000, total_fee_min: 1 });
 });
 
 test("inFilters checks a trending or signal row against its own feed's bounds; a missing field passes", () => {
@@ -33,6 +33,7 @@ test("inFilters checks a trending or signal row against its own feed's bounds; a
   assert.equal(inFilters(sig, cfg.signalFilters, now), true);
   assert.equal(inFilters({ ...sig, market_cap: 3_000 }, cfg.signalFilters, now), false);
   assert.equal(inFilters({ ...sig, total_fee: 0.5 }, cfg.signalFilters, now), false);
+  assert.equal(inFilters({ ...sig, created_timestamp: ts - 3600 }, cfg.signalFilters, now), false); // 2h old, ageMax 60
 });
 
 test("signal types: known ones the route takes, in order, once; none = the list off; absent = the default", () => {

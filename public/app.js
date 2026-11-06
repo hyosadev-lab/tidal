@@ -658,14 +658,14 @@ function transcriptDock(r) {
 }
 
 // GMGN's filters, in trending's order and units ($K = thousands of dollars). The signal route
-// takes market cap and total fees only, so those are all its list offers.
+// takes age, market cap and total fees only, so those are all its list offers.
 const FILTERS = [
   ["age", "Age, minutes"], ["liquidity", "Liquidity, $K"], ["initialLiquidity", "Initial liquidity, $K"], ["marketCap", "Market cap, $K"],
   ["athMarketCap", "ATH market cap, $K"], ["volume", "1h volume, $K"], ["swaps", "1h transactions"], ["fee", "Total fees, SOL"],
   ["holders", "Holders"], ["botDegens", "Bot degens"], ["viewing", "Currently viewing"], ["smartMoney", "Smart-money wallets"], ["kol", "KOL wallets"],
   ["top10", "Top 10 holders, %"], ["devHolding", "Dev holding, %"], ["insider", "Insiders, %"], ["bundler", "Bundlers, %"], ["phishing", "Phishing, %"], ["sniper", "Snipers hold, %"],
 ];
-const SIGNAL_KEYS = new Set(["marketCap", "fee"]);
+const SIGNAL_KEYS = new Set(["age", "marketCap", "fee"]);
 // GMGN's signal types the token signal route takes, grouped as the modal shows them. It refuses
 // 14–16 (large buy, multi buy, multi large buy). Each checked type is one group of up to 50 rows.
 const SIGNAL_TYPES = [
@@ -683,7 +683,7 @@ const LISTS = {
   },
   signals: {
     label: "Signals", key: "signalFilters", tx: "TXs 1h", c1: "Last signal", sub: "sent to GMGN with the token signal request",
-    note: "Tokens GMGN fires one of the checked signal types on, Pump.fun launches on a pump curve or PumpSwap only (checked on each row). The signal route takes market cap and total fees only, so those are the bounds offered. Its rows carry no transactions; the column shows the last snapshot's 1h count.",
+    note: "Tokens GMGN fires one of the checked signal types on, Pump.fun launches on a pump curve or PumpSwap only (checked on each row). The signal route takes age, market cap and total fees only, so those are the bounds offered. Its rows carry no transactions; the column shows the last snapshot's 1h count.",
   },
 };
 
