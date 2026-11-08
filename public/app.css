@@ -204,7 +204,7 @@ h3 { margin: 8px 0 0; padding: 0 20px; font-size: 13px; line-height: 18px; font-
 .helpbtn:hover, .helpbtn:focus-visible, .helpbtn[aria-expanded=true] { color: var(--ink); }
 .helptip { display: none; position: absolute; top: 46px; left: 72px; z-index: 5; width: 340px; max-width: calc(100% - 88px); box-sizing: border-box; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--line3); border-radius: 14px; background: var(--inner); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); font-size: 13px; line-height: 19px; font-weight: 400; color: var(--body); }
 .helpbtn:hover + .helptip, .helpbtn:focus-visible + .helptip, .helpbtn[aria-expanded=true] + .helptip { display: flex; }
-.lookup { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 12px; border-radius: 12px; background: var(--panel); }
+.lookup-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 12px; border-radius: 12px; background: var(--panel); }
 .runs { display: flex; flex-direction: column; gap: 6px; }
 .runs button { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; background: transparent; text-align: left; cursor: pointer; }
 .runs button[aria-pressed=true] { background: var(--inner); border-color: var(--lime); }

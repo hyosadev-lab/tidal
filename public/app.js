@@ -592,7 +592,7 @@ function activityPanel(tr) {
         <span class="convbar" aria-hidden="true"><i style="width:${v.conviction ?? 0}%"></i></span><p style="margin:0;line-height:21px;color:var(--body)">${esc(v.thesis ?? "No thesis given.")}</p>
         <button class="link s13" style="align-self:flex-start;min-height:40px" data-a="openRun" data-v="${v.run}">Open run #${v.run} below</button></div>`
         : `<p class="boxed s13 soft" style="margin:0">${t.status === "holding" ? "Held, with no verdict on record." : "No agent activity on this token yet."} Status: ${esc(STATUS[t.status])}, ${esc(statusNote(t))}.</p>`}
-      ${t.lookups.length ? `<div class="stack" style="gap:4px"><span class="small muted" style="padding:4px 2px">Lookups the agent made</span>${t.lookups.map((l) => `<div class="lookup"><span class="mono dim" style="font-size:11px">${hms(l.at)}</span><span class="mono small">${esc(l.name)}</span><span class="small muted" style="margin-left:auto">${esc(l.text)}</span></div>`).join("")}</div>` : ""}
+      ${t.lookups.length ? `<div class="stack" style="gap:4px"><span class="small muted" style="padding:4px 2px">Lookups the agent made</span>${t.lookups.map((l) => `<div class="lookup-row"><span class="mono dim" style="font-size:11px">${hms(l.at)}</span><span class="mono small">${esc(l.name)}</span><span class="small muted" style="margin-left:auto">${esc(l.text)}</span></div>`).join("")}</div>` : ""}
     </div>`;
   }
   const live = new Set(tr.activity.map((e) => e.runId));
