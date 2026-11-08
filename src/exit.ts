@@ -71,9 +71,13 @@ const jupPx = new Map<string, Px>();
 let jupAt = 0;
 let priceDown = false;
 
-/** The pool feed's price, else Jupiter's; null once older than STALE_MS. Pure. */
+/**
+ * The pool feed's price, else Jupiter's; null once older than STALE_MS. Pure. Liquidity is the
+ * pool's quote reserve only: Jupiter's figure counts the whole pool (2–4× that), so a baseline
+ * taken off it read as a drain the moment the pool feed came in.
+ */
 export function pickPrice(r: pools.Reading | null, usd: number | undefined, fallback: Px | undefined, now: number): Px | null {
-  const px = r && usd ? { usd: r.price * usd, liquidityUsd: r.liquidity * usd, at: r.at, source: "pool" as const } : (fallback ?? null);
+  const px = r && usd ? { usd: r.price * usd, liquidityUsd: r.liquidity * usd, at: r.at, source: "pool" as const } : fallback ? { ...fallback, liquidityUsd: null } : null;
   return px && now - px.at <= STALE_MS ? px : null;
 }
 

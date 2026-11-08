@@ -31,6 +31,7 @@ test("prices: the pool's in USD first, Jupiter's when the pool has none, nothing
   const jup = { usd: 9, liquidityUsd: 1, at: 1_000, source: "Jupiter" as const };
   assert.deepEqual(pickPrice(r, 200, jup, 2_000), { usd: 0.01, liquidityUsd: 20_000, at: 1_000, source: "pool" });
   assert.equal(pickPrice(r, undefined, jup, 2_000)?.source, "Jupiter", "no USD for the quote token yet");
+  assert.equal(pickPrice(null, undefined, jup, 2_000)?.liquidityUsd, null, "Jupiter's liquidity is never a health baseline");
   assert.equal(pickPrice(null, undefined, undefined, 2_000), null);
   assert.equal(pickPrice(r, 200, jup, 31_001), null, "30 s without a reading is no price");
 });
