@@ -264,13 +264,16 @@ test("paper line: passed ideas take the one test in the order they passed, never
   assert.equal(move(1, "paper"), null);
 });
 
-test("daily research: due a day after the last research run starts, button runs included, never without a model key", () => {
+test("daily research: due a day after the last research run starts (before any, a day after the first track), never without a model key", () => {
   openDb(":memory:");
   const key = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "k";
   try {
     const t0 = Date.UTC(2026, 10, 2, 8, 0);
-    assert.equal(researchDue(t0), true); // never ran
+    assert.equal(researchDue(t0), false); // a fresh ledger: no track to read yet
+    insert("shadow_tracks", { token: "A", source: "signal", features: "{}", started_at: t0 - RESEARCH_EVERY_MS + 1 });
+    assert.equal(researchDue(t0), false); // never ran, the first track not a day old
+    assert.equal(researchDue(t0 + 1), true); // never ran, a day of tracks
     insert("agent_runs", { started_at: t0, model: "m", status: "ok", kind: "research" });
     insert("agent_runs", { started_at: t0 + 3_600_000, model: "m", status: "ok" }); // a trading run does not count
     assert.equal(nextResearchAt(), t0 + RESEARCH_EVERY_MS);

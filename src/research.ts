@@ -597,14 +597,19 @@ export const RESEARCH_EVERY_MS = 86_400_000;
 /** When this process last started an agent run: a run that dies before its agent_runs row must not be retried every check. */
 let agentStartedAt = 0;
 
-/** When the daily research run is next due: a day after the last research run started, one from the CLI included. */
-export function nextResearchAt(): number {
-  const last = (db.prepare("select max(started_at) at from agent_runs where kind = 'research'").get() as { at: number | null }).at ?? 0;
+/**
+ * When the daily research run is next due: a day after the last research run started, one from
+ * the CLI included. Before any, a day after the first track (none yet: a day from now), so a fresh
+ * ledger's first run has a day of tracks to read.
+ */
+export function nextResearchAt(now = Date.now()): number {
+  const at = (sql: string) => (db.prepare(sql).get() as { at: number | null }).at;
+  const last = at("select max(started_at) at from agent_runs where kind = 'research'") ?? at("select min(started_at) at from shadow_tracks") ?? now;
   return Math.max(last, agentStartedAt) + RESEARCH_EVERY_MS;
 }
 
 /** Whether the daily research run is due now, with a model key to run it. */
-export const researchDue = (now = Date.now()): boolean => !!process.env.OPENROUTER_API_KEY && nextResearchAt() <= now;
+export const researchDue = (now = Date.now()): boolean => !!process.env.OPENROUTER_API_KEY && nextResearchAt(now) <= now;
 
 // ── the research agent's own settings ─────────────────────────────────
 
