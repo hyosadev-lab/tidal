@@ -5,7 +5,7 @@ import { openDb } from "./db.ts";
 import { exitIdle, exitTick, POLL_MS } from "./exit.ts";
 import { log, short } from "./log.ts";
 import { startServer } from "./server.ts";
-import { judgeDue, researchDue, runCli, seedTries, stopCli } from "./research.ts";
+import { judgeDue, researchDue, runCli, stopCli } from "./research.ts";
 import { endRestarted, sampleSignals, shadowTick, STEP_MS } from "./shadow.ts";
 import { openPositions, sampleEquity } from "./trade.ts";
 
@@ -28,7 +28,6 @@ if (problem) {
 const db = openDb();
 const cfg = loadConfig();
 bootStopped();
-seedTries();
 const cut = endRestarted();
 if (cut) log("info", `${cut} shadow track(s) cut by the restart — left out of every count.`);
 const open = openPositions().length;

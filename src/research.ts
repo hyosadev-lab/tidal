@@ -556,57 +556,6 @@ export function tries(limit = 200): Try[] {
   }));
 }
 
-/** The rounds tried before hypotheses existed, as failed tries, so no model proposes them again. Once. */
-export function seedTries(): void {
-  if ((db.prepare("select count(*) n from hypotheses").get() as { n: number }).n) return;
-  const at = (d: string) => Date.parse(d);
-  const base = (sl: number, tp: number): Setup => ({ sl, tp: [{ at: tp, sell: 100 }], time_min: 30, drain: 55, slots: 2, size_sol: 0.1 });
-  const r2: Cond[] = [
-    { path: "migrated", op: "=", value: true },
-    { path: "pool_exchange", op: "=", value: "pump_amm" },
-    { path: "total_fee", op: ">=", value: 3 },
-    { path: "top_bundler_trader_percentage", op: "<=", value: 0.3 },
-    { path: "top_10_holder_rate", op: "<=", value: 0.25 },
-    { path: "flow.1m.change_pct", op: ">", value: 0 },
-  ];
-  const seeds = [
-    {
-      created_at: at("2026-10-28T00:00:00Z"), parent_id: null, exit: base(-40, 20),
-      rule: "Round 1: migrated pump_amm token, 1h swaps 1000–1999, price up over the last minute.",
-      conditions: [
-        { path: "migrated", op: "=", value: true }, { path: "pool_exchange", op: "=", value: "pump_amm" },
-        { path: "flow.1h.swaps", op: ">=", value: 1000 }, { path: "flow.1h.swaps", op: "<=", value: 1999 }, { path: "flow.1m.change_pct", op: ">", value: 0 },
-      ],
-      result: { n: 27, win: 52, note: "live paper 14 of 27 won, −$26.56; the backtest's 33 of 34 was the best-looking small subset, fitted to noise" },
-    },
-    {
-      created_at: at("2026-10-29T00:00:00Z"), parent_id: null, exit: base(-30, 15), conditions: r2,
-      rule: "Round 2: migrated pump_amm, total fee ≥ 3 SOL, bundlers ≤ 30%, top 10 ≤ 25%, price up over the last minute.",
-      result: { n: 7, win: 57, avg_pct: -3.1, note: "live 7 trades, 4 won, −3.1% a trade; calibrated 30s replay 70% won, −2.2% a trade" },
-    },
-    {
-      created_at: at("2026-10-29T12:00:00Z"), parent_id: 2, exit: base(-30, 15),
-      conditions: [...r2, { path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.7 } }],
-      rule: "Round 2 + ATH: as round 2, and price at least 70% of the all-time high.",
-      result: { win: 73, avg_pct: -1.6, note: "calibrated 30s replay 73% won, −1.6% a trade; live it would have kept 1 of 7 trades, which lost" },
-    },
-    {
-      created_at: at("2026-10-29T18:00:00Z"), parent_id: null, exit: base(-50, 15), conditions: [],
-      rule: "Round 3: the brief's GMGN signal counts add up to 10 or more.",
-      result: { n: 16, win: 70, note: "look-ahead: totals read later held signals fired after the decision; on the at-decision totals 69–71% won, −1.6% to +1.0% a trade, no dose-response" },
-    },
-  ];
-  tx(() =>
-    seeds.forEach((s, i) =>
-      insert("hypotheses", {
-        id: i + 1, created_at: s.created_at, author: "seed", parent_id: s.parent_id, rule: s.rule, conditions: JSON.stringify(s.conditions),
-        exit: JSON.stringify(s.exit), source: "decision", need_pct: 100 - 5 / (i + 1), result: JSON.stringify(s.result), status: "failed",
-        decided_at: s.created_at, notes: "tried before hypotheses existed; numbers from the 28–30 Oct research",
-      }),
-    ),
-  );
-}
-
 // ── running the CLI from the engine ───────────────────────────────────
 
 const CLI = fileURLToPath(new URL("./research-cli.ts", import.meta.url));

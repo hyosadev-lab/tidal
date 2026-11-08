@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyVersion, loadConfig, saveConfig, versionAt } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
-import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, FALLBACK_MODEL, nextResearchAt, register, researchDue, RESEARCH_EVERY_MS, researchModel, researchSettings, sameIdea, saveResearchSettings, seedTries, tries, validate, type Idea } from "../src/research.ts";
+import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, FALLBACK_MODEL, nextResearchAt, register, researchDue, RESEARCH_EVERY_MS, researchModel, researchSettings, sameIdea, saveResearchSettings, tries, validate, type Idea } from "../src/research.ts";
 import { agent, query } from "../src/research-cli.ts";
 import type { Point } from "../src/shadow.ts";
 
@@ -62,18 +62,6 @@ test("random picks: the share of draws an average beats, the same every time", (
   assert.equal(beats(49.5, pool, 30, 2000, 7), mid);
   assert.equal(drawsFor(1), 1000);
   assert.equal(drawsFor(20), 8000); // the bar's tail (0.25%) holds 20 draws
-});
-
-test("seeds: rounds 1–3 and the ATH check are failed tries 1–4, once; the next try's bar is higher", () => {
-  openDb(":memory:");
-  seedTries();
-  seedTries();
-  const t = tries();
-  assert.deepEqual(t.map((x) => [x.id, x.status]), [[4, "failed"], [3, "failed"], [2, "failed"], [1, "failed"]]);
-  assert.equal(t.find((x) => x.id === 3)!.parent_id, 2);
-  assert.ok(t.every((x) => x.author === "seed"));
-  const r = reg(idea(), "claude-code");
-  assert.deepEqual([r.id, r.need_pct], [5, 99]);
 });
 
 let seq = 0;
@@ -298,9 +286,8 @@ test("daily research: due a day after the last research run starts, button runs 
 
 test("register: a repeat of any try is refused, whatever its words; a variant is a new try", () => {
   openDb(":memory:");
-  seedTries();
   const two = { sl: -30, tp: [{ at: 15, sell: 50 }, { at: 40, sell: 50 }], time_min: 30 };
-  assert.equal(reg(idea({ exit: two }), "m").id, 5);
+  assert.equal(reg(idea({ exit: two }), "m").id, 1);
   const count = () => (db.prepare("select count(*) n from hypotheses").get() as { n: number }).n;
   // Other words, conditions reordered and repeated, take profits listed the other way round: the same try.
   const again = idea({
@@ -308,14 +295,11 @@ test("register: a repeat of any try is refused, whatever its words; a variant is
     conditions: [{ path: "good", op: "=", value: true }, { path: "good", op: "=", value: true }],
     exit: { ...two, tp: [...two.tp].reverse() },
   });
-  assert.equal(register(validate(again) as Idea, "m"), "already tried as #5 (testing): a try is never re-run as new; change a condition or the exit to try a variant");
-  // A seeded round counts too.
-  const r2 = tries().find((t) => t.id === 2)!;
-  assert.match(register(validate(idea({ conditions: r2.conditions, exit: { sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30 } })) as Idea, "m") as string, /already tried as #2 \(failed\)/);
-  assert.equal(count(), 5);
+  assert.equal(register(validate(again) as Idea, "m"), "already tried as #1 (testing): a try is never re-run as new; change a condition or the exit to try a variant");
+  assert.equal(count(), 1);
   // Another stop, or another source: a variant, so a new try with a higher bar.
-  assert.equal(reg(idea({ exit: { ...two, sl: -25 } }), "m").id, 6);
-  assert.equal(reg(idea({ exit: two, source: "signal" }), "m").id, 7);
+  assert.equal(reg(idea({ exit: { ...two, sl: -25 } }), "m").id, 2);
+  assert.equal(reg(idea({ exit: two, source: "signal" }), "m").id, 3);
   assert.notEqual(
     sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.7 } }], two, "decision"),
     sameIdea([{ path: "price_usd", op: ">=", value: { path: "ath_price_usd", times: 0.8 } }], two, "decision"),
