@@ -65,8 +65,9 @@ async function fetchTokens(cfg: Config): Promise<Fetched> {
   const c = gmgnClient();
   const [rank, sig] = await Promise.allSettled([
     c.getTrendingSwaps("sol", "1h", { order_by: "volume", limit: FEED_LIMIT, platforms: PUMP, ...rankFilters(cfg) }),
-    // One group per checked type (GMGN returns at most 50 rows a group); none checked: no request.
-    cfg.signalTypes.length ? c.getTokenSignalV2("sol", cfg.signalTypes.map((t) => ({ signal_type: [t], ...signalFilters(cfg) }))) : Promise.resolve([]),
+    // One group per checked type (GMGN returns at most 50 rows a group); none checked: one group with
+    // no type, GMGN's latest 50 events of any type (checked live, 8 Nov 2026).
+    c.getTokenSignalV2("sol", cfg.signalTypes.length ? cfg.signalTypes.map((t) => ({ signal_type: [t], ...signalFilters(cfg) })) : [{ ...signalFilters(cfg) }]),
   ]);
   const rows: FeedRow[] = [];
   const out: Fetched = { trending: [], signals: [], wash: new Set() };

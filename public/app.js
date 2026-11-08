@@ -704,7 +704,7 @@ function filtersDialog(d) {
 function sigTypes(on) {
   const box = ([t, l]) => `<label><input type="checkbox" value="${t}" ${on.includes(t) ? "checked" : ""}>${l}</label>`;
   return `<form id="sigtypes" class="sigtypes"><fieldset><legend class="s13 b">Signal types</legend>
-    <p class="s13 muted">One group of up to 50 rows per checked type, all in one request. Price types fill their 50 at once; the agent sees 10 tokens a run. None checked turns this list off.</p>
+    <p class="s13 muted">One group of up to 50 rows per checked type, all in one request. Price types fill their 50 at once; the agent sees 10 tokens a run. None checked: one group of GMGN's latest 50 rows of any type.</p>
     ${SIGNAL_TYPES.map(([g, ts]) => `<div class="grp"><span class="s13 muted">${g}</span><div class="chips">${ts.map(box).join("")}</div></div>`).join("")}</fieldset></form>`;
 }
 

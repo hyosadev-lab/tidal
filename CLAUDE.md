@@ -41,7 +41,7 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   pump_mayhem_agent): 1h trending (rank, by its `platforms` param; no row check of its own) and
   signals (`/v1/market/token_signal`, one group per type in `signalTypes` — checked in the Signals
   Filters modal, default smart money buy + pump claim, `SIGNAL_TYPES` = what the route takes (it
-  refuses 14–16), none = no request; `isPump` on the row, a pump curve or PumpSwap, as the route has
+  refuses 14–16), none = one untyped group, the latest 50 of any type; `isPump` on the row, a pump curve or PumpSwap, as the route has
   no platform param; every kept event → `token_signals`, `writeSignal`). Each has its own fetch filters (`filters` / `signalFilters`,
   `rankFilters` / `signalFilters()` — the signal route takes age, market cap and fee only — rechecked on
   the row by `inFilters`) and its own tab on the Trading page; a token on both has a row in each
