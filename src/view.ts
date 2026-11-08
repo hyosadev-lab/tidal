@@ -143,6 +143,7 @@ export function overview(cfg: Config, range: string, now: number, tz: string) {
     if (pct < dd.pct) dd = { pct, usd: r.e - peak, at: r.at };
   }
 
+  const fills = fillsBefore(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
   return {
     mode: cfg.mode,
     equity,
@@ -164,7 +165,8 @@ export function overview(cfg: Config, range: string, now: number, tz: string) {
     drawdown: dd,
     chart: chart(range, now, tz, cfg.mode),
     positions: pos,
-    fills: fills(midnight),
+    fills: fills.fills,
+    fillsMore: fills.more,
   };
 }
 
@@ -189,24 +191,32 @@ function chart(range: string, now: number, tz: string, mode: string) {
   return { range, from, pnl, equity };
 }
 
-function fills(since: number) {
-  return all<Record<string, any>>(
-    `select t.id, t.at, t.side, t.qty, t.usd, t.pnl_usd, t.reason, p.original_qty, coalesce(k.symbol, substr(p.token, 1, 6)) symbol,
+/** Every fill, newest first, a page at a time: the page after the fill (`at`, `id`), `more` = older ones remain. */
+export function fillsBefore(at: number, id: number, n = 50) {
+  const rows = all<Record<string, any>>(
+    `select t.id, t.at, t.side, t.qty, t.usd, t.pnl_usd, t.reason, p.original_qty, p.token, coalesce(k.symbol, substr(p.token, 1, 6)) symbol,
        r.at_pct rule_at
      from trades t join positions p on p.id = t.position_id join tokens k on k.address = p.token
      left join exit_rules r on r.id = t.exit_rule_id
-     where t.at >= ? order by t.at desc, t.id desc limit 200`,
-    since,
-  ).map((t) => ({
+     where (t.at, t.id) < (?, ?) order by t.at desc, t.id desc limit ?`,
+    at,
+    id,
+    n + 1,
+  );
+  const fills = rows.slice(0, n).map((t) => ({
+    id: t.id,
     at: t.at,
     side: t.side,
     symbol: t.symbol,
+    address: t.token,
+    mint: shortAddr(t.token),
     soldPct: t.side === "sell" ? (Number(t.qty) / Number(t.original_qty)) * 100 : null,
     usd: t.usd,
     pnl: t.pnl_usd,
     reason: t.reason,
     ruleAt: t.rule_at,
   }));
+  return { fills, more: rows.length > n };
 }
 
 // ── health ────────────────────────────────────────────────────────────

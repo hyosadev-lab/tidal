@@ -92,6 +92,9 @@ const S = {
   loadingOlder: false,
   runPages: { all: new Map(), failed: new Map() }, // runId → row, for today's runs paged in past the state's page
   runsMore: { all: null, failed: null },
+  fillPages: new Map(), // fillId → row, fills paged in past the state's first page
+  fillsMore: null, // whether older fills remain; null until the first page comes back
+  loadingFills: false,
   research: null, // /api/research, read every RESEARCH_MS while the Research page is open
   researchAt: 0,
   researchError: "",
@@ -140,6 +143,10 @@ async function poll() {
         const live = new Set(next.trading.runs[k].runs.map((r) => r.id));
         for (const r of prev.runs[k].runs) if (!live.has(r.id)) S.runPages[k].set(r.id, r);
       }
+    if (S.fillPages.size && S.data) { // a fill that rolls out of the state's page stays listed
+      const live = new Set(next.overview.fills.map((f) => f.id));
+      for (const f of S.data.overview.fills) if (!live.has(f.id)) S.fillPages.set(f.id, f);
+    }
     S.data = next;
     S.skew = next.now - Date.now();
     S.seenAt = Date.now();
@@ -232,6 +239,7 @@ function render(force = false) {
   }
   paint($("#modal"), S.confirmStop ? stopDialog(d) : S.filtersOpen ? filtersDialog(d) : "");
   nearEnd($('[data-scroll="agent"]')); // a list too short to scroll still pages in until it fills the box
+  moreFills($('[data-scroll="fills"]'));
 }
 
 // ── header, banners, stop dialog ──────────────────────────────────────
@@ -338,16 +346,25 @@ function overview(d) {
       <ol class="alerts">${d.health.alerts.length ? d.health.alerts.map((a) => `<li><span class="mono small muted">${hms(a.at)}</span><span class="tag ${esc(a.level)}">${esc(a.level)}</span><span>${esc(a.msg)}</span></li>`).join("") : `<li class="muted">None.</li>`}</ol></div>
     </section>
     <section class="card flush" style="flex:3 1 560px;padding-bottom:0" aria-labelledby="fills-title">
-      <div class="head"><span class="ico">${I.swap}</span><h2 id="fills-title">Fills</h2><span class="s13 muted">every swap today, newest first</span></div>
-      ${o.fills.length ? `<div class="vscroll fade" data-scroll="fills" tabindex="0" role="region" aria-label="Fills list"><table style="min-width:620px"><thead><tr><th>Time</th><th>Side</th><th>Token</th><th class="r">Sold</th><th class="r">USD</th><th class="r">PnL</th><th>Reason</th></tr></thead><tbody>${o.fills.map(fillRow).join("")}</tbody></table></div>` : `<p class="empty">No fills today.</p>`}
+      <div class="head"><span class="ico">${I.swap}</span><h2 id="fills-title">Fills</h2><span class="s13 muted">every swap, newest first</span></div>
+      ${o.fills.length ? `<div class="vscroll fade" data-scroll="fills" tabindex="0" role="region" aria-label="Fills list"><table style="min-width:640px"><thead><tr><th>Time</th><th>Side</th><th>Token</th><th class="r">Sold</th><th class="r">USD</th><th class="r">PnL</th><th>Reason</th></tr></thead><tbody>${fillList(o).map(fillRow).join("")}</tbody></table>
+        <p class="s13 muted" style="margin:0;padding:10px 16px">${(S.fillsMore ?? o.fillsMore) ? "Loading earlier fills…" : "That is every fill."}</p></div>` : `<p class="empty">No fills yet.</p>`}
     </section>
   </div>`;
 }
 
 const reasonText = (f) => (f.reason === "tp" || f.reason === "sl") && fin(f.ruleAt) ? `${f.reason} ${pct(f.ruleAt, 0)}` : f.reason;
 
+/** The state's first page, then the fills paged in below it. */
+const fillList = (o) => {
+  const top = new Set(o.fills.map((f) => f.id));
+  return [...o.fills, ...[...S.fillPages.values()].filter((f) => !top.has(f.id)).sort((a, b) => b.at - a.at || b.id - a.id)];
+};
+
 function fillRow(f) {
-  return `<tr><td class="mono small muted">${hms(f.at)}</td><td><span class="side ${esc(f.side)}">${esc(f.side)}</span></td><td class="b">${esc(f.symbol)}</td>
+  const date = new Date(f.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return `<tr><td class="nowrap"><span class="stack"><span class="mono small muted">${hms(f.at)}</span><span class="small dim">${date}</span></span></td><td><span class="side ${esc(f.side)}">${esc(f.side)}</span></td>
+    <td><span class="stack"><span class="b">${esc(f.symbol)}</span><span class="mono small muted">${mintCopy(f.address, f.mint)}</span></span></td>
     <td class="r ${f.soldPct === null ? "dim" : ""}">${f.soldPct === null ? "—" : Math.round(f.soldPct) + "%"}</td><td class="r">${usd(f.usd)}</td>
     <td class="r ${f.pnl === null ? "dim" : sign(f.pnl) + " b"}">${f.pnl === null ? "—" : susd(f.pnl)}</td><td class="soft">${esc(reasonText(f))}</td></tr>`;
 }
@@ -1213,6 +1230,27 @@ async function moreRuns(tr) {
   render();
 }
 document.addEventListener("scroll", (e) => e.target.dataset?.scroll === "agent" && nearEnd(e.target), true);
+
+/** The Fills table's lazy load: once the box nears its end, the next page of older fills. */
+async function moreFills(box) {
+  const o = S.data?.overview;
+  if (!box || !o || S.loadingFills || !(S.fillsMore ?? o.fillsMore)) return;
+  if (box.scrollTop + box.clientHeight < box.scrollHeight - 200) return;
+  const last = fillList(o).at(-1);
+  S.loadingFills = true;
+  try {
+    const page = await call(`/api/fills?at=${last.at}&id=${last.id}`);
+    for (const f of page.fills) S.fillPages.set(f.id, f);
+    S.fillsMore = page.more;
+  } catch (e) {
+    S.msg = { ok: false, text: e.message };
+    S.fillsMore = false; // no retry loop on a failing endpoint; the next page load tries again
+  } finally {
+    S.loadingFills = false;
+  }
+  render();
+}
+document.addEventListener("scroll", (e) => e.target.dataset?.scroll === "fills" && moreFills(e.target), true);
 
 // ── actions ───────────────────────────────────────────────────────────
 

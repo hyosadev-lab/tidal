@@ -4,7 +4,7 @@ import { sanitize } from "../src/config.ts";
 import { status } from "../src/control.ts";
 import { db, openDb } from "../src/db.ts";
 import { buyingPaused } from "../src/trade.ts";
-import { activityBefore, dayStart, overview, runsBefore, trading, zone } from "../src/view.ts";
+import { activityBefore, dayStart, fillsBefore, overview, runsBefore, trading, zone } from "../src/view.ts";
 
 test("dayStart: the viewer's midnight, ahead of and behind UTC, across DST", () => {
   assert.equal(dayStart(Date.UTC(2026, 9, 28, 7, 58), "Asia/Jakarta"), Date.UTC(2026, 9, 27, 17)); // 14:58 WIB
@@ -108,4 +108,23 @@ test("the token list: a tab per list, a token on both in both, a wait off both u
   const s = lists.signals.rows[1]!;
   assert.deepEqual([s.buys, s.signal, s.signalAt], [null, "pump_claim", now - 120_000]); // the latest event on record
   status.fetch = { at: 0, rows: [] };
+});
+
+test("Fills pages through every fill, any day, newest first, ties by id", () => {
+  openDb(":memory:");
+  db.exec("pragma foreign_keys = off");
+  db.prepare("insert into tokens (address, first_seen_at, symbol) values ('MintAddress1234', 1, 'AODF')").run();
+  db.prepare(
+    "insert into positions (id, token, entry_snapshot_id, mode, status, opened_at, entry_price_usd, cost_usd, original_qty, qty) values (1, 'MintAddress1234', 1, 'paper', 'closed', 1, 1, 9, '100', '0')",
+  ).run();
+  const fill = (at: number) => db.prepare("insert into trades (position_id, at, side, qty, price_usd, usd, reason) values (1, ?, 'buy', '100', 1, 9, 'entry')").run(at);
+  for (const at of [1, 2, 2, 3, Date.UTC(2020, 0, 1)]) fill(at); // ids 1..5; ids 2 and 3 share an at
+  const ids = (p: ReturnType<typeof fillsBefore>) => p.fills.map((f) => f.id);
+  const p1 = fillsBefore(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 2);
+  assert.deepEqual([ids(p1), p1.more], [[5, 4], true]);
+  assert.deepEqual([p1.fills[0]!.address, p1.fills[0]!.mint, p1.fills[0]!.symbol], ["MintAddress1234", "Mint…1234", "AODF"]);
+  const p2 = fillsBefore(p1.fills[1]!.at, p1.fills[1]!.id, 2);
+  assert.deepEqual([ids(p2), p2.more], [[3, 2], true]);
+  const p3 = fillsBefore(p2.fills[1]!.at, p2.fills[1]!.id, 2);
+  assert.deepEqual([ids(p3), p3.more], [[1], false]);
 });

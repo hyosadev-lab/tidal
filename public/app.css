@@ -146,7 +146,7 @@ th.r, td.r { text-align: right; }
 .split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 6px; }
 /* the chart grows with its card, so it fills the row when Open positions is taller */
 .card > figure { flex: 1 1 auto; display: flex; flex-direction: column; }
-.plot { position: relative; flex: 1 1 auto; min-height: 220px; margin: 20px 4px 0 56px; }
+.plot { position: relative; flex: 1 1 auto; min-height: 280px; margin: 20px 4px 0 56px; }
 .plot.eq { margin-right: 84px; margin-left: 64px; }
 .plot .yl { position: absolute; right: calc(100% + 12px); transform: translateY(-50%); font-size: 12px; line-height: 16px; color: var(--dim); white-space: nowrap; }
 .plot .gl { position: absolute; left: 0; right: 0; height: 1px; background: var(--line); }

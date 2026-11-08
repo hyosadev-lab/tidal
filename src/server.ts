@@ -156,6 +156,12 @@ export function startServer(o: { port: number; host: string; token?: string }): 
         return json(res, 200, view.runsBefore(before, since, url.searchParams.get("failed") === "1"));
       }
       if (req.method === "GET" && path === "/api/research") return json(res, 200, view.research(Date.now(), view.zone(url.searchParams.get("tz"))));
+      if (req.method === "GET" && path === "/api/fills") {
+        const at = Number(url.searchParams.get("at"));
+        const id = Number(url.searchParams.get("id"));
+        if (!Number.isSafeInteger(at) || !Number.isSafeInteger(id)) return json(res, 400, { error: "at and id must be integers" });
+        return json(res, 200, view.fillsBefore(at, id));
+      }
       if (req.method === "GET" && path === "/api/token")
         return json(res, 200, view.tokenDetail(String(url.searchParams.get("address") ?? ""), loadConfig(), Date.now()));
 
