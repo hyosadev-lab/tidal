@@ -82,20 +82,26 @@ test("research: 1 track per token, bought vs all decided, conviction bands, sour
   tracked("signal", "D", 9); // D's second type: its first counts
   tracked("rank", "E", 2); // sampled before 5 Nov: in today's total, no row of its own
   insert("shadow_tracks", { token: "F", source: "signal", features: "{}", started_at: now - 1, ended_at: now, end_reason: "unreadable" });
+  // The counts cover the last 24 hours, not the calendar day: G (23h ago) is in, H (25h ago) is out.
+  insert("shadow_tracks", { token: "G", source: "signal", features: "{}", started_at: now - 23 * 3_600_000, ended_at: now, end_reason: "done" });
+  insert("shadow_tracks", { token: "H", source: "signal", features: "{}", started_at: now - 25 * 3_600_000, ended_at: now, end_reason: "unreadable" });
+  insert("shadow_tracks", { token: "I", source: "signal", features: "{}", started_at: now - 1 }); // still running
 
-  const r = research(now, "UTC");
+  const r = research(now);
   assert.deepEqual(r.candidates.decided, { avg: (-10 + 4 - 20) / 3, n: 3 });
   assert.deepEqual(r.candidates.bought, { avg: (50 + 4) / 2, n: 2 });
   assert.deepEqual(r.conviction.map((b) => b.n), [1, 1, 0, 1]);
   assert.deepEqual(r.sources.map((s) => [s.source, s.avg, s.n]), [["decision", (-10 + 4 - 20) / 3, 3], ["signal", -4, 1]]);
-  assert.deepEqual([r.today.done, r.today.unreadable, r.today.readable], [7, 1, 7 / 8]);
-  assert.deepEqual(r.today.bySource.map((x) => [x.source, x.started, x.readable]), [["decision", 4, 1], ["signal", 3, 2 / 3]]);
+  const d = r.last24h;
+  assert.deepEqual([d.started, d.done, d.rug, d.unreadable, d.restart, d.open, d.readable], [10, 8, 0, 1, 0, 1, 8 / 9]);
+  assert.equal(d.started, d.done + d.rug + d.unreadable + d.restart + d.open); // the breakdown adds up to the headline
+  assert.deepEqual(d.bySource.map((x) => [x.source, x.started, x.readable]), [["decision", 4, 1], ["signal", 5, 3 / 4]]);
   assert.equal(r.agent.last, null);
 
   // The research agent's closing message is its report; a model wrote it, the page escapes it.
   const msgs = [{ role: "user", content: "brief" }, { role: "assistant", content: "Looked at fees.\nRegistered nothing." }, { role: "tool", content: "x" }];
   insert("agent_runs", { started_at: now, finished_at: now, model: "m", status: "ok", kind: "research", messages: JSON.stringify(msgs) });
-  assert.equal(research(now, "UTC").agent.last!.report, "Looked at fees.\nRegistered nothing.");
+  assert.equal(research(now).agent.last!.report, "Looked at fees.\nRegistered nothing.");
   assert.deepEqual(r.versions.map((v) => [v.label, v.current, v.trades]), [["v1", true, 0]]);
 
   // A trade counts for the version it was bought under, never for the time it falls in; none counts nowhere.
@@ -110,5 +116,5 @@ test("research: 1 track per token, bought vs all decided, conviction bands, sour
   };
   closed("A", now - 5_000);
   closed("B", null);
-  assert.deepEqual(research(now, "UTC").versions.map((v) => [v.label, v.current, v.trades]), [["v2", false, 0], ["v1", true, 1]]);
+  assert.deepEqual(research(now).versions.map((v) => [v.label, v.current, v.trades]), [["v2", false, 0], ["v1", true, 1]]);
 });

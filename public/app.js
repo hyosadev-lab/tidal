@@ -164,7 +164,7 @@ async function poll() {
 async function loadResearch() {
   S.researchAt = Date.now();
   try {
-    S.research = await call(`/api/research?tz=${encodeURIComponent(TZ)}`);
+    S.research = await call("/api/research");
     S.researchError = "";
   } catch (e) {
     S.researchError = e.message;
@@ -568,6 +568,11 @@ function trading(d) {
 const helpTip = (id, label, html) =>
   `<button class="helpbtn" data-a="help" data-v="${id}" aria-label="${label}" aria-describedby="${id}" aria-expanded="${S.help === id}"><span aria-hidden="true">${I.help}</span></button><div class="helptip" id="${id}" role="tooltip">${html}</div>`;
 
+const SHADOW_HELP = `<b style="color:var(--ink)">What shadow tracking follows</b>
+  <span>Every token the agent decides on (buy, wait or skip) is followed for 60 minutes off its pool's own reserves, bought or not, so every candidate gets an outcome.</span>
+  <span><b style="color:var(--ink)">Sampled</b> · GMGN signal events of the types the Signals list does not fetch, at most 20 open at a time. Never bought: they show whether another source is worth researching.</span>
+  <span>One RPC read every 2s prices every open track at once. It keeps running while trading is stopped, so a track that started still gets its full hour.</span>`;
+
 const AGENT_HELP = `<b style="color:var(--ink)">What the agent does</b>
   <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h trending or signal list (smart money buy, pump claim; Pump.fun launches only), or a wait that has ended. Up to 10 tokens per run.</span>
   <span>In a run it may look up holders, top traders, candles or the dev's earlier tokens, then gives each token a verdict:</span>
@@ -773,12 +778,13 @@ function researchTiles(r) {
   const c = r.candidates;
   const gap = fin(c.bought.avg) && fin(c.decided.avg) ? c.bought.avg - c.decided.avg : null;
   const cal = r.calibration;
-  const t = r.today;
+  const t = r.last24h;
   const o = r.tracking;
   const fr = fin(r.friction) ? `${r.friction.toFixed(1)}%` : "the measured friction";
   const tile = (icon, title, body, foot) =>
     `<div class="tile"><div class="inline"><span class="ico">${SVG(icon)}</span><span style="font-size:15px;font-weight:500">${title}</span></div>${body}<span class="small muted" style="padding:0 6px">${foot}</span></div>`;
-  const readable = (x) => (x === null ? "—" : Math.round(x * 100) + "%");
+  // One decimal, and never "100%" while a track was unreadable.
+  const readable = (x) => (x === null ? "—" : x === 1 ? "100%" : Math.min(99.9, x * 100).toFixed(1) + "%");
   const judged = cur ? Math.min(cur.trades, r.judgeN) : 0;
   return `<div class="rgrid">
     <div class="tile lime">
@@ -799,12 +805,12 @@ function researchTiles(r) {
     ${tile(R_ICON.drift, "Drift by source",
       r.sources.some((s) => s.n) ? rbars(r.sources, (s) => SOURCE[s.source], "84px") : `<p class="empty" style="padding:0 6px">No track has finished 30 minutes yet.</p>`,
       "30-min return before costs, last 7 days, 1 track per token · a source is worth researching only above 0 after size impact and friction")}
-    ${tile(R_ICON.shadow, "Shadow tracking",
-      `<div class="in"><span class="inline" style="align-items:baseline"><span class="num">${o.decision + o.signal}</span><span class="s13 muted">tracking now · one RPC read every 2s</span></span>
-      <span class="s13 muted">${ink(o.decision)} decided · ${ink(o.signal)} of ${r.sampleMax} sampled from the signal types the Signals list does not fetch</span>
-      <span class="s13 muted">${ink(t.started)} tracks today · ${ink(readable(t.readable))} readable on-chain (${t.bySource.map((x) => `${SOURCE[x.source]} ${readable(x.readable)}`).join(", ")})</span>
-      <span class="s13 muted">ended: ${ink(t.done)} done · <b class="neg">${t.rug}</b> rug · <b class="warn">${t.unreadable}</b> unreadable · <b class="warn">${t.restart}</b> restart</span></div>`,
-      "pool reserves, 60 min each · follows curve → PumpSwap · a rug counts as a result; only restarts leave the counts")}
+    ${tile(R_ICON.shadow, `Shadow tracking${helpTip("shadow-help", "About shadow tracking", SHADOW_HELP)}`,
+      `<div class="in"><span class="inline" style="align-items:baseline"><span class="num">${t.started.toLocaleString("en-US")}</span><span class="s13 muted">tracks · last 24h</span></span>
+      <span class="s13 muted">${ink(t.done)} done · <b class="neg">${t.rug}</b> rug · <b class="warn">${t.unreadable}</b> unreadable · <b class="warn">${t.restart}</b> restart · ${ink(t.open)} running</span>
+      <span class="s13 muted">${ink(readable(t.readable))} readable on-chain (${t.bySource.map((x) => `${SOURCE[x.source]} ${readable(x.readable)}`).join(", ")})</span>
+      <span class="s13 muted inline" style="align-items:flex-start;gap:8px;margin-top:6px;padding-top:10px;border-top:1px solid var(--line)"><span class="dot" style="margin-top:5px;background:${o.decision + o.signal ? "var(--lime)" : "var(--dim)"}"></span><span>${ink("Now")} ${ink(o.decision + o.signal)} running (${ink(o.decision)} decided · ${ink(o.signal)} of ${r.sampleMax} sampled) · one RPC read every 2s</span></span></div>`,
+      "pool reserves, 60 min each · follows curve → PumpSwap · a rug counts as a result; unreadable and restart tracks are left out of the returns")}
     ${tile(R_ICON.calibration, "Replay calibration",
       `<div class="in"><span class="inline" style="align-items:baseline"><span class="num">${cal.n ? Math.round((cal.agree / cal.n) * 100) + "%" : "—"}</span><span class="s13 muted">agree</span></span>
       <span class="s13 muted">${cal.n ? `${ink(`${cal.agree} of ${cal.n}`)} real trades replay to the same win or loss · gap after size impact ${ink(pct(cal.gapPct, 1))}` : "No closed trade has a track of its own yet."}</span></div>`,

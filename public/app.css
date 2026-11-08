@@ -134,7 +134,7 @@ th.r, td.r { text-align: right; }
 .badge { display: inline-flex; align-items: center; height: 28px; padding: 0 14px; border-radius: 14px; background: var(--violet); color: #161618; font-size: 13px; font-weight: 600; }
 .badge.live { background: var(--lime); }
 .tiles { flex: 999 1 660px; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
-.tile { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; padding: 14px 14px 18px; background: var(--card); border-radius: 24px; }
+.tile { position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 16px; padding: 14px 14px 18px; background: var(--card); border-radius: 24px; }
 .tile.lime { background: var(--lime); color: #161618; } .tile.lime .ico { border-color: rgba(22, 22, 24, 0.3); }
 .tile .in { display: flex; flex-direction: column; gap: 6px; padding: 0 6px; }
 .tile .num { font-size: 36px; line-height: 44px; font-weight: 500; }

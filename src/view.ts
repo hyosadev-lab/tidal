@@ -581,7 +581,7 @@ const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.l
  * seen in a sampled feed (shadow tracks of the last 7 days, readable pools, 1 track per token:
  * its first), how well the replay matches real trades, and each settings version's closed trades.
  */
-export function research(now: number, tz: string) {
+export function research(now: number) {
   const rows = all<{ token: string; source: Source; r: number; action: string | null; conviction: number | null }>(
     `select s.token, s.source, s.ret_30m r, d.action, d.conviction from shadow_tracks s left join decisions d on d.id = s.decision_id
      where s.started_at >= ? and s.end_reason in ('done', 'rug') and s.ret_30m is not null order by s.id`,
@@ -597,9 +597,9 @@ export function research(now: number, tz: string) {
 
   const ends = all<{ source: Source; end_reason: string | null; n: number }>(
     "select source, end_reason, count(*) n from shadow_tracks where started_at >= ? group by 1, 2",
-    dayStart(now, tz),
+    now - DAY,
   );
-  /** Today's tracks by how they ended, for one source or all; readable = done + rug of those that ended. */
+  /** The last 24 hours' tracks by how they ended (open = still running), for one source or all; readable = done + rug of those that ended. */
   const coverage = (source?: Source) => {
     const rows = ends.filter((e) => !source || e.source === source);
     const count = (k: string | null) => rows.filter((e) => e.end_reason === k).reduce((t, e) => t + e.n, 0);
@@ -634,7 +634,7 @@ export function research(now: number, tz: string) {
     judgeN: JUDGE_N,
     sampleMax: SAMPLE_MAX,
     tracking: tracking(),
-    today: { ...coverage(), bySource: (["decision", "signal"] as const).map((s) => ({ source: s, ...coverage(s) })) },
+    last24h: { ...coverage(), bySource: (["decision", "signal"] as const).map((s) => ({ source: s, ...coverage(s) })) },
     candidates: { bought: stat(first((r) => r.source === "decision" && r.action === "buy")), decided: stat(decided) },
     conviction: bands.map(([lo, hi, label]) => ({ label, ...stat(decided.filter((r) => r.conviction !== null && r.conviction >= lo && r.conviction < hi)) })),
     sources: (["decision", "signal"] as const).map((s) => ({ source: s, ...stat(first((r) => r.source === s)) })),
