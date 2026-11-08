@@ -1,5 +1,5 @@
 import type { Message } from "./agent/llm.ts";
-import { loadConfig, type Config } from "./config.ts";
+import { loadConfig, versionAt, type Config } from "./config.ts";
 import { getRun, status, type FeedRow } from "./control.ts";
 import { db } from "./db.ts";
 import { LISTS, tokenStatus, type List } from "./entry.ts";
@@ -8,7 +8,7 @@ import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
 import { signalName } from "./snapshot.ts";
 import {
-  BAR_N, cliRunning, exitFields, FALLBACK_MODEL, friction, inTest, nextResearchAt, paperLine, promptOf, RESEARCH_STEPS, researchModel,
+  BAR_N, cliRunning, exitFields, FALLBACK_MODEL, friction, inTest, nextResearchAt, paperLine, promptOf, RESEARCH_STEPS, researchModel, settingsHold,
   researchSettings, tries, usedBy,
 } from "./research.ts";
 import { SAMPLE_MAX, tracking, type Source } from "./shadow.ts";
@@ -600,13 +600,16 @@ export function research(now: number, tz: string) {
     };
   };
 
+  // Versions: one per Apply; a trade counts for the one it was bought under, none for a trade bought with none current.
   const marks = all<{ at: number }>("select at from config_history order by at");
-  const closed = all<{ opened_at: number; cost: number; pnl: number | null }>(
-    `select p.opened_at, p.cost_usd cost, (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
-     from positions p where p.status = 'closed' order by p.opened_at`,
+  const cfg = loadConfig();
+  const cur = versionAt(cfg);
+  const closed = all<{ config_at: number; cost: number; pnl: number | null }>(
+    `select p.config_at, p.cost_usd cost, (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
+     from positions p where p.status = 'closed' and p.config_at is not null`,
   );
-  const score = (label: string, at: number | null, from: number, to: number, current: boolean) => {
-    const ps = closed.filter((p) => p.opened_at >= from && p.opened_at < to && p.cost > 0);
+  const score = (label: string, at: number, current: boolean) => {
+    const ps = closed.filter((p) => p.config_at === at && p.cost > 0);
     const pcts = ps.map((p) => ((p.pnl ?? 0) / p.cost) * 100);
     return { label, at, current, trades: ps.length, won: pcts.filter((x) => x > 0).length, avgPct: mean(pcts), totalUsd: ps.reduce((t, p) => t + (p.pnl ?? 0), 0) };
   };
@@ -614,8 +617,7 @@ export function research(now: number, tz: string) {
     "select id, paper_config_at, live_config_at from hypotheses where paper_config_at is not null or live_config_at is not null",
   );
   const from = (at: number) => tested.flatMap((h) => [...(h.paper_config_at === at ? [`#${h.id} paper`] : []), ...(h.live_config_at === at ? [`#${h.id} live`] : [])]).join(", ") || null;
-  const versions = marks.map((m, i) => ({ ...score(`v${i + 1}`, m.at, m.at, marks[i + 1]?.at ?? Infinity, i === marks.length - 1), from: from(m.at) })).reverse();
-  if (marks.length && closed.some((p) => p.opened_at < marks[0]!.at)) versions.push({ ...score("earlier", null, 0, marks[0]!.at, false), from: null });
+  const versions = marks.map((m, i) => ({ ...score(`v${i + 1}`, m.at, m.at === cur), from: from(m.at) })).reverse();
 
   return {
     now,
@@ -630,7 +632,7 @@ export function research(now: number, tz: string) {
     versions: versions.slice(0, 12),
     barN: BAR_N,
     friction: friction().pct,
-    mode: loadConfig().mode,
+    mode: cfg.mode,
     // One test at a time: the idea in it, and the passed ideas waiting, in the order they passed.
     inTest: inTest() ?? null,
     line: paperLine(),
@@ -640,9 +642,11 @@ export function research(now: number, tz: string) {
         ...h,
         proposal: {
           prompt: promptOf(h.conditions),
-          fields: exitFields(loadConfig(), h.exit),
-          savedAfter: (marks.at(-1)?.at ?? 0) > (h.decided_at ?? 0),
-          usedBy: marks.length ? usedBy(marks.at(-1)!.at, h.id) : null,
+          fields: exitFields(cfg, h.exit),
+          // Settings hold its prompt and exits (fits), as the current version (holds): Apply has nothing left to do.
+          fits: settingsHold(cfg, h.conditions, h.exit),
+          holds: cur !== null && settingsHold(cfg, h.conditions, h.exit),
+          usedBy: cur !== null ? usedBy(cur, h.id) : null,
           decision: h.source === "decision",
         },
       }),

@@ -67,9 +67,11 @@ const ACTIONS: Record<string, (body: any) => Promise<{ ok: boolean; [k: string]:
   // Research: the operator's move on an idea. The research agent runs on its own, once a day (index.ts).
   "/api/research/move": async (b) => {
     const to = String(b?.to ?? "");
-    if (!["paper", "cancel", "live", "keep", "drop", "undrop"].includes(to)) return { ok: false, error: "unknown move" };
+    if (!["apply", "paper", "cancel", "live", "keep", "drop", "undrop"].includes(to)) return { ok: false, error: "unknown move" };
     const err = move(Number(b?.id), to as Move);
-    return err ? { ok: false, error: err } : { ok: true };
+    if (err) return { ok: false, error: err };
+    if (to === "apply") (wake(), log("info", `Settings: idea #${Number(b?.id)}'s prompt and exits applied.`));
+    return { ok: true };
   },
   "/api/close": async (b) => {
     const err = await control.closePosition(Number(b?.id));

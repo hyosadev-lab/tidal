@@ -771,7 +771,7 @@ function researchTiles(r) {
       <div class="in" style="gap:8px">${meter(judged, r.judgeN, "dark", "Trades before a verdict")}
         <span class="small muted"><b style="color:#161618">${judged} of ${r.judgeN}</b> trades before it can be judged</span>
         <span class="small muted">Once an idea is live, the decay watch: over a rolling ${r.judgeN} trades, avg ≤ 0 or a fill gap over ${fr} tells you.</span></div>`
-        : `<div class="in"><span class="s13 muted">No settings saved yet.</span></div>`}
+        : `<div class="in"><span class="s13 muted">${r.versions.length ? "Settings match no version: trades bought now count for none." : "No version yet: Apply on a passed idea records one."}</span></div>`}
     </div>
     ${tile(R_ICON.bought, "Bought vs. all candidates",
       `<div class="in"><span class="num">${gap === null ? "—" : `${gap < 0 ? MINUS : "+"}${Math.abs(gap).toFixed(1)} pts`}</span><span class="s13 muted">bought <b class="${sign(c.bought.avg)}">${pct(c.bought.avg)}</b> (n ${kn(c.bought.n)}) · all decided <b class="${sign(c.decided.avg)}">${pct(c.decided.avg)}</b> (n ${kn(c.decided.n)}), 30 min after the decision</span></div>`,
@@ -908,10 +908,10 @@ function ideaStage(h, r) {
       <span class="s13">${held
         ? `Held on ${s} fills: ${t.n} trades, ${Math.round(t.win)}% won, ${pct(t.avg_pct)} a trade, beat ${t.rnd_pct.toFixed(1)}% of random picks.`
         : `${n} of ${r.barN} ${s} trades. At ${r.barN}, code judges them on the forward test’s bar, with ${s} fills, and keeps or drops it.`}${
-        t.paused_at ? ` Paused: Settings were saved again ${esc(when(t.paused_at))}, so later trades are another version.` : ""}${fin(t.fill_gap_pct) ? ` Fill gap ${pct(t.fill_gap_pct, 2)} against the quote.` : ""}</span>
+        t.paused && !held ? ` Paused: Settings no longer match ${esc(ver ?? "its version")}, so trades bought now count for no test. It goes on once they match again.` : ""}${fin(t.fill_gap_pct) ? ` Fill gap ${pct(t.fill_gap_pct, 2)} against the quote.` : ""}</span>
       ${a ? `<div class="inline small" style="flex-wrap:wrap;gap:4px 16px"><span>Agent vs. rule: <b>${a.bothBuy} of ${a.agentBuys}</b> buys match the rule</span><span><b>${a.ruleOnly}</b> rule ${a.ruleOnly === 1 ? "match" : "matches"} the agent skipped</span></div>` : ""}
       <span class="s13">${s === "paper"
-        ? held ? "A small live stake is your call: switch Settings to live at a small size, save, then press Go live." : "If it holds, a small live stake comes next: 30 trades, with the fill gap against the paper quote measured. Switching it on, and full size, stay your call in Settings."
+        ? held ? "A small live stake is your call: switch Settings to live at a small size and save, then press Go live: it records them as the stake's version." : "If it holds, a small live stake comes next: 30 trades, with the fill gap against the paper quote measured. Switching it on, and full size, stay your call in Settings."
         : held ? "Held live. Keep it to leave it as the prompt; full size stays your call in Settings, and the decay watch then follows it." : "Full size, and keeping it, stay your call in Settings."}</span>
       ${waits ? `<span class="small">${waits}</span>` : ""}
       <div class="inline" style="flex-wrap:wrap;gap:8px">${held ? mv(h, s === "paper" ? "live" : "keep", s === "paper" ? "Go live" : "Keep", "lime") : mv(h, "cancel", "Cancel test", "amberline")}${mv(h, "drop", "Drop", "stop")}</div>
@@ -932,27 +932,27 @@ function ideaStage(h, r) {
   const fieldsOk = p.fields.every((f) => f.from === f.to);
   const pos = r.line.indexOf(h.id);
   const place = `#${h.id} is ${pos + 1} of ${r.line.length} in line, in the order they passed.`;
-  const ready = p.decision && !r.inTest && pos === 0 && r.mode === "paper" && p.savedAfter && !p.usedBy && fieldsOk;
+  const turn = p.decision && !r.inTest && pos === 0 && r.mode === "paper";
+  const ready = turn && p.holds && !p.usedBy;
   const [dot, guard] = !p.decision
     ? ["amber", `This idea's tokens come from ${SOURCE[h.source]}, which the engine does not brief to the agent: it cannot be tested on paper yet.`]
     : r.inTest ? ["amber", `#${r.inTest.id} is ${r.inTest.status === "paper" ? "on paper" : "on its live stake"}: one test at a time. ${place}`]
     : pos > 0 ? ["amber", `#${r.line[0]} passed first and goes on paper first. ${place} Drop #${r.line[0]} to let this one go ahead.`]
-    : r.mode !== "paper" ? ["amber", "Settings are in live mode. Switch them to paper, paste the prompt, set the exit fields above and save them together first."]
-    : !p.savedAfter ? ["amber", `Settings still hold ${cur?.label ?? "an older version"}${cur ? ` from ${when(cur.at)}` : ""}, older than this result. Paste the prompt, set the exit fields above and save them together first.`]
-    : p.usedBy ? ["amber", `Settings ${cur?.label ?? ""} are the version #${p.usedBy} was tested on. Paste this prompt, set the exit fields above and save them together first.`]
-    : !fieldsOk ? ["amber", `Settings ${cur.label} were saved after #${h.id} passed, but the exit fields above still differ: set them and save again.`]
-    : ["lime", `Saved in Settings as ${cur.label}, ${when(cur.at)}, after #${h.id} passed: the prompt and the exit fields together.`];
-  return `<div class="stack" style="gap:12px"><span class="small dim">Proposed change · never applied by itself · you make it in Settings and save both parts together</span>
+    : r.mode !== "paper" ? ["amber", "Settings are in live mode. Switch them to paper first, then Apply."]
+    : !p.holds ? ["amber", p.fits ? `Settings hold #${h.id}'s prompt and exits but match no version: another field changed. Apply records them as one.` : `Settings do not hold #${h.id}'s prompt and exits. Apply writes them and records the version.`]
+    : p.usedBy ? ["amber", `Settings ${cur?.label ?? ""} are the version #${p.usedBy} was tested on: this one cannot be tested on it.`]
+    : ["lime", `Settings hold #${h.id}'s prompt and exits${cur ? ` as ${cur.label}, since ${when(cur.at)}` : ""}.`];
+  return `<div class="stack" style="gap:12px"><span class="small dim">Proposed change · never applied by itself · Apply writes both parts into Settings</span>
     <div class="stack" style="gap:8px"><div class="inline"><span class="s13 b">1 · Operator prompt</span><button class="btn sm line" style="margin-left:auto" data-a="copyPrompt" data-v="${h.id}">${SVG(R_ICON.copy, "ic s16")}${S.copied === h.id ? "Copied" : "Copy"}</button></div>
       <pre class="prompt">${esc(p.prompt)}</pre></div>
     <div class="stack" style="gap:4px"><span class="s13 b">2 · Exit fields</span><ul class="checks" aria-label="Exit fields to set in Settings">${p.fields
       .map((f) => {
         const done = f.from === f.to;
-        return `<li class="two"><span class="mk ${done ? "pos" : "warn"}" aria-hidden="true">${done ? "✓" : "→"}</span><span class="stack" style="gap:2px"><span>${esc(f.label)}</span><span class="small soft">${esc(done ? `${p.savedAfter ? "set to" : "stays"} ${f.to}` : `${f.from} → ${f.to}`)}</span></span></li>`;
+        return `<li class="two"><span class="mk ${done ? "pos" : "warn"}" aria-hidden="true">${done ? "✓" : "→"}</span><span class="stack" style="gap:2px"><span>${esc(f.label)}</span><span class="small soft">${esc(done ? `${p.holds ? "set to" : "stays"} ${f.to}` : `${f.from} → ${f.to}`)}</span></span></li>`;
       })
       .join("")}</ul></div>
     <div class="inline s13 soft" style="align-items:flex-start;gap:10px"><span class="dot" style="margin-top:5px;background:var(--${dot})"></span><span>${esc(guard)}</span></div>
-    <div class="inline" style="flex-wrap:wrap;gap:8px"><button class="btn lime" data-a="move" data-v="${h.id}:paper" ${ready ? "" : "disabled"}>${SVG(R_ICON.flask, "ic s16")}Test on paper</button><a class="btn line" href="#settings">Open Settings</a><button class="btn stop" style="margin-left:auto" data-a="move" data-v="${h.id}:drop">Drop</button></div>
+    <div class="inline" style="flex-wrap:wrap;gap:8px"><button class="btn lime" data-a="move" data-v="${h.id}:paper" ${ready ? "" : "disabled"}>${SVG(R_ICON.flask, "ic s16")}Test on paper</button><button class="btn line" style="margin-left:auto" data-a="move" data-v="${h.id}:apply" ${turn && !p.holds ? "" : "disabled"}>Apply</button><button class="btn stop" data-a="move" data-v="${h.id}:drop">Drop</button></div>
   </div>`;
 }
 
@@ -997,21 +997,24 @@ function ideaPanel(h, r) {
 }
 
 function versionsSection(r) {
-  const vs = r.versions;
+  // A version with no trades and no test on it says nothing: the defaults written on first start, a save undone minutes later.
+  const vs = r.versions.filter((v) => v.trades || v.from || v.current);
+  const none = r.versions.length && !r.versions.some((v) => v.current);
   const rows = vs.map((v) => `<tr><td><span class="inline" style="gap:8px"><span class="b">${esc(v.label)}</span>${v.current ? `<span class="tag buy">current</span>` : ""}</span></td>
     <td class="mono small muted">${v.at ? esc(when(v.at)) : "before history"}</td><td class="r">${v.trades}</td><td class="r">${v.trades ? Math.round((v.won / v.trades) * 100) + "%" : "—"}</td>
     <td class="r b ${v.trades ? sign(v.avgPct) : "muted"}">${pct(v.avgPct)}</td><td class="r b ${v.trades ? sign(v.totalUsd) : "muted"}">${v.trades ? susd(v.totalUsd) : "—"}</td>
     <td class="soft">${v.from ? `${esc(v.from)} · ${v.trades >= r.judgeN ? "judged" : "too few trades to judge"}` : ""}</td></tr>`);
   return `<section class="card flush" aria-labelledby="ver-title"><div class="head"><span class="ico">${SVG(R_ICON.versions)}</span><h2 id="ver-title">Settings versions</h2>
-      <span class="s13 muted">one row per save that changes Settings, prompt and exits together · judged after ${r.judgeN} trades</span>
+      <span class="s13 muted">one row per Apply · a trade counts for the version Settings matched when it was bought · judged after ${r.judgeN} trades</span>
       <button class="btn sm line" style="margin-left:auto" data-a="verOpen" aria-expanded="${S.verOpen}">${S.verOpen ? "Hide" : `Show ${plural(vs.length, "version")}`}${SVG(S.verOpen ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6", "ic s16")}</button></div>
-    ${S.verOpen ? (vs.length ? `<div class="scroll-x" data-scroll="versions" tabindex="0" role="region" aria-label="Settings versions table"><table style="min-width:680px"><thead><tr><th>Version</th><th>Saved</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg / trade</th><th class="r">Total</th><th>From</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>` : `<p class="empty">No settings saved yet.</p>`) : ""}
+    ${S.verOpen && none ? `<div class="inline s13 soft" style="align-items:flex-start;gap:10px;padding:0 20px 8px"><span class="dot" style="margin-top:5px;background:var(--amber)"></span><span>Settings match no version: trades bought from now count for none.</span></div>` : ""}
+    ${S.verOpen ? (vs.length ? `<div class="scroll-x" data-scroll="versions" tabindex="0" role="region" aria-label="Settings versions table"><table style="min-width:680px"><thead><tr><th>Version</th><th>Saved</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg / trade</th><th class="r">Total</th><th>From</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>` : `<p class="empty">${r.versions.length ? "No trades under any version yet." : "No version yet: Apply on a passed idea records one."}</p>`) : ""}
   </section>`;
 }
 
 function research() {
   const r = S.research;
-  const head = `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Edge research</span><h1>Research</h1><p>Code records every candidate and judges every idea; a model only proposes. Nothing on this page changes trading: trading changes only when you save Settings.</p></div></div>`;
+  const head = `<div class="title"><div class="stack"><span class="muted" style="font-size:15px">Edge research</span><h1>Research</h1><p>Code records every candidate and judges every idea; a model only proposes. Trading changes only when you save Settings, or press Apply on a passed idea.</p></div></div>`;
   if (!r) return head + `<p class="${S.researchError ? "neg" : "muted"}" style="padding:0 4px">${esc(S.researchError || "Loading research…")}</p>`;
   const sel = selectedIdea(r);
   // The list and the open idea side by side, stretched to one height: no hole under the shorter one.
@@ -1054,7 +1057,7 @@ function researchBody(d) {
       <div class="field" style="flex:1 1 360px;min-width:0"><label for="f-rmodel">Model</label><input id="f-rmodel" class="inp wide" type="text" value="${esc(S.rmodel ?? r.model)}" placeholder="OPENROUTER_MODEL"><span class="small muted">Any OpenRouter model id. Empty = <code class="mono">OPENROUTER_MODEL</code> from <code class="mono">.env</code>, ${r.env ? `now <code class="mono">${esc(r.env)}</code>` : `which is not set: <code class="mono">${esc(r.fallback)}</code>`}.</span></div>
       <div class="field" style="flex:1 1 260px;min-width:0"><span class="lbl">Runs with, from the next run</span><span class="mono" id="r-uses" style="min-height:48px;display:flex;align-items:center;overflow-wrap:anywhere">${esc(runsWith(d))}</span><span class="small muted">Next run ${r.next <= d.now ? "within 10 min" : esc(when(r.next))} · last 7 days: ${plural(r.week.n, "run")}, ${kn(r.week.tin + r.week.tout)} tokens</span></div>
     </div>
-    <div class="banner lime" style="border-radius:16px;font-size:13px;line-height:18px;align-items:flex-start;flex-wrap:nowrap"><span class="dot" style="margin-top:5px;background:var(--lime)"></span><span><b>No new Settings version.</b> This model is stored apart from the trading config, in its own <code class="mono">settings</code> row. Save writes it on its own when nothing else changed: <code class="mono">config_history</code> gains no row, a paper or live test keeps running, and the Research page's Settings versions stay as they are.</span></div>`;
+    <div class="banner lime" style="border-radius:16px;font-size:13px;line-height:18px;align-items:flex-start;flex-wrap:nowrap"><span class="dot" style="margin-top:5px;background:var(--lime)"></span><span><b>Settings version stays current.</b> This model is stored apart from the trading config, in its own <code class="mono">settings</code> row. Saving it on its own leaves the current version current and a paper or live test running.</span></div>`;
 }
 
 const fieldNum = (label, key, value, unit, opts = {}) =>
@@ -1250,7 +1253,7 @@ const A = {
   report: () => ((S.reportOpen = !S.reportOpen), render()),
   move: async (v) => {
     const [id, to] = v.split(":");
-    const said = { paper: "on paper", live: "live", keep: "kept", cancel: "test cancelled", drop: "dropped", undrop: "drop undone" }[to];
+    const said = { apply: "applied to Settings", paper: "on paper", live: "live", keep: "kept", cancel: "test cancelled", drop: "dropped", undrop: "drop undone" }[to];
     if (await act("/api/research/move", { id: Number(id), to }, `Idea #${id}: ${said}.`)) (S.researchAt = 0), await loadResearch(), render();
   },
   copyAddr: (v) =>

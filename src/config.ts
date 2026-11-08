@@ -156,7 +156,7 @@ export function loadConfig(): Config {
   return DEFAULTS;
 }
 
-/** What the Filters modal saves: changing only these is no new Settings version. */
+/** Fields left out of a version: the Filters modal's, which only narrow what reaches the agent. */
 const FETCH_KEYS = ["filters", "signalFilters", "signalTypes"] as const;
 /** The version part of a stored config, sanitised so a key a later release dropped or added is no change. */
 const versionOf = (value: string) => {
@@ -165,17 +165,28 @@ const versionOf = (value: string) => {
   return JSON.stringify(c);
 };
 
-/**
- * Stores the config, and appends it to config_history: the version every trade and track is scored
- * under. A save that changes nothing, or only the fetch filters, is no new version (it would pause
- * a paper or live test); the history keeps the filters as they were when the version was saved.
- */
+/** Stores the config. A save is never a Settings version: only Apply on a passed idea records one (`applyVersion`). */
 export function saveConfig(cfg: Config): void {
-  const value = JSON.stringify(cfg);
-  const at = Date.now();
-  db.prepare("insert or replace into settings (key, value, updated_at) values ('config', ?, ?)").run(value, at);
-  const last = db.prepare("select value from config_history order by at desc limit 1").get() as { value: string } | undefined;
-  if (!last || versionOf(last.value) !== versionOf(value)) db.prepare("insert or replace into config_history (at, value) values (?, ?)").run(at, value);
+  db.prepare("insert or replace into settings (key, value, updated_at) values ('config', ?, ?)").run(JSON.stringify(cfg), Date.now());
+}
+
+/**
+ * The Settings version `cfg` is (config_history's `at`), or null when it equals none: the stamp a
+ * buy keeps, and what makes a version current. Fetch filters aside, as above.
+ */
+export function versionAt(cfg: Config = loadConfig()): number | null {
+  const v = versionOf(JSON.stringify(cfg));
+  const rows = db.prepare("select at, value from config_history order by at desc").all() as { at: number; value: string }[];
+  return rows.find((r) => versionOf(r.value) === v)?.at ?? null;
+}
+
+/** Records Settings as they are now as a version, unless one already equals them; that version's `at`. */
+export function applyVersion(now = Date.now()): number {
+  const cfg = loadConfig();
+  const at = versionAt(cfg);
+  if (at !== null) return at;
+  db.prepare("insert into config_history (at, value) values (?, ?)").run(now, JSON.stringify(cfg));
+  return now;
 }
 
 // ── fetch filters ─────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ Table settings {
   value text [not null, note: 'JSON']
   updated_at integer [not null]
 
-  Note: 'The only blob left: config is small, read whole and replaced whole. Every save is also appended to config_history.'
+  Note: 'The only blob left: config is small, read whole and replaced whole. A save is never a version: Apply on a passed idea appends one to config_history.'
 }
 
 Table tokens {
@@ -253,6 +253,7 @@ Table positions {
   entry_market_cap_usd real
   last_price_usd real [note: 'updated every monitor tick']
   peak_price_usd real
+  config_at integer [ref: > config_history.at, note: 'the Settings version in force at the buy; null = Settings matched none, and the trade counts for no version or test']
 
   indexes {
     status
@@ -361,10 +362,10 @@ Table shadow_tracks {
 }
 
 Table config_history {
-  at integer [pk, note: 'when it was saved']
-  value text [not null, note: "JSON: the whole 'config' row as saved — operator prompt, exit plan, risk limits"]
+  at integer [pk, note: 'when it was recorded']
+  value text [not null, note: "JSON: the whole 'config' row as applied — operator prompt, exit plan, risk limits"]
 
-  Note: "Every save of settings 'config', append-only. The config in force at time t is the last row with at ≤ t: group trades or tracks by it to score one prompt."
+  Note: "A Settings version, append-only: one per Apply on a passed idea (or Go live) whose Settings equal no row yet; the fetch filters are no part of it. Current = the row Settings equal now. Group trades by positions.config_at to score one prompt. Rows before 8 Nov 2026 are every save."
 }
 
 Table hypotheses {

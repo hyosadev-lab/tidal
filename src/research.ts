@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { loadConfig, type Config, type Rule } from "./config.ts";
+import { applyVersion, loadConfig, sanitize, saveConfig, versionAt, type Config, type Rule } from "./config.ts";
 import { db, insert, tx } from "./db.ts";
 import { log, short } from "./log.ts";
 import { calibration, replayTrade, type ExitPlan } from "./replay.ts";
@@ -327,9 +327,12 @@ function planText(rules: Pick<Rule, "kind" | "at" | "sell">[]): string {
   return `${part("sl", rules.filter((r) => r.kind === "sl").sort((a, b) => b.at - a.at))} · ${part("tp", rules.filter((r) => r.kind === "tp").sort((a, b) => a.at - b.at))}`;
 }
 
+/** An idea's exit as a Settings fixed plan: its SL sells everything, its TPs as they are. */
+const planOf = (s: Exit): Rule[] => [{ kind: "sl", at: s.sl, sell: 100 }, ...s.tp.map((t) => ({ kind: "tp" as const, at: t.at, sell: t.sell }))];
+
 /** The exit fields Settings must hold for an idea's test to run its exit: each as it is now and as the idea needs it. */
 export function exitFields(cfg: Config, s: Exit): { label: string; from: string; to: string }[] {
-  const want = [{ kind: "sl" as const, at: s.sl, sell: 100 }, ...s.tp.map((t) => ({ kind: "tp" as const, at: t.at, sell: t.sell }))];
+  const want = planOf(s);
   return [
     { label: "Who sets take profit and stop loss", from: cfg.exitMode === "agent" ? "Agent decides" : "Fixed plan", to: "Fixed plan" },
     { label: "Fixed plan", from: planText(cfg.plan), to: planText(want) },
@@ -340,14 +343,14 @@ export function exitFields(cfg: Config, s: Exit): { label: string; from: string;
 // ── proving it: paper, then a small live stake ────────────────────────
 
 /** Where the operator can take an idea. Paper and live run on Settings as saved: the engine as today. */
-export type Move = "paper" | "cancel" | "live" | "keep" | "drop" | "undrop";
+export type Move = "apply" | "paper" | "cancel" | "live" | "keep" | "drop" | "undrop";
 
 type Full = Row & { status: string; decided_at: number | null; result: string | null; paper_config_at: number | null; live_config_at: number | null; decay_at: number | null };
 const full = (id: number) => db.prepare("select * from hypotheses where id = ?").get(id) as Full | undefined;
 const resultOf = (h: Full): Record<string, any> => (h.result ? JSON.parse(h.result) : {});
-/** The last Settings save, and the one after `at` (when the version saved at `at` stopped being in force). */
-const lastSave = () => (db.prepare("select max(at) at from config_history").get() as { at: number | null }).at;
-const nextSave = (at: number) => (db.prepare("select min(at) at from config_history where at > ?").get(at) as { at: number | null }).at;
+/** Settings hold an idea's prompt and exit fields, as Apply writes them. */
+export const settingsHold = (cfg: Config, conds: Cond[], exit: Exit): boolean =>
+  cfg.prompt === promptOf(conds) && exitFields(cfg, exit).every((f) => f.from === f.to);
 
 /** The idea whose paper test, or live stake before its verdict, is running: Settings hold its version, so the rest wait. */
 export const inTest = (except = 0) =>
@@ -360,16 +363,19 @@ export const inTest = (except = 0) =>
 /** Passed ideas on decided tokens, in the order they passed: the line for the one paper test. */
 export const paperLine = (): number[] =>
   (db.prepare("select id from hypotheses where status = 'passed' and source = 'decision' order by decided_at, id").all() as { id: number }[]).map((r) => r.id);
-/** Another idea whose paper or live test ran on the Settings version saved at `at`: then that version is not this idea's. */
+/** Another idea whose paper or live test ran on the Settings version recorded at `at`: then that version is not this idea's. */
 export const usedBy = (at: number, id: number): number | null =>
   (db.prepare("select id from hypotheses where id != ? and ? in (paper_config_at, live_config_at)").get(id, at) as { id: number } | undefined)?.id ?? null;
 
 /**
- * The operator's move on an idea, checked against where it stands; an error, or null. Nothing
- * here edits Settings: a test runs on the version the operator saved, from when they press it.
- *   passed → paper (paper mode, saved after it passed, a version no other test ran on; one test
- *     at a time, and passed ideas take their turn in the order they passed)
- *   paper → live (it held on paper; live mode, saved after that; one at a time)
+ * The operator's move on an idea, checked against where it stands; an error, or null. Only Apply
+ * edits Settings, and only on the operator's press. A test counts the trades bought under its version
+ * from when they press it.
+ *   passed: apply (paper mode, its turn: writes its prompt and exit fields into Settings and records
+ *     them as a version, or finds the one that equals them)
+ *   passed → paper (Settings hold it as a version no other test ran on; one test at a time, and
+ *     passed ideas take their turn in the order they passed)
+ *   paper → live (it held on paper; live mode; Settings as they are become the stake's version; one at a time)
  *   live → kept (it held on live fills) · paper or live → cancel (back one step)
  *   any → drop · a drop made here → undrop
  */
@@ -379,7 +385,6 @@ export function move(id: number, to: Move, now = Date.now()): string | null {
   const r = resultOf(h);
   const cfg = loadConfig();
   const mode = cfg.mode;
-  const save = lastSave() ?? 0;
   const set = (status: string, extra: Record<string, unknown> = {}, result = r) => {
     const cols = Object.keys(extra).map((k) => `, ${k} = ?`).join("");
     db.prepare(`update hypotheses set status = ?, decided_at = ?, result = ?${cols} where id = ?`)
@@ -393,28 +398,36 @@ export function move(id: number, to: Move, now = Date.now()): string | null {
     const { dropped_from, dropped_by: _, ...rest } = r;
     return set(dropped_from, {}, rest);
   }
-  if (to === "paper") {
-    if (h.status !== "passed") return "only an idea that passed goes to paper";
+  if (to === "apply" || to === "paper") {
+    if (h.status !== "passed") return `only an idea that passed ${to === "apply" ? "is applied" : "goes to paper"}`;
     if (h.source !== "decision") return "only an idea on decided tokens goes on paper: the engine does not brief sampled tokens to the agent";
     const other = inTest(id);
     if (other) return `#${other.id} is ${other.status === "paper" ? "on paper" : "on its live stake"}: one test at a time, #${id} waits its turn`;
     const head = paperLine()[0];
     if (head !== id) return `#${head} passed first and goes on paper first: drop it to let #${id} go ahead`;
     if (mode !== "paper") return "switch Settings to paper mode first";
-    if (save <= (h.decided_at ?? 0)) return "save the rule and its exit in Settings first: the test runs on that version";
-    const used = usedBy(save, id);
-    if (used) return `Settings still hold the version #${used} was tested on: save #${id}'s prompt and exits first`;
-    const off = exitFields(cfg, JSON.parse(h.exit)).filter((f) => f.from !== f.to);
-    if (off.length) return `set the exit fields in Settings first: ${off.map((f) => f.label.toLowerCase()).join(", ")}`;
-    return set("paper", { paper_config_at: save }, { ...r, paper: { n: 0 } });
+    const conds = JSON.parse(h.conditions) as Cond[];
+    const exit = JSON.parse(h.exit) as Exit;
+    if (to === "apply") {
+      saveConfig(sanitize({ ...cfg, prompt: promptOf(conds), exitMode: "fixed", plan: planOf(exit), timeStopMinutes: exit.time_min }));
+      applyVersion(now);
+      return null;
+    }
+    const at = versionAt(cfg);
+    if (at === null || !settingsHold(cfg, conds, exit)) return `press Apply first: Settings do not hold #${id}'s prompt and exits as a version`;
+    const used = usedBy(at, id);
+    if (used) return `Settings hold the version #${used} was tested on`;
+    return set("paper", { paper_config_at: at }, { ...r, paper: { n: 0, since: now } });
   }
   if (to === "live") {
     if (h.status !== "paper" || r["paper"]?.verdict !== "holds") return "only an idea that held on paper goes live";
     if (mode !== "live") return "switch Settings to live mode, at a small size, first";
-    if (save <= (r["paper"].at ?? 0)) return "save Settings for the live stake first: the test runs on that version";
     const other = busy("live");
     if (other) return `#${other} is live: one live test at a time`;
-    return set("live", { live_config_at: save }, { ...r, live: { n: 0 } });
+    const at = versionAt(cfg);
+    const used = at === null ? null : usedBy(at, id);
+    if (used) return `Settings hold the version #${used} was tested on`;
+    return set("live", { live_config_at: applyVersion(now) }, { ...r, live: { n: 0, since: now } });
   }
   if (to === "keep") return h.status === "live" && r["live"]?.verdict === "holds" ? set("kept") : "only an idea that held on live fills is kept";
   if (to === "cancel") {
@@ -452,30 +465,32 @@ function agreement(conds: Cond[], from: number, to: number) {
 }
 
 /**
- * A paper or live test: the first BAR_N positions opened while the tested Settings version was in
- * force, judged on their real fills by the forward test's bar. Holds: the operator takes the next
- * step. Fades: dropped by code. A save of Settings mid-test pauses it: later trades are another version.
+ * A paper or live test: the first BAR_N positions bought under the tested Settings version since the
+ * test began, judged on their real fills by the forward test's bar. Holds: the operator takes the
+ * next step. Fades: dropped by code. While Settings match another version or none, it is paused:
+ * those trades count for no test, and it goes on once Settings match its version again.
  */
 function prove(h: Full, mode: "paper" | "live", fr: { pct: number | null }, now: number): string | null {
   const from = (mode === "paper" ? h.paper_config_at : h.live_config_at)!;
-  const until = nextSave(from) ?? Infinity;
   const r = resultOf(h);
+  const since: number = r[mode]?.since ?? from; // a test begun before 8 Nov 2026 began at its version's save
   const ps = db
     .prepare(
       `select p.id, p.opened_at, p.status, p.cost_usd cost, (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
-       from positions p where p.mode = ? and p.opened_at >= ? and p.opened_at < ? order by p.opened_at limit ?`,
+       from positions p where p.mode = ? and p.config_at = ? and p.opened_at >= ? order by p.opened_at limit ?`,
     )
-    .all(mode, from, until, BAR_N) as { id: number; opened_at: number; status: string; cost: number; pnl: number | null }[];
+    .all(mode, from, since, BAR_N) as { id: number; opened_at: number; status: string; cost: number; pnl: number | null }[];
   const closed = ps.filter((p) => p.status === "closed" && p.cost > 0);
   const conds = JSON.parse(h.conditions) as Cond[];
   const gaps = (db
     .prepare(
       `select t.side, t.price_usd price, t.quote_price_usd quoted from trades t join positions p on p.id = t.position_id
-       where p.mode = 'live' and p.opened_at >= ? and p.opened_at < ? and t.quote_price_usd > 0`,
+       where p.mode = 'live' and p.config_at = ? and p.opened_at >= ? and t.quote_price_usd > 0`,
     )
-    .all(from, until) as { side: "buy" | "sell"; price: number; quoted: number }[]).map((g) => adverseGap(g.side, g.price, g.quoted));
+    .all(from, since) as { side: "buy" | "sell"; price: number; quoted: number }[]).map((g) => adverseGap(g.side, g.price, g.quoted));
   const base = {
-    of: BAR_N, version_at: from, paused_at: until <= now ? until : null, agreement: agreement(conds, from, Math.min(until, now)),
+    // ponytail: agreement spans the paused stretches too; stamp decisions with their version if pauses get common.
+    of: BAR_N, version_at: from, since, paused: versionAt() !== from, agreement: agreement(conds, since, now),
     fill_gap_pct: gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null, at: now,
   };
   if (ps.length < BAR_N || closed.length < BAR_N) {
@@ -486,7 +501,7 @@ function prove(h: Full, mode: "paper" | "live", fr: { pct: number | null }, now:
   const st = stats(trades, 0, []);
   const s = JSON.parse(h.exit) as Setup;
   // Real fills carry their costs; random picks are replays, so they pay the measured friction.
-  const pool = poolOf(tracksIn(h.source, from, trades.at(-1)!.at + 1), s).map((p) => p - (fr.pct ?? 0));
+  const pool = poolOf(tracksIn(h.source, since, trades.at(-1)!.at + 1), s).map((p) => p - (fr.pct ?? 0));
   const draws = drawsFor(h.id);
   const rnd = beats(st.avg_pct!, pool, BAR_N, draws, h.id + 1000);
   const verdict = st.avg_pct! > 0 && st.halves.every((x) => x > 0) && rnd >= h.need_pct ? "holds" : "fades";
@@ -513,7 +528,7 @@ function decayWatch(h: Full, fr: { pct: number | null }, now: number): void {
       `select p.id, p.cost_usd cost, (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
        from positions p where p.mode = 'live' and p.status = 'closed' and p.opened_at >= ? order by p.closed_at desc limit ?`,
     )
-    .all(h.live_config_at ?? now, BAR_N) as { id: number; cost: number; pnl: number | null }[];
+    .all(resultOf(h).live?.since ?? h.live_config_at ?? now, BAR_N) as { id: number; cost: number; pnl: number | null }[];
   if (ps.length < BAR_N) return;
   const avg = ps.reduce((a, p) => a + (p.cost > 0 ? ((p.pnl ?? 0) / p.cost) * 100 : 0), 0) / ps.length;
   const ids = ps.map((p) => p.id).join(",");

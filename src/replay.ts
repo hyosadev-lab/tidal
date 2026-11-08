@@ -81,7 +81,7 @@ let simsOf: unknown = null;
 
 /**
  * Every position closed by its own exit rules, replayed on its decision's track with the plan it
- * ran (its exit_rules) and the config in force when it opened. `agree` counts the same sign of
+ * ran (its exit_rules) and the Settings version it was bought under (none: left out). `agree` counts the same sign of
  * result; `gapPct` is the mean of replay − real, the friction every test then charges. Each
  * position is replayed once, so the dashboard's read stays cheap as trades pile up.
  */
@@ -89,18 +89,18 @@ export function calibration(): Calibration {
   const rows = db
     .prepare(
       `select p.id from positions p join shadow_tracks s on s.decision_id = p.decision_id
-       where p.status = 'closed' and p.close_reason in ('tp', 'sl', 'time', 'health')
+       where p.status = 'closed' and p.close_reason in ('tp', 'sl', 'time', 'health') and p.config_at is not null
          and s.end_reason in ('done', 'rug') and s.path is not null
        order by p.id`,
     )
     .all() as { id: number }[];
   const one = db.prepare(
     `select p.id, p.opened_at, p.cost_usd, s.started_at, s.path, s.end_reason,
-       (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
+       (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl,
+       (select value from config_history h where h.at = p.config_at) cfg
      from positions p join shadow_tracks s on s.decision_id = p.decision_id where p.id = ?`,
   );
   if (simsOf !== db) (sims.clear(), (simsOf = db));
-  const configAt = db.prepare("select value from config_history where at <= ? order by at desc limit 1");
   const rulesOf = db.prepare("select kind, at_pct at, sell_pct sell from exit_rules where position_id = ? order by seq");
   const now = loadConfig();
   let agree = 0;
@@ -108,9 +108,8 @@ export function calibration(): Calibration {
   let gap = 0;
   for (const { id } of rows) {
     if (!sims.has(id)) {
-      const r = one.get(id) as { opened_at: number; cost_usd: number; started_at: number; path: string; end_reason: string; pnl: number | null };
-      const c = (configAt.get(r.opened_at) as { value: string } | undefined)?.value;
-      const cfg = c ? { ...now, ...JSON.parse(c) } : now;
+      const r = one.get(id) as { opened_at: number; cost_usd: number; started_at: number; path: string; end_reason: string; pnl: number | null; cfg: string };
+      const cfg = { ...now, ...JSON.parse(r.cfg) };
       const plan = { rules: rulesOf.all(id) as Rule[], timeMin: cfg.timeStopMinutes, drainPct: cfg.liquidityDrainPct };
       const sim = replay(JSON.parse(r.path), Math.round((r.opened_at - r.started_at) / STEP_MS), plan, cfg.sizeSol, r.end_reason === "rug");
       sims.set(id, sim === null || !(r.cost_usd > 0) ? null : { sim, real: ((r.pnl ?? 0) / r.cost_usd) * 100 });

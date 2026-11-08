@@ -77,9 +77,9 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
   in any quote (reserve in SOL at the quote's price at start); a completed curve's pool comes off
   the mint (`pools.migratedPool`, a PDA). Runs started or stopped; a restart ends open tracks as
-  'restart'. A `saveConfig` that changes more than the fetch filters (`filters`, `signalFilters`, `signalTypes`) appends to `config_history`: a new version. `replay.ts` replays an exit plan
+  'restart'. Settings versions (`config_history`): a save is never one; only Apply on a passed idea (and Go live) records Settings as they are, unless a row already equals them (`applyVersion`). A version is current while Settings equal it, fetch filters (`filters`, `signalFilters`, `signalTypes`) aside (`versionAt`); a buy stamps it (`positions.config_at`, null = none current: that trade counts for no version, test or calibration). `replay.ts` replays an exit plan
   on a track's path the way `evaluate` runs it (impact off the stored reserve); `calibration()`
-  replays every trade closed by its rules on its own track. The Research page (`view.research`,
+  replays every stamped trade closed by its rules on its own track. The Research page (`view.research`,
   `GET /api/research`, read every 15s while open) is laid out as the canvas's Research board: six
   tiles, the tries beside the open one (a passed idea carries its proposed change: `promptOf` the
   conditions, `exitFields` against Settings), settings versions folded.
@@ -96,15 +96,17 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   (in-sample backtest) and `register_hypothesis` (once per run, through `validate`); its runs are
   `agent_runs.kind = 'research'`, kept out of the trading views. Its model is its own Settings
   field (`researchModel`: the 'research' row in `settings`, empty = `OPENROUTER_MODEL`, never the
-  trading model), saved by `/api/research/settings` apart from the config: no config_history row,
-  no paused test. Method for it and for Claude Code: `.claude/skills/edge-research/SKILL.md`.
+  trading model), saved by `/api/research/settings` apart from the config: the current version
+  stays current, no paused test. Method for it and for Claude Code: `.claude/skills/edge-research/SKILL.md`.
 - Proving an idea (phase 3, `research.move` via `POST /api/research/move`): every step is the
-  operator's and nothing edits Settings. passed → paper (a decided-tokens idea, paper mode, Settings
-  saved after it passed holding its exit — `exitFields`, never a version another idea was tested on —
-  `usedBy`; one test at a time, paper or a live stake before its verdict — `inTest`; passed ideas
-  take it in the order they passed — `paperLine`) → live (it held on paper; live mode, saved after that) → kept; cancel and
-  drop/undrop. `judge` scores a paper or live test on the first 30 positions opened while the
-  tested version was in force (a later save pauses it), on real fills, by the forward test's bar;
+  operator's, and only Apply edits Settings, on their press (8 Nov 2026). Apply (a passed
+  decided-tokens idea, its turn, paper mode) writes its prompt (`promptOf`, replacing the operator
+  prompt) and exit fields into Settings and records the version. passed → paper (Settings hold it as
+  a version — `settingsHold`, never one another idea was tested on — `usedBy`; one test at a time,
+  paper or a live stake before its verdict — `inTest`; passed ideas take it in the order they
+  passed — `paperLine`) → live (it held on paper; live mode; Go live records Settings as the stake's
+  version) → kept; cancel and drop/undrop. `judge` scores a paper or live test on the first 30
+  positions stamped with its version since it began (paused while that version is not current), on real fills, by the forward test's bar;
   it fades → dropped by code. It also logs agent vs. rule picks: buys go through the prompt, never
   a rule in code (the operator's decision, 2 Nov 2026); the rule is only checked against them. Kept and live ideas get the decay watch: last 30 live trades,
   mean ≤ 0 or fill gap (`trades.quote_price_usd`, written on live swaps) above the friction →

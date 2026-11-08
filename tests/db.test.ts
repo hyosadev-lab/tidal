@@ -71,6 +71,10 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
         decision_id integer unique, features text not null, started_at integer not null, ended_at integer) strict;
       create table settings (key text primary key, value text not null, updated_at integer not null) strict;
       insert into settings values ('config', '{"prompt":"v1"}', 7);
+      create table config_history (at integer primary key, value text not null) strict;
+      insert into config_history values (5, '{}'), (20, '{}');
+      create table positions (id integer primary key, token text not null, status text not null, opened_at integer not null, closed_at integer) strict;
+      insert into positions (token, status, opened_at) values ('A', 'closed', 3), ('B', 'closed', 10), ('C', 'closed', 25);
       insert into agent_runs (started_at, model, status) values (1, 'm', 'ok');
       insert into equity values (1, 1000, 1000);`);
     old.close();
@@ -80,9 +84,12 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
       assert.equal(db.prepare("select kind from agent_runs").get()?.kind, "entry");
       assert.equal(db.prepare("select mode from equity").get()?.mode, "paper");
       assert.ok(db.prepare("select 1 from pragma_table_info('trades') where name = 'quote_price_usd'").get());
-      // The config in force starts config_history, as of its last save — once.
-      const h = db.prepare("select at, value from config_history").all();
-      assert.deepEqual([h.length, h[0]?.at, h[0]?.value], [1, 7, '{"prompt":"v1"}']);
+      // A save is no version: the history is left as it was. Positions get the version in force at
+      // their buy, once: the second open leaves a stamp alone.
+      assert.equal(db.prepare("select count(*) n from config_history").get()?.n, 2);
+      const stamps = db.prepare("select config_at from positions order by id").all().map((r) => r.config_at);
+      assert.deepEqual(stamps, i === 0 ? [null, 5, 20] : [null, 5, null]);
+      if (i === 0) db.exec("update positions set config_at = null where token = 'C'");
       // The added column brings its checks: an end needs a reason.
       assert.throws(() => db.prepare("insert into shadow_tracks (token, source, features, started_at, ended_at) values ('M', 'rank', '{}', 1, 2)").run(), /CHECK/);
       // The source check is widened in place (5 Nov 2026): signal tracks go in, an unknown source still does not.

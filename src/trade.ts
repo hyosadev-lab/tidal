@@ -1,4 +1,4 @@
-import { loadConfig, type Config, type Rule } from "./config.ts";
+import { loadConfig, versionAt, type Config, type Rule } from "./config.ts";
 import { db, insert, tx } from "./db.ts";
 import { gmgnClient } from "./gmgn/client.ts";
 import * as jup from "./jupiter/client.ts";
@@ -214,6 +214,7 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
         entry_market_cap_usd: snap.market_cap_usd !== null ? (snap.market_cap_usd * entryPrice) / snap.price_usd : null,
         last_price_usd: snap.price_usd,
         peak_price_usd: snap.price_usd,
+        config_at: versionAt(cfg), // the version this buy ran under; none = counted for no version
       });
       insert("trades", {
         position_id: positionId,

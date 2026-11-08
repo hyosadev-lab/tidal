@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, saveConfig } from "../src/config.ts";
+import { applyVersion, loadConfig, saveConfig, versionAt } from "../src/config.ts";
 import { db, insert, openDb } from "../src/db.ts";
 import { adverseGap, beats, drawsFor, exitFields, judge, matches, move, promptOf, FALLBACK_MODEL, nextResearchAt, register, researchDue, RESEARCH_EVERY_MS, researchModel, researchSettings, sameIdea, saveResearchSettings, seedTries, tries, validate, type Idea } from "../src/research.ts";
 import { agent, query } from "../src/research-cli.ts";
@@ -78,7 +78,8 @@ test("seeds: rounds 1–3 and the ATH check are failed tries 1–4, once; the ne
 
 let seq = 0;
 /** A decided token's track, and when `cost` is given, the real trade bought on it. */
-function decided(at: number, features: object, path: Point[], real?: { pnl: number; reason: string; mode?: string }) {
+/** A decided token's track, and with `real` its position: bought under the current version (one is recorded if none), or `version`. */
+function decided(at: number, features: object, path: Point[], real?: { pnl: number; reason: string; mode?: string; version?: number | null }) {
   const token = `T${seq++}`;
   insert("tokens", { address: token, first_seen_at: 1 });
   const d = insert("decisions", { run_id: insert("agent_runs", { started_at: at, model: "m", status: "ok" }), token, action: real ? "buy" : "skip" });
@@ -90,6 +91,7 @@ function decided(at: number, features: object, path: Point[], real?: { pnl: numb
   const p = insert("positions", {
     token, decision_id: d, entry_snapshot_id: insert("token_snapshots", { token, taken_at: at, kind: "entry", price_usd: 1, raw: "{}" }),
     mode: real.mode ?? "paper", status: "closed", opened_at: at + 4_000, closed_at: at + 60_000, close_reason: real.reason, entry_price_usd: 1, cost_usd: 10, original_qty: "1", qty: "0",
+    config_at: real.version !== undefined ? real.version : (versionAt() ?? applyVersion()),
   });
   insert("exit_rules", { position_id: p, seq: 0, kind: "sl", at_pct: -30, sell_pct: 100 });
   insert("exit_rules", { position_id: p, seq: 1, kind: "tp", at_pct: 15, sell_pct: 100 });
@@ -144,27 +146,29 @@ test("fill gap: what a live fill paid over its quote, either side", () => {
 
 const trusted = (t: number) => { for (let i = 0; i < 10; i++) decided(t + i * 60_000, { good: true }, UP, { pnl: 19.9, reason: "tp" }); };
 
-test("paper, then live: each step the operator's, each judged at 30 trades on its own fills", () => {
+test("apply, paper, then live: each step the operator's, each judged at 30 trades on its own fills", () => {
   openDb(":memory:");
   const t0 = Date.UTC(2026, 10, 2, 0, 0);
-  const cfg = loadConfig(); // the first config save: the history starts before the idea
-  trusted(t0 - 3 * 86_400_000);
+  trusted(t0 - 3 * 86_400_000); // bought under the defaults, recorded as a version
   const h = reg(idea(), "m", t0).id;
   for (let i = 0; i < 40; i++) decided(t0 + 60_000 + i * 600_000, { good: i % 4 !== 3 }, i % 4 !== 3 ? UP : DOWN);
   judge(t0 + 86_400_000);
   assert.equal(tries()[0]!.status, "passed");
 
-  assert.match(move(h, "paper", t0 + 86_400_000)!, /save the rule/);
-  db.prepare("delete from config_history").run();
-  insert("config_history", { at: t0 + 86_400_000 + 1, value: JSON.stringify(cfg) }); // saved, but with the old exit
-  assert.match(move(h, "paper")!, /set the exit fields in Settings first: fixed plan/);
-  const fit = { ...cfg, plan: [{ kind: "sl" as const, at: -30, sell: 100 }, { kind: "tp" as const, at: 15, sell: 100 }] };
-  saveConfig(fit); // the operator sets the idea's exit and saves
-  db.prepare("delete from config_history").run();
-  insert("config_history", { at: t0 + 86_400_000 + 2, value: JSON.stringify(fit) }); // on the test's clock
+  assert.match(move(h, "paper", t0 + 86_400_000)!, /press Apply first/);
+  assert.equal(move(h, "apply", t0 + 86_400_000 + 1), null); // writes the idea into Settings, records it
+  const cfg = loadConfig();
+  assert.deepEqual([cfg.prompt, cfg.exitMode, cfg.plan, cfg.timeStopMinutes], [
+    "Buy only when all of these hold:\n- good is true\nSkip everything else.", "fixed",
+    [{ kind: "sl", at: -30, sell: 100 }, { kind: "tp", at: 15, sell: 100 }], 30,
+  ]);
+  const paperVersion = versionAt();
+  assert.equal(paperVersion, t0 + 86_400_000 + 1);
+  assert.equal(move(h, "apply", t0 + 86_400_000 + 5), null); // again: Settings equal it, no second version
+  assert.equal(versionAt(), paperVersion);
   assert.equal(move(h, "live"), "only an idea that held on paper goes live");
-  assert.equal(move(h, "paper"), null);
   const paperAt = t0 + 86_400_000 + 2;
+  assert.equal(move(h, "paper", paperAt), null);
   // 30 paper trades on the agent's buys (all the rule's too), 2 rule matches the agent skipped, 50 losers it skipped.
   for (let i = 0; i < 30; i++) decided(paperAt + 60_000 + i * 1_800_000, { good: true, symbol: `B${i}` }, UP, { pnl: 5, reason: "tp" });
   for (let i = 0; i < 2; i++) decided(paperAt + 90_000 + i * 1_800_000, { good: true, symbol: `S${i}` }, UP);
@@ -176,15 +180,32 @@ test("paper, then live: each step the operator's, each judged at 30 trades on it
   assert.equal(tries()[0]!.status, "paper");
 
   assert.match(move(h, "live")!, /live mode/);
-  saveConfig({ ...fit, mode: "live" }); // the operator switches to live, at a small size
+  saveConfig({ ...loadConfig(), mode: "live" }); // the operator switches to live, at a small size: no version yet
+  assert.equal(versionAt(), null);
   const liveAt = paperAt + 3 * 86_400_000 + 1;
-  insert("config_history", { at: liveAt, value: JSON.stringify({ ...fit, mode: "live" }) }); // on the test's clock
-  assert.equal(move(h, "live"), null);
+  assert.equal(move(h, "live", liveAt), null); // Go live records them
+  assert.equal(versionAt(), liveAt);
   for (let i = 0; i < 30; i++) decided(liveAt + 60_000 + i * 1_800_000, { good: true }, DOWN, { pnl: -4, reason: "sl", mode: "live" });
   judge(liveAt + 3 * 86_400_000);
   const r = tries()[0]!;
   assert.deepEqual([r.status, r.result.live.verdict, r.result.dropped_by], ["dropped", "fades", "code"]);
   assert.equal(move(h, "undrop"), "only a drop made by hand can be undone");
+});
+
+test("a hand edit pauses a test: trades bought while Settings match no version count for none", () => {
+  openDb(":memory:");
+  const exit = JSON.stringify({ sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30, drain: 55, slots: 2, size_sol: 0.1 });
+  insert("hypotheses", { id: 1, created_at: 1, author: "m", rule: "r", conditions: JSON.stringify(idea().conditions), exit, need_pct: 95, status: "passed", decided_at: 1, result: "{}" });
+  assert.equal(move(1, "apply", 10), null);
+  assert.equal(move(1, "paper", 20), null);
+  for (let i = 0; i < 5; i++) decided(100 + i * 60_000, { good: true }, UP, { pnl: 5, reason: "tp" });
+  saveConfig({ ...loadConfig(), sizeSol: 0.2 }); // a hand edit: no version current
+  for (let i = 0; i < 5; i++) decided(1_000_000 + i * 60_000, { good: true }, UP, { pnl: 5, reason: "tp", version: versionAt() });
+  judge(86_400_000);
+  assert.deepEqual([tries()[0]!.result.paper.n, tries()[0]!.result.paper.paused], [5, true]);
+  saveConfig({ ...loadConfig(), sizeSol: 0.1 }); // undone by hand: the version is current, the test goes on
+  judge(86_400_000);
+  assert.equal(tries()[0]!.result.paper.paused, false);
 });
 
 test("decay watch: a kept idea whose last 30 live trades lose is flagged once, Settings untouched", () => {
@@ -237,17 +258,21 @@ test("paper line: passed ideas take the one test in the order they passed, never
   const exit = JSON.stringify({ sl: -30, tp: [{ at: 15, sell: 100 }], time_min: 30, drain: 55, slots: 2, size_sol: 0.1 });
   for (const [id, at] of [[1, 20], [2, 10]]) // #2 passed first
     insert("hypotheses", { id, created_at: 1, author: "m", rule: "r", conditions: "[]", exit, need_pct: 95, status: "passed", decided_at: at, result: "{}" });
-  saveConfig({ ...loadConfig(), plan: [{ kind: "sl", at: -30, sell: 100 }, { kind: "tp", at: 15, sell: 100 }] }); // saved after both passed
-  const save = (db.prepare("select max(at) at from config_history").get() as { at: number }).at;
 
-  assert.match(move(1, "paper")!, /#2 passed first and goes on paper first: drop it to let #1 go ahead/);
+  assert.match(move(1, "apply")!, /#2 passed first and goes on paper first: drop it to let #1 go ahead/);
+  assert.match(move(1, "paper")!, /#2 passed first/);
+  assert.equal(move(2, "apply"), null);
   assert.equal(move(2, "paper"), null);
   assert.match(move(1, "paper")!, /#2 is on paper: one test at a time, #1 waits its turn/);
+  assert.match(move(1, "apply")!, /#2 is on paper/); // Apply waits too: it would end #2's version
   db.prepare("update hypotheses set status = 'live', result = '{}' where id = 2").run(); // its live stake, no verdict yet
   assert.match(move(1, "paper")!, /#2 is on its live stake/);
   assert.equal(move(2, "drop"), null);
-  assert.match(move(1, "paper")!, /the version #2 was tested on/); // its prompt, not #1's
-  insert("config_history", { at: save + 1, value: JSON.stringify(loadConfig()) }); // the operator saves #1's prompt
+  assert.equal(move(1, "apply"), null); // the same prompt and exits as #2: #2's version
+  assert.match(move(1, "paper")!, /the version #2 was tested on/);
+  db.prepare("update hypotheses set conditions = ? where id = 1").run(JSON.stringify(idea().conditions)); // a prompt of its own
+  assert.match(move(1, "paper")!, /press Apply first/);
+  assert.equal(move(1, "apply"), null);
   assert.equal(move(1, "paper"), null);
 });
 

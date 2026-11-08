@@ -32,14 +32,14 @@ test("replay: size impact both ways, a drained pool, a rug, and no point to buy 
   assert.equal(replay([null, null, [0, 10]], 0, plan, 0.1, false) !== null, true); // 4s late is still a buy
 });
 
-function position(token: string, opened: number, path: Point[], pnlPct: number, reason: string) {
+function position(token: string, opened: number, path: Point[], pnlPct: number, reason: string, version: number | null = 1) {
   if (!db.prepare("select 1 from tokens where address = ?").get(token)) insert("tokens", { address: token, first_seen_at: 1 });
   const run = insert("agent_runs", { started_at: opened, model: "m", status: "ok" });
   const d = insert("decisions", { run_id: run, token, action: "buy", conviction: 70 });
   const snap = insert("token_snapshots", { token, taken_at: opened, kind: "entry", price_usd: 1, raw: "{}" });
   const p = insert("positions", {
     token, decision_id: d, entry_snapshot_id: snap, mode: "paper", status: "closed", opened_at: opened, closed_at: opened + 60_000,
-    close_reason: reason, entry_price_usd: 1, cost_usd: 10, original_qty: "1", qty: "0",
+    close_reason: reason, entry_price_usd: 1, cost_usd: 10, original_qty: "1", qty: "0", config_at: version,
   });
   for (const [i, r] of plan.rules.entries()) insert("exit_rules", { position_id: p, seq: i, kind: r.kind, at_pct: r.at, sell_pct: r.sell });
   insert("trades", { position_id: p, at: opened + 60_000, side: "sell", qty: "1", price_usd: 1, usd: 10 + pnlPct / 10, pnl_usd: pnlPct / 10, reason });
@@ -49,7 +49,7 @@ function position(token: string, opened: number, path: Point[], pnlPct: number, 
   });
 }
 
-test("calibration: real trades replayed on their own tracks, under the config they opened with", () => {
+test("calibration: real trades replayed on their own tracks, under the version they were bought with", () => {
   openDb(":memory:");
   insert("config_history", { at: 1, value: JSON.stringify({ sizeSol: 0.1, timeStopMinutes: 30, liquidityDrainPct: 55 }) });
   const up: Point[] = [[0, DEEP], [0, DEEP], [0, DEEP], [20, DEEP]]; // bought at point 2, TP at +20
@@ -57,6 +57,7 @@ test("calibration: real trades replayed on their own tracks, under the config th
   position("A", 10_000, up, 18, "tp"); // agrees, replay 2 points kinder
   position("B", 20_000, down, 3, "time"); // a loss on replay, a small win in fact: disagrees
   position("C", 30_000, up, 50, "manual"); // closed by hand: not the plan's result, left out
+  position("D", 40_000, up, 18, "tp", null); // bought while Settings matched no version: left out
   const c = calibration();
   assert.deepEqual([c.n, c.agree], [2, 1]);
   close(c.gapPct, (20 - 18 + (-35 - 3)) / 2);
@@ -96,4 +97,18 @@ test("research: 1 track per token, bought vs all decided, conviction bands, sour
   insert("agent_runs", { started_at: now, finished_at: now, model: "m", status: "ok", kind: "research", messages: JSON.stringify(msgs) });
   assert.equal(research(now, "UTC").agent.last!.report, "Looked at fees.\nRegistered nothing.");
   assert.deepEqual(r.versions.map((v) => [v.label, v.current, v.trades]), [["v1", true, 0]]);
+
+  // A trade counts for the version it was bought under, never for the time it falls in; none counts nowhere.
+  insert("config_history", { at: now - 4_000, value: JSON.stringify({ prompt: "v2" }) });
+  const closed = (token: string, version: number | null) => {
+    const snap = insert("token_snapshots", { token, taken_at: now, kind: "entry", price_usd: 1, raw: "{}" });
+    const p = insert("positions", {
+      token, entry_snapshot_id: snap, mode: "paper", status: "closed", opened_at: now, closed_at: now, close_reason: "tp",
+      entry_price_usd: 1, cost_usd: 10, original_qty: "1", qty: "0", config_at: version,
+    });
+    insert("trades", { position_id: p, at: now, side: "sell", qty: "1", price_usd: 1, usd: 11, pnl_usd: 1, reason: "tp" });
+  };
+  closed("A", now - 5_000);
+  closed("B", null);
+  assert.deepEqual(research(now, "UTC").versions.map((v) => [v.label, v.current, v.trades]), [["v2", false, 0], ["v1", true, 1]]);
 });

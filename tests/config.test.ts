@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inFilters, loadConfig, rankFilters, sanitize, saveConfig, signalFilters } from "../src/config.ts";
+import { applyVersion, inFilters, loadConfig, rankFilters, sanitize, saveConfig, signalFilters, versionAt } from "../src/config.ts";
 import { db, openDb } from "../src/db.ts";
 
 const cfg = sanitize({
@@ -42,35 +42,22 @@ test("signal types: known ones the route takes, in order, once; none = the list 
   assert.deepEqual(sanitize({}).signalTypes, [12, 18]);
 });
 
-test("every save lands in config_history too: the version trades and tracks are scored under", () => {
+test("a save is never a version; Apply records Settings once, and a version is current while Settings equal it", () => {
   openDb(":memory:");
-  loadConfig(); // the first read writes the defaults: the first version
-  saveConfig({ ...loadConfig(), prompt: "v2" });
-  const last = db.prepare("select value from config_history order by at desc limit 1").get() as { value: string };
-  assert.equal(JSON.parse(last.value).prompt, "v2");
-  assert.equal(last.value, (db.prepare("select value from settings where key = 'config'").get() as { value: string }).value);
-});
-
-test("a save that changes nothing is no new version", () => {
-  openDb(":memory:");
-  loadConfig();
-  saveConfig(loadConfig()); // Save with nothing changed, or Apply with the same filters
-  saveConfig({ ...loadConfig() });
-  assert.equal((db.prepare("select count(*) n from config_history").get() as { n: number }).n, 1);
-});
-
-test("a save that changes only the Filters modal's fields is no new version; anything else is", () => {
-  openDb(":memory:");
-  loadConfig();
-  saveConfig({ ...loadConfig(), filters: { marketCapMin: 30 }, signalFilters: { feeMin: 2 }, signalTypes: [6, 12] });
   const n = () => (db.prepare("select count(*) n from config_history").get() as { n: number }).n;
-  assert.equal(n(), 1);
-  assert.deepEqual(loadConfig().signalTypes, [6, 12]); // the config itself is saved
+  loadConfig(); // the first read writes the defaults: no version
+  saveConfig({ ...loadConfig(), prompt: "v1" });
+  assert.deepEqual([n(), versionAt()], [0, null]);
+  const v1 = applyVersion(1_000);
+  assert.deepEqual([v1, applyVersion(2_000), n(), versionAt()], [1_000, 1_000, 1, 1_000]); // equal Settings: no second row
+  saveConfig({ ...loadConfig(), filters: { marketCapMin: 30 }, signalFilters: { feeMin: 2 }, signalTypes: [6, 12] });
+  assert.equal(versionAt(), v1); // the Filters modal's fields are no part of a version
   saveConfig({ ...loadConfig(), prompt: "v2" });
-  assert.equal(n(), 2);
-  // A version saved by an older release, with a key since dropped: a filter save is still no version.
+  assert.equal(versionAt(), null); // a hand edit: no version current
+  saveConfig({ ...loadConfig(), prompt: "v1" });
+  assert.equal(versionAt(), v1); // undone by hand: current again
+  // A version recorded by an older release, with a key since dropped: still the same version.
   const old = { ...JSON.parse(JSON.stringify(loadConfig())), graduatedFilters: { ageMax: 120 } };
-  db.prepare("update config_history set value = ? where at = (select max(at) from config_history)").run(JSON.stringify(old));
-  saveConfig({ ...loadConfig(), signalTypes: [12] });
-  assert.equal(n(), 2);
+  db.prepare("update config_history set value = ?").run(JSON.stringify(old));
+  assert.deepEqual([versionAt(), n()], [v1, 1]);
 });

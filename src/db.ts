@@ -202,7 +202,8 @@ create table if not exists positions (
   entry_liquidity_usd real,
   entry_market_cap_usd real,
   last_price_usd real,
-  peak_price_usd real
+  peak_price_usd real,
+  config_at integer references config_history(at)
 ) strict;
 create index if not exists positions_status on positions(status);
 create index if not exists positions_cooldown on positions(token, closed_at);
@@ -302,10 +303,11 @@ create table if not exists hypotheses (
 ) strict;
 `;
 
-/** Adds a column to a table created before the column was in SCHEMA. Idempotent. */
-function addColumn(table: string, column: string, def: string): void {
-  if (!db.prepare("select 1 from pragma_table_info(?) where name = ?").get(table, column))
-    db.exec(`alter table ${table} add column ${column} ${def}`);
+/** Adds a column to a table created before the column was in SCHEMA; true when it did. Idempotent. */
+function addColumn(table: string, column: string, def: string): boolean {
+  if (db.prepare("select 1 from pragma_table_info(?) where name = ?").get(table, column)) return false;
+  db.exec(`alter table ${table} add column ${column} ${def}`);
+  return true;
 }
 
 /**
@@ -346,8 +348,10 @@ export function openDb(path = dbPath()): DatabaseSync {
   widenCheck("shadow_tracks", ...sources);
   widenCheck("hypotheses", ...sources);
   widenCheck("token_snapshots", "('entry', 'exit', 'decision')", "('entry', 'exit', 'decision', 'sample')");
-  // A ledger from before config_history: the config in force starts the history, as of its last save.
-  db.exec("insert into config_history (at, value) select updated_at, value from settings where key = 'config' and not exists (select 1 from config_history)");
+  // 8 Nov 2026, a version per position: those bought before are stamped with the save in force then,
+  // the way versions were counted until now (every save was one).
+  if (addColumn("positions", "config_at", "integer references config_history(at)"))
+    db.exec("update positions set config_at = (select max(at) from config_history h where h.at <= positions.opened_at)");
   return db;
 }
 
