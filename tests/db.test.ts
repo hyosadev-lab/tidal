@@ -72,7 +72,7 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
       create table settings (key text primary key, value text not null, updated_at integer not null) strict;
       insert into settings values ('config', '{"prompt":"v1"}', 7);
       create table config_history (at integer primary key, value text not null) strict;
-      insert into config_history values (5, '{}'), (20, '{}');
+      insert into config_history values (5, '{"timeStopMinutes":30,"liquidityDrainPct":55,"sizeSol":0.1}'), (20, '{}');
       create table positions (id integer primary key, token text not null, status text not null, opened_at integer not null, closed_at integer) strict;
       insert into positions (token, status, opened_at) values ('A', 'closed', 3), ('B', 'closed', 10), ('C', 'closed', 25);
       insert into agent_runs (started_at, model, status) values (1, 'm', 'ok');
@@ -90,6 +90,9 @@ test("schema: a ledger from before the new columns gains them, old rows keep the
       const stamps = db.prepare("select config_at from positions order by id").all().map((r) => r.config_at);
       assert.deepEqual(stamps, i === 0 ? [null, 5, 20] : [null, 5, null]);
       if (i === 0) db.exec("update positions set config_at = null where token = 'C'");
+      // What calibration replays each with (9 Nov 2026): its version's time stop, drain and size; none without one.
+      const kept = db.prepare("select time_stop_min t, drain_pct d, size_sol s from positions order by id").all().map((r) => [r.t, r.d, r.s]);
+      assert.deepEqual(kept, [[null, null, null], [30, 55, 0.1], [null, null, null]]);
       // The added column brings its checks: an end needs a reason.
       assert.throws(() => db.prepare("insert into shadow_tracks (token, source, features, started_at, ended_at) values ('M', 'rank', '{}', 1, 2)").run(), /CHECK/);
       // The source check is widened in place (5 Nov 2026): signal tracks go in, an unknown source still does not.

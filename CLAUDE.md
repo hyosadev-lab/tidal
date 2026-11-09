@@ -77,9 +77,9 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
   in any quote (reserve in SOL at the quote's price at start); a completed curve's pool comes off
   the mint (`pools.migratedPool`, a PDA). Runs started or stopped; a restart ends open tracks as
-  'restart'. Settings versions (`config_history`): a save is never one; only Apply on a passed idea (and Go live) records Settings as they are, unless a row already equals them (`applyVersion`). A version is current while Settings equal it, fetch filters (`filters`, `signalFilters`, `signalTypes`) aside (`versionAt`); a buy stamps it (`positions.config_at`, null = none current: that trade counts for no version, test or calibration). `replay.ts` replays an exit plan
+  'restart'. Settings versions (`config_history`): a save is never one; only Apply on a passed idea (and Go live) records Settings as they are, unless a row already equals them (`applyVersion`). A version is current while Settings equal it, fetch filters (`filters`, `signalFilters`, `signalTypes`) aside (`versionAt`); a buy stamps it (`positions.config_at`, null = none current: that trade counts for no version or test; it keeps `time_stop_min`, `drain_pct`, `size_sol` either way). `replay.ts` replays an exit plan
   on a track's path the way `evaluate` runs it (impact off the stored reserve); `calibration()`
-  replays every stamped trade closed by its rules on its own track. The Research page (`view.research`,
+  replays every trade closed by its rules on its own track, with the plan its buy kept, version or not (it scores the replay, not a Settings: a ledger with no version still gets a friction). The Research page (`view.research`,
   `GET /api/research`, read every 15s while open) is laid out as the canvas's Research board: six
   tiles, the tries beside the open one (a passed idea carries its proposed change: `promptOf` the
   conditions, `exitFields` against Settings), settings versions folded.

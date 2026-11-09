@@ -80,6 +80,7 @@ function decided(at: number, features: object, path: Point[], real?: { pnl: numb
     token, decision_id: d, entry_snapshot_id: insert("token_snapshots", { token, taken_at: at, kind: "entry", price_usd: 1, raw: "{}" }),
     mode: real.mode ?? "paper", status: "closed", opened_at: at + 4_000, closed_at: at + 60_000, close_reason: real.reason, entry_price_usd: 1, cost_usd: 10, original_qty: "1", qty: "0",
     config_at: real.version !== undefined ? real.version : (versionAt() ?? applyVersion()),
+    time_stop_min: loadConfig().timeStopMinutes, drain_pct: loadConfig().liquidityDrainPct, size_sol: loadConfig().sizeSol,
   });
   insert("exit_rules", { position_id: p, seq: 0, kind: "sl", at_pct: -30, sell_pct: 100 });
   insert("exit_rules", { position_id: p, seq: 1, kind: "tp", at_pct: 15, sell_pct: 100 });
@@ -113,6 +114,16 @@ test("judge: waits for a trusted replay, then decides at the 30th trade on track
   assert.equal(move(good.id, "drop"), "already dropped");
   assert.equal(move(good.id, "undrop"), null);
   assert.equal(tries().find((x) => x.id === good.id)!.status, "passed");
+});
+
+test("judge: a ledger with no Settings version still decides, once 10 real trades replay", () => {
+  openDb(":memory:");
+  const t0 = Date.UTC(2026, 10, 2, 0, 0);
+  const good = reg(idea(), "m", t0);
+  for (let i = 0; i < 60; i++) decided(t0 + 60_000 + i * 600_000, { good: i % 2 === 0 }, i % 2 === 0 ? UP : DOWN);
+  for (let i = 0; i < 10; i++) decided(t0 - 86_400_000 + i * 60_000, { good: true }, UP, { pnl: 19.9, reason: "tp", version: null });
+  assert.equal(versionAt(), null); // only Apply makes one, and nothing has passed yet
+  assert.deepEqual(judge(t0 + 2 * 86_400_000), [{ id: good.id, status: "passed" }]);
 });
 
 test("ledger_query: one select on a read-only connection, cut short when it runs long", () => {

@@ -203,7 +203,10 @@ create table if not exists positions (
   entry_market_cap_usd real,
   last_price_usd real,
   peak_price_usd real,
-  config_at integer references config_history(at)
+  config_at integer references config_history(at),
+  time_stop_min real,
+  drain_pct real,
+  size_sol real
 ) strict;
 create index if not exists positions_status on positions(status);
 create index if not exists positions_cooldown on positions(token, closed_at);
@@ -352,6 +355,10 @@ export function openDb(path = dbPath()): DatabaseSync {
   // the way versions were counted until now (every save was one).
   if (addColumn("positions", "config_at", "integer references config_history(at)"))
     db.exec("update positions set config_at = (select max(at) from config_history h where h.at <= positions.opened_at)");
+  // 9 Nov 2026, each position keeps what calibration replays it with: those bought before take their version's.
+  if (["time_stop_min", "drain_pct", "size_sol"].map((c) => addColumn("positions", c, "real")).some(Boolean))
+    db.exec(`update positions set (time_stop_min, drain_pct, size_sol) = (select json_extract(value, '$.timeStopMinutes'),
+      json_extract(value, '$.liquidityDrainPct'), json_extract(value, '$.sizeSol') from config_history h where h.at = positions.config_at)`);
   return db;
 }
 

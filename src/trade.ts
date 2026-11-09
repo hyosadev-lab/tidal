@@ -215,6 +215,9 @@ export async function buy(o: { token: string; decisionId: number; entrySnapshotI
         last_price_usd: snap.price_usd,
         peak_price_usd: snap.price_usd,
         config_at: versionAt(cfg), // the version this buy ran under; none = counted for no version
+        time_stop_min: cfg.timeStopMinutes, // what calibration replays it with, version or not
+        drain_pct: cfg.liquidityDrainPct,
+        size_sol: cfg.sizeSol,
       });
       insert("trades", {
         position_id: positionId,

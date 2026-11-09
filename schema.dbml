@@ -254,6 +254,9 @@ Table positions {
   last_price_usd real [note: 'updated every monitor tick']
   peak_price_usd real
   config_at integer [ref: > config_history.at, note: 'the Settings version in force at the buy; null = Settings matched none, and the trade counts for no version or test']
+  time_stop_min real [note: 'the time stop, drain and size it was bought with: what calibration replays it with, version or not']
+  drain_pct real
+  size_sol real
 
   indexes {
     status
