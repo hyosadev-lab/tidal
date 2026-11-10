@@ -126,6 +126,35 @@ test("judge: a ledger with no Settings version still decides, once 10 real trade
   assert.deepEqual(judge(t0 + 2 * 86_400_000), [{ id: good.id, status: "passed" }]);
 });
 
+/** The last `decided` track, ended another way: null = still open. */
+const endLast = (reason: "rug" | "restart" | null, at: number | null = null) =>
+  db.prepare("update shadow_tracks set ended_at = ?, end_reason = ?, path = case when ? = 'rug' then path end where token = ?").run(at, reason, reason, `T${seq - 1}`);
+
+test("judge: where a track is still open or was cut by a restart, the ended ones are the rugs alone: left out", () => {
+  openDb(":memory:");
+  const t0 = Date.UTC(2026, 10, 2, 0, 0);
+  trusted(t0 - 3 * 86_400_000);
+  const h = reg(idea(), "m", t0).id;
+  for (let i = 0; i < 29; i++) {
+    decided(t0 + 60_000 + i * 600_000, { good: true }, UP);
+    decided(t0 + 90_000 + i * 600_000, { good: false }, DOWN);
+  }
+  const tA = t0 + 30 * 600_000;
+  decided(tA, { good: true }, UP); // a survivor, still tracking
+  endLast(null);
+  decided(tA + 60_000, { good: true }, DOWN); // started later, rugged at once
+  endLast("rug", tA + 90_000);
+
+  assert.deepEqual(judge(tA + 600_000), []); // the rug is not the 30th trade: the survivor before it has not ended
+  assert.equal(tries()[0]!.result.note, "29 of 30 trades");
+
+  db.prepare("update shadow_tracks set ended_at = ?, end_reason = 'restart' where ended_at is null").run(tA + 120_000);
+  assert.deepEqual(judge(tA + 3_600_000), []); // the survivor is lost, so the rug beside it never counts
+  decided(tA + 600_000, { good: true }, UP);
+  assert.deepEqual(judge(tA + 2 * 3_600_000), [{ id: h, status: "passed" }]);
+  assert.deepEqual([tries()[0]!.result.n, tries()[0]!.result.win, tries()[0]!.result.pool_n], [30, 100, 59]);
+});
+
 test("ledger_query: one select on a read-only connection, cut short when it runs long", () => {
   const ro = new DatabaseSync(":memory:");
   ro.exec("create table t (n integer); with recursive s(n) as (select 1 union all select n + 1 from s where n < 500) insert into t select n from s;");
@@ -172,6 +201,11 @@ test("apply, paper, then live: each step the operator's, each judged at 30 trade
   for (let i = 0; i < 30; i++) decided(paperAt + 60_000 + i * 1_800_000, { good: true, symbol: `B${i}` }, UP, { pnl: 5, reason: "tp" });
   for (let i = 0; i < 2; i++) decided(paperAt + 90_000 + i * 1_800_000, { good: true, symbol: `S${i}` }, UP);
   for (let i = 0; i < 50; i++) decided(paperAt + 120_000 + i * 1_000_000, { good: false }, DOWN);
+  decided(paperAt + 150_000, { good: false }, DOWN);
+  endLast(null); // a track from before the 30th buy still open: the random picks are not all in
+  judge(paperAt + 3 * 86_400_000);
+  assert.deepEqual([tries()[0]!.result.paper.n, tries()[0]!.result.paper.verdict], [30, undefined]);
+  endLast("rug", paperAt + 200_000);
   judge(paperAt + 3 * 86_400_000);
   const p = tries()[0]!.result.paper;
   assert.equal(p.verdict, "holds", JSON.stringify(p));

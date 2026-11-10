@@ -85,7 +85,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   conditions, `exitFields` against Settings), settings versions folded.
 - Hypotheses (`research.ts`, edge research phase 2): an idea = conditions over a track's
   `features` + an exit; `register` fixes its bar (`need_pct` = 100 − 5/try), refuses a repeat of
-  any try (same conditions, exit and source — `sameIdea`), and only tracks after it judge it; `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
+  any try (same conditions, exit and source — `sameIdea`), and only tracks after it judge it, never a stretch with a track still open or cut by a restart
+  (`tracksIn`: a rug ends its track at once, a survivor an hour on, so there the ended ones are the rugs alone); `judge` decides at the 30th simulated trade (slots, replay, friction, half-days,
   seeded random picks). `research-cli.ts` is the one door: `list | test | register | judge | agent`.
   The engine runs `judge` every 10 min (when an idea is testing, on paper, live or kept) and
   `agent` once a day while running (`researchDue`, a day after the last research run started,
@@ -107,7 +108,8 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   paper or a live stake before its verdict — `inTest`; passed ideas take it in the order they
   passed — `paperLine`) → live (it held on paper; live mode; Go live records Settings as the stake's
   version) → kept; cancel and drop/undrop. `judge` scores a paper or live test on the first 30
-  positions stamped with its version since it began (paused while that version is not current), on real fills, by the forward test's bar;
+  positions stamped with its version since it began (paused while that version is not current), on real fills, by the forward test's bar,
+  once every track from before the last buy has ended;
   it fades → dropped by code. It also logs agent vs. rule picks: buys go through the prompt, never
   a rule in code (the operator's decision, 2 Nov 2026); the rule is only checked against them. Kept and live ideas get the decay watch: last 30 live trades,
   mean ≤ 0 or fill gap (`trades.quote_price_usd`, written on live swaps) above the friction →

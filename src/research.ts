@@ -140,8 +140,19 @@ export const drawsFor = (t: number) => Math.min(200_000, Math.max(1_000, 400 * t
 
 type Track = { id: number; token: string; started_at: number; features: string; end_reason: string };
 
-/** Readable tracks of a source in [from, to), oldest first, each token's first only. */
+/**
+ * Readable tracks of a source in [from, to), oldest first, each token's first only. A rug ends its
+ * track at once and a survivor an hour on, so from the start of the oldest track still open, or
+ * cut by a restart, to its end, the ended tracks are the rugs alone: those stretches are left out.
+ */
 function tracksIn(source: Source, from: number, to: number): Track[] {
+  const cuts = db
+    .prepare(
+      `select min(started_at) a, ended_at b from shadow_tracks where source = ? and started_at < ?
+       and (ended_at is null or (end_reason = 'restart' and ended_at >= ?)) group by ended_at`,
+    )
+    .all(source, to, from) as { a: number; b: number | null }[];
+  const whole = (at: number) => !cuts.some((c) => c.a <= at && at <= (c.b ?? Infinity));
   const rows = db
     .prepare(
       `select id, token, started_at, features, end_reason from shadow_tracks where source = ? and started_at >= ? and started_at < ?
@@ -149,7 +160,7 @@ function tracksIn(source: Source, from: number, to: number): Track[] {
     )
     .all(source, from, to) as Track[];
   const seen = new Set<string>();
-  return rows.filter((r) => !seen.has(r.token) && !!seen.add(r.token));
+  return rows.filter((r) => whole(r.started_at) && !seen.has(r.token) && !!seen.add(r.token));
 }
 
 function tradeOn(t: Track, s: Setup) {
@@ -263,7 +274,8 @@ export function register(idea: Idea, author: string, now = Date.now()): string |
 type Row = { id: number; created_at: number; conditions: string; exit: string; source: Source; need_pct: number };
 
 /**
- * Judges every idea still testing on the tracks that started after it was registered. Code decides
+ * Judges every idea still testing on the tracks that started after it was registered, up to the
+ * oldest still open (`tracksIn`): a trade counts once every track before it has ended. Code decides
  * at the BAR_N-th trade: passed when the mean after friction is above 0, every half-day is above 0,
  * and the mean beats need_pct % of random picks of as many tokens from the same source and window.
  */
@@ -467,7 +479,8 @@ function agreement(conds: Cond[], from: number, to: number) {
 /**
  * A paper or live test: the first BAR_N positions bought under the tested Settings version since the
  * test began, judged on their real fills by the forward test's bar. Holds: the operator takes the
- * next step. Fades: dropped by code. While Settings match another version or none, it is paused:
+ * next step. Fades: dropped by code. The verdict waits for the tracks from before the last buy to
+ * end (the random picks). While Settings match another version or none, it is paused:
  * those trades count for no test, and it goes on once Settings match its version again.
  */
 function prove(h: Full, mode: "paper" | "live", fr: { pct: number | null }, now: number): string | null {
@@ -493,7 +506,9 @@ function prove(h: Full, mode: "paper" | "live", fr: { pct: number | null }, now:
     of: BAR_N, version_at: from, since, paused: versionAt() !== from, agreement: agreement(conds, since, now),
     fill_gap_pct: gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null, at: now,
   };
-  if (ps.length < BAR_N || closed.length < BAR_N) {
+  // A track from before the last buy still open: the random picks of that stretch are not all in yet.
+  const settling = closed.length === BAR_N && !!db.prepare("select 1 from shadow_tracks where source = ? and ended_at is null and started_at <= ?").get(h.source, closed.at(-1)!.opened_at);
+  if (ps.length < BAR_N || closed.length < BAR_N || settling) {
     db.prepare("update hypotheses set result = ? where id = ?").run(JSON.stringify({ ...r, [mode]: { ...base, n: closed.length } }), h.id);
     return null;
   }

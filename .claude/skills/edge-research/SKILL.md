@@ -71,7 +71,10 @@ a stop, 1–4 take profits whose sells add up to 100, a time stop of 1–60 minu
 
 ## How it is judged
 
-Registering fixes the bar. Only tracks that start after registration count, each token once, run
+Registering fixes the bar. Only tracks that start after registration count, each token once, and
+never a stretch where a track is still open or was cut by a restart (a rug ends its track at once,
+a survivor an hour on: there the ended tracks are the rugs alone, so a verdict comes up to an hour
+after its 30th trade). They are run
 as the engine would (Settings' slots, size and liquidity-drain exit; buys 4 seconds after the
 decision; impact off the pool's reserve; the measured friction charged). At its 30th trade it
 **passes** when the mean is above 0, every half-day is above 0, and the mean beats `need_pct` %
