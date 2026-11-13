@@ -265,6 +265,7 @@ create table if not exists shadow_tracks (
   start_price_usd real,
   ended_at integer,
   end_reason text check (end_reason in ('done', 'rug', 'restart', 'unreadable')) check ((ended_at is null) = (end_reason is null)),
+  step_ms integer not null default 2000,
   path text,
   ret_1m real,
   ret_5m real,
@@ -350,6 +351,8 @@ export function openDb(path = dbPath()): DatabaseSync {
   const sources = ["('decision', 'rank', 'migration')", "('decision', 'rank', 'migration', 'signal')"] as const;
   widenCheck("shadow_tracks", ...sources);
   widenCheck("hypotheses", ...sources);
+  // 14 Nov 2026: tracks read every 3s; those before keep the 2s their path was written at.
+  addColumn("shadow_tracks", "step_ms", "integer not null default 2000");
   widenCheck("token_snapshots", "('entry', 'exit', 'decision')", "('entry', 'exit', 'decision', 'sample')");
   // 8 Nov 2026, a version per position: those bought before are stamped with the save in force then,
   // the way versions were counted until now (every save was one).

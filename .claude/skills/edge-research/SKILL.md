@@ -30,8 +30,8 @@ until 5 Nov) are history: new ideas take `decision` or `signal`.
   market cap it fired at) and `signal_age_s` (seconds from the event to the snapshot). A token with
   two types has two tracks; the judge takes each token's first. For `rank` and `migration` it is
   GMGN's feed row, with other field names.
-- `path`: `[[pct, liquidity_sol] | null, …]`, a point every 2 seconds; pct is against the first
-  price. `ret_1m … ret_60m`, `max_pct`, `min_pct` summarise it.
+- `path`: `[[pct, liquidity_sol] | null, …]`, a point every `step_ms` (3 s since 14 Nov 2026, 2 s
+  before); pct is against the first price. `ret_1m … ret_60m`, `max_pct`, `min_pct` summarise it.
 - `end_reason`: done, rug (counted, −100% from then), unreadable, restart (left out).
 - `decisions` (action, conviction, thesis), `positions` and `trades` (what was really bought and
   what it made), `hypotheses` (every try so far, with its numbers).

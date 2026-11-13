@@ -333,7 +333,8 @@ Table shadow_tracks {
   start_price_usd real [note: "the first price off the pool, in USD at that moment's prices. Every % below is against that first price in the pool's quote"]
   ended_at integer [note: 'null = still tracking; set together with end_reason (a check)']
   end_reason text [note: "done (the full 60 min) | rug (the quote reserve fell under 5% of its first reading: a result, counted, −100% from then) | restart (the process stopped: the only reason left out of every count) | unreadable (no pool on record, not a pump curve or PumpSwap pool, a quote Jupiter cannot price, or a completed curve whose PumpSwap pool did not appear within 2 min: shown as coverage)"]
-  path text [note: "JSON [[pct, liquidity_sol] | null, …]: point i is i × 2s after started_at; pct vs the first price, liquidity the pool's quote reserve in SOL (a non-SOL quote at its SOL price when the track started; real reserves on a curve), 2 decimals; null where no read landed. ~25 KB a track"]
+  step_ms integer [not null, default: 2000, note: 'ms between points: 3000 since 14 Nov 2026, 2000 before. Replays and the judge read each track at its own']
+  path text [note: "JSON [[pct, liquidity_sol] | null, …]: point i is i × step_ms after started_at; pct vs the first price, liquidity the pool's quote reserve in SOL (a non-SOL quote at its SOL price when the track started; real reserves on a curve), 2 decimals; null where no read landed. ~25 KB a track"]
   ret_1m real [note: '% at 1 min: the last point in the 30s before it; null with no such point (cut short, or a gap). −100 at and after a rug']
   ret_5m real
   ret_15m real
@@ -352,7 +353,7 @@ Table shadow_tracks {
   Note: '''
     One token followed for 60 min after it was decided on, or seen in another feed. Prices come off
     the pool's own reserves (jupiter/pools.ts: pump curve and PumpSwap), one batched
-    getMultipleAccounts read every 2s, new pools resolved in two reads whatever their number, and a
+    getMultipleAccounts read every 3s (2s before 14 Nov 2026), new pools resolved in two reads whatever their number, and a
     failed read rests the tracker 10s (the RPC is the exit loop's too); a curve that completes is
     followed to the PumpSwap pool its mint implies (pools.migratedPool). The
     outcome of every candidate, bought or not: the scorecard, replays and hypotheses read this, never

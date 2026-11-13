@@ -11,8 +11,8 @@ import { STEP_MS, type Point } from "./shadow.ts";
 export type Rule = { kind: "tp" | "sl"; at: number; sell: number };
 export type ExitPlan = { rules: Rule[]; timeMin: number; drainPct: number };
 
-/** A point after the buy point this many steps (30s) late is too late to buy at. */
-const ENTRY_STEPS = 15;
+/** A point this long after the buy point is too late to buy at. */
+const ENTRY_MS = 30_000;
 
 /**
  * One position replayed from point `from`: bought there for `sizeSol` at the pool price plus the
@@ -24,7 +24,8 @@ const ENTRY_STEPS = 15;
  * overstated; the measured gap carries it.
  * Returns the PnL % on cost and the point where nothing was left held, or null with no point to buy at. Pure.
  */
-export function replayTrade(points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean): { pnl: number; out: number } | null {
+export function replayTrade(points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean, stepMs = STEP_MS): { pnl: number; out: number } | null {
+  const ENTRY_STEPS = ENTRY_MS / stepMs;
   let e = Math.max(0, from);
   while (e < points.length && e <= from + ENTRY_STEPS && !points[e]) e++;
   const at = points[e];
@@ -58,7 +59,7 @@ export function replayTrade(points: Point[], from: number, plan: ExitPlan, sizeS
     const stop = fire("sl", (r) => pnl <= r.at);
     if (stop) sellAt(p, stop);
     else if (p[1] < baseline * (1 - plan.drainPct / 100)) sellAt(p, 100);
-    else if ((i - e) * STEP_MS >= plan.timeMin * 60_000) sellAt(p, 100);
+    else if ((i - e) * stepMs >= plan.timeMin * 60_000) sellAt(p, 100);
     else {
       const take = fire("tp", (r) => pnl >= r.at);
       if (take) sellAt(p, take);
@@ -69,8 +70,8 @@ export function replayTrade(points: Point[], from: number, plan: ExitPlan, sizeS
 }
 
 /** `replayTrade`'s PnL % alone. */
-export const replay = (points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean): number | null =>
-  replayTrade(points, from, plan, sizeSol, rug)?.pnl ?? null;
+export const replay = (points: Point[], from: number, plan: ExitPlan, sizeSol: number, rug: boolean, stepMs = STEP_MS): number | null =>
+  replayTrade(points, from, plan, sizeSol, rug, stepMs)?.pnl ?? null;
 
 export type Calibration = { n: number; agree: number; gapPct: number | null };
 
@@ -96,7 +97,7 @@ export function calibration(): Calibration {
     )
     .all() as { id: number }[];
   const one = db.prepare(
-    `select p.id, p.opened_at, p.cost_usd, p.time_stop_min, p.drain_pct, p.size_sol, s.started_at, s.path, s.end_reason,
+    `select p.id, p.opened_at, p.cost_usd, p.time_stop_min, p.drain_pct, p.size_sol, s.started_at, s.step_ms, s.path, s.end_reason,
        (select sum(pnl_usd) from trades t where t.position_id = p.id and t.side = 'sell') pnl
      from positions p join shadow_tracks s on s.decision_id = p.decision_id where p.id = ?`,
   );
@@ -108,10 +109,10 @@ export function calibration(): Calibration {
   for (const { id } of rows) {
     if (!sims.has(id)) {
       const r = one.get(id) as {
-        opened_at: number; cost_usd: number; time_stop_min: number; drain_pct: number; size_sol: number; started_at: number; path: string; end_reason: string; pnl: number | null;
+        opened_at: number; cost_usd: number; time_stop_min: number; drain_pct: number; size_sol: number; started_at: number; step_ms: number; path: string; end_reason: string; pnl: number | null;
       };
       const plan = { rules: rulesOf.all(id) as Rule[], timeMin: r.time_stop_min, drainPct: r.drain_pct };
-      const sim = replay(JSON.parse(r.path), Math.round((r.opened_at - r.started_at) / STEP_MS), plan, r.size_sol, r.end_reason === "rug");
+      const sim = replay(JSON.parse(r.path), Math.round((r.opened_at - r.started_at) / r.step_ms), plan, r.size_sol, r.end_reason === "rug", r.step_ms);
       sims.set(id, sim === null || !(r.cost_usd > 0) ? null : { sim, real: ((r.pnl ?? 0) / r.cost_usd) * 100 });
     }
     const x = sims.get(id);

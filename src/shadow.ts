@@ -22,7 +22,8 @@ import { solUsd } from "./trade.ts";
  */
 
 export const WINDOW_MS = 60 * 60_000;
-export const STEP_MS = 2_000;
+/** A point every STEP_MS (3s since 14 Nov 2026, 2s before): each track keeps its own in step_ms. */
+export const STEP_MS = 3_000;
 /** Open signal tracks, at most: what the read budget leaves after every decided token. */
 export const SAMPLE_MAX = 20;
 /** New signal tracks a minute, at most: each costs a /v1/token/info read off the entry loop's GMGN budget. */
@@ -33,7 +34,7 @@ const RUG_SHARE = 0.05;
 const MOVE_MS = 10_000;
 const MOVE_TRIES = 12;
 /** A horizon takes the last point at most this many steps before it (30s); older is no answer. */
-const STALE_STEPS = 15;
+const STALE_STEPS = 30_000 / STEP_MS;
 const HORIZONS = [60, 300, 900, 1800, 3600] as const;
 /** A signal event seen this long after it fired is no longer fresh: its track would start late. */
 const FRESH_MS = 3 * 60_000;
@@ -73,7 +74,7 @@ function open(id: number, source: Source, token: string, pool: string | null, no
 
 /** Starts following a decided token. `features` is the brief row exactly as the agent got it; its pool_address is the pool. */
 export function track(decisionId: number, token: string, features: Record<string, unknown>, now = Date.now()): void {
-  const id = insert("shadow_tracks", { token, source: "decision", decision_id: decisionId, features: JSON.stringify(features), started_at: now });
+  const id = insert("shadow_tracks", { token, source: "decision", decision_id: decisionId, features: JSON.stringify(features), started_at: now, step_ms: STEP_MS });
   open(id, "decision", token, typeof features["pool_address"] === "string" ? features["pool_address"] : null, now);
 }
 
@@ -134,7 +135,7 @@ export async function sampleSignals(cfg: Config, now = Date.now()): Promise<void
       if (!row) rows.set(p.token, (row = briefRow(await takeSnapshot(p.token, "sample"))));
       const at = Date.now();
       const features = { ...row, signal_type: signalName(p.type), signal_mc_usd: p.mc, signal_age_s: Math.round((at - p.at) / 1000) };
-      const id = insert("shadow_tracks", { token: p.token, source: "signal", features: JSON.stringify(features), started_at: at });
+      const id = insert("shadow_tracks", { token: p.token, source: "signal", features: JSON.stringify(features), started_at: at, step_ms: STEP_MS });
       open(id, "signal", p.token, typeof row["pool_address"] === "string" ? row["pool_address"] : null, at);
     }
     signalError = "";

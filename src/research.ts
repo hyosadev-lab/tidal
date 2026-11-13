@@ -4,7 +4,7 @@ import { applyVersion, loadConfig, sanitize, saveConfig, versionAt, type Config,
 import { db, insert, tx } from "./db.ts";
 import { log, short } from "./log.ts";
 import { calibration, replayTrade, type ExitPlan } from "./replay.ts";
-import { STEP_MS, type Point, type Source } from "./shadow.ts";
+import { type Point, type Source } from "./shadow.ts";
 
 /**
  * Hypotheses: the model proposes, code judges, the operator decides. An idea is a rule code can
@@ -28,8 +28,8 @@ export const BAR_N = 30;
 /** The replay is trusted once this many real trades replay, and this share agree on win or loss. */
 const CAL_MIN = 10;
 const CAL_AGREE = 0.9;
-/** A buy lands about 4s after the decision (security read, quote): the replay buys 2 points in. */
-const ENTRY_STEPS = 2;
+/** A buy lands about 4s after the decision (security read, quote): the replay buys at the first point from then. */
+const ENTRY_MS = 4_000;
 const HALF_DAY = 12 * 3_600_000;
 /** Backtests, context only, look this far back. */
 const BACKTEST_MS = 7 * 86_400_000;
@@ -138,7 +138,7 @@ export const drawsFor = (t: number) => Math.min(200_000, Math.max(1_000, 400 * t
 
 // ── tracks ────────────────────────────────────────────────────────────
 
-type Track = { id: number; token: string; started_at: number; features: string; end_reason: string };
+type Track = { id: number; token: string; started_at: number; step_ms: number; features: string; end_reason: string };
 
 /**
  * Readable tracks of a source in [from, to), oldest first, each token's first only. A rug ends its
@@ -155,7 +155,7 @@ function tracksIn(source: Source, from: number, to: number): Track[] {
   const whole = (at: number) => !cuts.some((c) => c.a <= at && at <= (c.b ?? Infinity));
   const rows = db
     .prepare(
-      `select id, token, started_at, features, end_reason from shadow_tracks where source = ? and started_at >= ? and started_at < ?
+      `select id, token, started_at, step_ms, features, end_reason from shadow_tracks where source = ? and started_at >= ? and started_at < ?
        and end_reason in ('done', 'rug') and path is not null order by started_at, id`,
     )
     .all(source, from, to) as Track[];
@@ -165,7 +165,7 @@ function tracksIn(source: Source, from: number, to: number): Track[] {
 
 function tradeOn(t: Track, s: Setup) {
   const path = JSON.parse((db.prepare("select path from shadow_tracks where id = ?").get(t.id) as { path: string }).path) as Point[];
-  return replayTrade(path, ENTRY_STEPS, plan(s), s.size_sol, t.end_reason === "rug");
+  return replayTrade(path, Math.ceil(ENTRY_MS / t.step_ms), plan(s), s.size_sol, t.end_reason === "rug", t.step_ms);
 }
 
 /**
@@ -181,7 +181,7 @@ export function simulate(conds: Cond[], s: Setup, tracks: Track[]): { at: number
     if (open >= s.slots) continue;
     const r = tradeOn(t, s);
     if (!r) continue;
-    busyUntil.push(t.started_at + r.out * STEP_MS);
+    busyUntil.push(t.started_at + r.out * t.step_ms);
     out.push({ at: t.started_at, pnl: r.pnl });
   }
   return out;

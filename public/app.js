@@ -571,7 +571,7 @@ const helpTip = (id, label, html) =>
 const SHADOW_HELP = `<b style="color:var(--ink)">What shadow tracking follows</b>
   <span>Every token the agent decides on (buy, wait or skip) is followed for 60 minutes off its pool's own reserves, bought or not, so every candidate gets an outcome.</span>
   <span><b style="color:var(--ink)">Sampled</b> · GMGN signal events of the types the Signals list does not fetch, at most 20 open at a time. Never bought: they show whether another source is worth researching.</span>
-  <span>One RPC read every 2s prices every open track at once. It keeps running while trading is stopped, so a track that started still gets its full hour.</span>`;
+  <span>One RPC read every 3s prices every open track at once. It keeps running while trading is stopped, so a track that started still gets its full hour.</span>`;
 
 const AGENT_HELP = `<b style="color:var(--ink)">What the agent does</b>
   <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h trending or signal list (smart money buy, pump claim; Pump.fun launches only), or a wait that has ended. Up to 10 tokens per run.</span>
@@ -809,7 +809,7 @@ function researchTiles(r) {
       `<div class="in"><span class="inline" style="align-items:baseline"><span class="num">${t.started.toLocaleString("en-US")}</span><span class="s13 muted">tracks · last 24h</span></span>
       <span class="s13 muted">${ink(t.done)} done · <b class="neg">${t.rug}</b> rug · <b class="warn">${t.unreadable}</b> unreadable · <b class="warn">${t.restart}</b> restart · ${ink(t.open)} running</span>
       <span class="s13 muted">${ink(readable(t.readable))} readable on-chain (${t.bySource.map((x) => `${SOURCE[x.source]} ${readable(x.readable)}`).join(", ")})</span>
-      <span class="s13 muted inline" style="align-items:flex-start;gap:8px;margin-top:6px;padding-top:10px;border-top:1px solid var(--line)"><span class="dot" style="margin-top:5px;background:${o.decision + o.signal ? "var(--lime)" : "var(--dim)"}"></span><span>${ink("Now")} ${ink(o.decision + o.signal)} running (${ink(o.decision)} decided · ${ink(o.signal)} of ${r.sampleMax} sampled) · one RPC read every 2s</span></span></div>`,
+      <span class="s13 muted inline" style="align-items:flex-start;gap:8px;margin-top:6px;padding-top:10px;border-top:1px solid var(--line)"><span class="dot" style="margin-top:5px;background:${o.decision + o.signal ? "var(--lime)" : "var(--dim)"}"></span><span>${ink("Now")} ${ink(o.decision + o.signal)} running (${ink(o.decision)} decided · ${ink(o.signal)} of ${r.sampleMax} sampled) · one RPC read every 3s</span></span></div>`,
       "pool reserves, 60 min each · follows curve → PumpSwap · a rug counts as a result; unreadable and restart tracks are left out of the returns")}
     ${tile(R_ICON.calibration, "Replay calibration",
       `<div class="in"><span class="inline" style="align-items:baseline"><span class="num">${cal.n ? Math.round((cal.agree / cal.n) * 100) + "%" : "—"}</span><span class="s13 muted">agree</span></span>
@@ -1013,7 +1013,7 @@ function ideaPanel(h, r) {
       <div class="box on"><span class="small soft">${seed ? "Verdict data · replay and live" : pending ? "After registering · so far" : "After registering · the verdict"}</span><span class="bnum b ${fin(res.avg_pct) ? sign(res.avg_pct) : ""}">${pct(res.avg_pct)}</span><span class="small soft">n ${fin(res.n) ? res.n : "—"}${fin(res.win) ? ` · ${Math.round(res.win)}% win` : ""}</span></div>
     </div>
     ${halves.length ? `<div class="stack" style="gap:8px"><span class="small dim">After registering, per half-day</span><div class="chips">${halves.map((v) => `<span class="half ${sign(v)}">${pct(v)}</span>`).join("")}</div></div>` : ""}
-    <div class="stack" style="gap:4px"><span class="small dim">The bar · set when registered · 2s paths, ${plural(h.exit.slots, "slot")}, ${h.exit.size_sol} SOL a buy and a ${h.exit.drain}% drain exit, as in Settings then</span>
+    <div class="stack" style="gap:4px"><span class="small dim">The bar · set when registered · 3s paths, ${plural(h.exit.slots, "slot")}, ${h.exit.size_sol} SOL a buy and a ${h.exit.drain}% drain exit, as in Settings then</span>
       <ul class="checks" aria-label="The bar">${checks.map(([label, val, ok]) => `<li>${mark(ok)}<span>${esc(label)}</span><span class="soft">${esc(val)}</span></li>`).join("")}</ul></div>
     ${ideaStage(h, r)}
   </section>`;

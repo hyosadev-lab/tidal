@@ -55,19 +55,19 @@ const row = (decisionId: number) => db.prepare("select * from shadow_tracks wher
 test("outcome: each horizon takes the last point within 30s, extremes, and −100 after a rug", () => {
   const pts: Point[] = [];
   pts[0] = [0, 10];
-  pts[25] = [5, 11]; // 50s: stands for 1 min
-  pts[150] = [-3, 9];
-  pts[1800] = [12, 15];
+  pts[17] = [5, 11]; // 51s: stands for 1 min
+  pts[100] = [-3, 9];
+  pts[1200] = [12, 15];
   const o = outcome(pts, false);
   assert.deepEqual([o.ret_1m, o.ret_5m, o.ret_15m, o.ret_30m, o.ret_60m], [5, -3, null, null, 12]);
   assert.deepEqual([o.max_pct, o.max_at, o.min_pct, o.min_at], [12, 3600, -3, 300]);
 
   const rug: Point[] = [[0, 10]];
-  rug[20] = [20, 12];
-  rug[40] = [-1, 0.2]; // drained at 80s
+  rug[13] = [20, 12];
+  rug[27] = [-1, 0.2]; // drained at 81s
   const r = outcome(rug, true);
   assert.deepEqual([r.ret_1m, r.ret_5m, r.ret_60m], [20, -100, -100]);
-  assert.deepEqual([r.max_pct, r.max_at, r.min_pct, r.min_at], [20, 40, -100, 80]);
+  assert.deepEqual([r.max_pct, r.max_at, r.min_pct, r.min_at], [20, 39, -100, 81]);
   assert.equal(outcome([], false).max_pct, null);
 });
 
@@ -80,7 +80,7 @@ test("a decided token is followed off its curve for the whole window, then writt
   track(id, MINT, { symbol: "X", pool_address: CURVE }, t0);
   assert.equal(row(id).ended_at, null);
 
-  await shadowTick(t0 + 2_000);
+  await shadowTick(t0 + 3_000);
   assert.ok(Math.abs(row(id).start_price_usd - 3e-5 * 200) < 1e-12);
   setCurve(33, 12); // +10%
   await shadowTick(t0 + 60_000);
@@ -91,9 +91,10 @@ test("a decided token is followed off its curve for the whole window, then writt
   assert.equal(r.end_reason, "done");
   assert.deepEqual(tracking(), none);
   assert.deepEqual(JSON.parse(r.features), { symbol: "X", pool_address: CURVE });
+  assert.equal(r.step_ms, 3_000); // tracks before 14 Nov 2026 keep 2000: replays read each at its own
   const path = JSON.parse(r.path) as Point[];
-  assert.equal(path.length, 1801);
-  assert.deepEqual([path[1], path[30], path[1800]], [[0, 10], [10, 12], [-10, 8]]);
+  assert.equal(path.length, 1201);
+  assert.deepEqual([path[1], path[20], path[1200]], [[0, 10], [10, 12], [-10, 8]]);
   assert.deepEqual([r.ret_1m, r.ret_5m, r.ret_60m, r.max_pct, r.min_pct], [10, null, -10, 10, -10]);
 });
 
@@ -104,22 +105,22 @@ test("a curve that completes is followed into the PumpSwap pool it migrated to",
   const id = decided(MINT);
   const t0 = Date.now();
   track(id, MINT, { pool_address: CURVE }, t0);
-  await shadowTick(t0 + 2_000);
+  await shadowTick(t0 + 3_000);
 
   chain.set(CURVE, { owner: PUMP_CURVE, data: Object.assign(curve(30, 10).data, { 48: 1 }) }); // complete
-  await shadowTick(t0 + 4_000);
+  await shadowTick(t0 + 6_000);
   const [pool, base, quote] = [migratedPool(MINT), key(21), key(22)];
   const d = Buffer.alloc(301);
   for (const [at, k] of [[43, MINT], [75, WSOL], [139, base], [171, quote]] as const) b58decode(k).copy(d, at);
   chain.set(pool, { owner: PUMP_AMM, data: d });
   chain.set(base, { owner: key(9), data: u64(Buffer.alloc(165), 64, 1_000_000_000_000n) }); // 1e6 tokens
   chain.set(quote, { owner: key(9), data: u64(Buffer.alloc(165), 64, 36_000_000_000n) }); // 36 SOL: +20%
-  await shadowTick(t0 + 14_000); // the pool is found
-  await shadowTick(t0 + 16_000);
+  await shadowTick(t0 + 15_000); // the pool is found
+  await shadowTick(t0 + 18_000);
   await shadowTick(t0 + WINDOW_MS);
   const r = row(id);
   assert.equal(r.end_reason, "done");
-  assert.deepEqual(JSON.parse(r.path)[8], [20, 36]);
+  assert.deepEqual(JSON.parse(r.path)[6], [20, 36]);
 });
 
 test("a curve in another quote is tracked in SOL at that quote's price", async () => {
@@ -130,7 +131,7 @@ test("a curve in another quote is tracked in SOL at that quote's price", async (
   const id = decided(MINT);
   const t0 = Date.now();
   track(id, MINT, { pool_address: QCURVE }, t0);
-  await shadowTick(t0 + 2_000);
+  await shadowTick(t0 + 3_000);
   await shadowTick(t0 + WINDOW_MS);
   const r = row(id);
   assert.equal(r.end_reason, "done");
@@ -148,17 +149,17 @@ test("a drained pool ends as a rug; a pool off the feed, or none, ends at once; 
   track(other, MINT, { pool_address: ELSEWHERE }, t0);
   track(nopool, MINT, {}, t0);
 
-  await shadowTick(t0 + 2_000);
+  await shadowTick(t0 + 3_000);
   assert.equal(row(other).end_reason, "unreadable");
   assert.equal(row(other).path, null);
   assert.equal(row(nopool).end_reason, "unreadable");
   assert.equal(row(rug).ended_at, null);
 
   setCurve(30, 0.4); // under 5% of the first 10 SOL
-  await shadowTick(t0 + 4_000);
+  await shadowTick(t0 + 6_000);
   const r = row(rug);
   assert.equal(r.end_reason, "rug");
-  assert.deepEqual([r.ret_1m, r.ret_60m, r.min_pct, r.min_at], [-100, -100, -100, 4]);
+  assert.deepEqual([r.ret_1m, r.ret_60m, r.min_pct, r.min_at], [-100, -100, -100, 6]);
   assert.deepEqual(tracking(), none);
 
   const open = decided(MINT);

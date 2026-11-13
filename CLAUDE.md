@@ -72,7 +72,7 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   per token × type, 20 open, 5 new a minute; `features` = the brief row of a fresh 'sample'
   snapshot + `signal_type` / `signal_mc_usd` / `signal_age_s`. 'rank' and 'migration' were sampled
   until 5 Nov 2026 (their tracks stay; new ideas take decision or signal). Its own
-  `getMultipleAccounts` read every 2s (`pools.resolvePools` / `poolReading`), not the exit loop's
+  `getMultipleAccounts` read every 3s (`STEP_MS`; a track keeps its own in `step_ms`, 2s before 14 Nov 2026; `pools.resolvePools` / `poolReading`), not the exit loop's
   watches (an unwatch would cut a held position's feed); it shares the public RPC with the exit
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
   in any quote (reserve in SOL at the quote's price at start); a completed curve's pool comes off
