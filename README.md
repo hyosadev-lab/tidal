@@ -30,9 +30,15 @@ Pembagiannya disengaja:
 
 Jalan siklus demi siklus tanpa timer, selama status **running**:
 
-1. **Fetch** — GMGN rank 1 jam (urut volume, 40 baris) + feed sinyal dalam empat grup: smart money
-   buy, KOL buy, harga (spike / ATH / level market cap), dan community takeover. Token wash trading
-   dibuang. **Fetch filters** di dashboard dikirim ke GMGN, sisanya dicek per baris.
+1. **Fetch** — dua list GMGN, cuma token launch pump.fun:
+   - **Trending** — rank urut volume, 40 baris, di interval yang kamu pilih (1m · 5m · 1h · 6h ·
+     24h, default 1h).
+   - **Signals** — `/v1/market/token_signal`, satu grup per tipe sinyal yang dicentang (default
+     smart money buy + pump claim), cuma yang di bonding curve pump atau PumpSwap.
+
+   Tiap list punya **Fetch filters** sendiri (dikirim ke GMGN, sisanya dicek per baris) dan switch
+   on/off di modal Filters-nya; list yang off gak dikirim request sama sekali. Token wash trading
+   tetap ikut, ditandai di brief.
 2. **Jatuh tempo** — token baru, `wait` yang waktunya udah lewat, atau yang pernah dibeli dan
    cooldown-nya selesai. `skip` itu final; token yang lagi dipegang atau diblokir gak pernah ikut.
 3. **Snapshot** — maksimal 10 token per siklus, masing-masing satu `/v1/token/info` yang disimpan ke
@@ -43,7 +49,7 @@ Jalan siklus demi siklus tanpa timer, selama status **running**:
 5. **Beli**, conviction tertinggi duluan: rencana exit → cek keamanan → slot → ukuran → kas →
    snapshot entry → `trade.buy`.
 
-Kalau gak bisa beli (slot penuh, kena pause rugi harian), loop **gak fetch dan gak manggil model** —
+Kalau gak bisa beli (slot penuh, kena pause rugi harian, dua list off), loop **gak fetch dan gak manggil model** —
 dia nunggu dibangunin: posisi ditutup, Start, Resume, settings disimpan, atau 00:00 UTC.
 
 ### Cek keamanan sebelum beli
@@ -62,7 +68,10 @@ sebanding.
 
 ### Exit loop (`src/exit.ts`) — tiap 1 detik
 
-Satu baca Jupiter Price API memberi harga semua posisi terbuka, lalu tiap posisi dicek berurutan:
+Harga diambil dari reserve pool-nya langsung on-chain (bonding curve pump dan PumpSwap): WebSocket
+RPC (`accountSubscribe`) ngedorong tiap perubahan dan posisi itu langsung dicek, dengan
+`getMultipleAccounts` sebagai cadangan. Jupiter Price API cuma buat SOL / token quote dan pool yang
+gak kebaca. Tiap posisi dicek berurutan:
 
 1. **Stop loss** — default −25%, jual semua
 2. **Health** — likuiditas turun lebih dari 55% dari bacaan saat masuk
@@ -83,6 +92,24 @@ fixed atau beli-nya dibatalkan).
 Rugi hari ini nembus `maxDailyLossPct` (default 20%) dari equity awal hari → **beli di-pause**, exit
 tetap jalan. Hari dihitung UTC. Mode `auto` mencabut pause jam 00:00 UTC; `manual` nunggu Resume.
 
+### Riset edge (`src/shadow.ts`, `src/research.ts`)
+
+Buat nyari aturan yang beneran untung, bukan nebak:
+
+- **Shadow track** — tiap token yang divonis agent (buy, wait, atau skip) diikuti 60 menit dari
+  reserve pool-nya, dibeli atau enggak. Plus sampel sinyal GMGN dari tipe yang gak di-fetch list
+  Signals. `features` = baris brief persis seperti yang dilihat model, jadi gak ada look-ahead.
+- **Hipotesis** — satu ide = kondisi atas `features` + rencana exit. Kode yang menilai (`judge`),
+  di trade simulasi ke-30, dengan slot, replay exit, dan friction asli. Ide yang pernah dicoba gak
+  bisa didaftarkan ulang.
+- **Research agent** — jalan sekali sehari selama engine running, punya `ledger_query` read-only,
+  `test_rule`, dan satu `register_hypothesis` per run. Model-nya diatur terpisah di Settings.
+- **Membuktikan ide** — semua langkah dari operator: Apply (prompt + exit ide ditulis ke Settings dan
+  dicatat sebagai versi) → paper → live kecil → kept. Ide yang memudar di-drop otomatis; yang kept
+  dipantau decay-nya.
+
+`node src/research-cli.ts list | test | register | judge | agent` itu pintu yang sama dari terminal.
+
 ---
 
 ## Dashboard
@@ -91,17 +118,21 @@ tetap jalan. Hari dihitung UTC. Mode `auto` mencabut pause jam 00:00 UTC; `manua
 
 - **Overview** — kurva equity / realised PnL, posisi terbuka, kesehatan loop dan layanan, fills hari
   ini.
-- **Trading** — token yang dilihat agent dan statusnya, aktivitas agent per hari, detail tiap run:
-  brief, vonis, dan tool call-nya. Klik posisi buat lihat kenapa agent membelinya.
+- **Trading** — token yang dilihat agent, satu tab per list (Trending, Signals) dengan Filters-nya
+  sendiri, aktivitas agent per hari, detail tiap run: brief, vonis, dan tool call-nya. Klik posisi
+  buat lihat kenapa agent membelinya.
+- **Research** — scorecard shadow track, kalibrasi replay, daftar ide dan langkahnya, versi Settings,
+  laporan research agent terakhir.
 - **Settings** — Mode, Buy cycle, Risk check, Exit plan, Agent (model, jatah tool, prompt operator),
-  plus Fetch filters. Disimpan utuh ke tabel `settings`, berlaku mulai siklus berikutnya. Semua nilai
+  research agent. Disimpan utuh ke tabel `settings`, berlaku mulai siklus berikutnya. Semua nilai
   diklem di `src/config.ts` — setting bisa mempersempit batas risiko, gak bisa melebarkannya.
 - **Start / Stop / Resume / Close** — Stop bisa sekalian *Close all & stop*.
 
 "Hari ini" dan hari di grafik pakai zona waktu browser; cuma batas rugi harian yang pakai UTC.
 
 Semua data ada di `data/tta.db` (SQLite, `TTA_DB` buat ganti path): token, snapshot, sinyal, run
-agent, tool call, vonis, posisi, trade, equity. Kas dan equity paper dihitung dari tabel `trades` /
+agent, tool call, vonis, posisi, trade, equity, shadow track, hipotesis. Skemanya ada di
+`schema.dbml`. Kas dan equity paper dihitung dari tabel `trades` /
 `equity`, gak disimpan terpisah.
 
 ### Prompt operator
@@ -148,6 +179,7 @@ GMGN_PRIVATE_KEY=                  # opsional: cuma route GMGN bertanda tangan
 SOLANA_PRIVATE_KEY=                # cuma live mode
 JUPITER_API_KEY=                   # opsional
 SOLANA_RPC_URL=                    # opsional, default RPC publik mainnet
+SOLANA_WS_URL=                     # opsional, default alamat RPC lewat ws(s)://
 TTA_DB=                            # opsional, default data/tta.db
 PORT=3712
 HOST=127.0.0.1
@@ -173,13 +205,17 @@ di depannya, misalnya Caddy (`tidal.domainmu.com { reverse_proxy 127.0.0.1:3712 
 ```
 public/                 dashboard (index.html, app.js, app.css — tanpa build step)
 src/
-  index.ts              entry point: exit loop, sampel equity, dashboard
+  index.ts              entry point: exit loop, sampel equity, judge + research harian, dashboard
   config.ts             setting operator: default, klem, fetch filters
   control.ts            Start / Stop / Resume / Close, pause rugi harian
   entry.ts              entry loop: fetch → jatuh tempo → snapshot → agent → beli
   decide.ts             satu run agent: brief, prompt, vonis
   snapshot.ts           /v1/token/info → tokens, token_snapshots, snapshot_flow
   exit.ts               exit loop: evaluate (murni) + eksekusi
+  shadow.ts             shadow track 60 menit per token yang divonis + sampel sinyal
+  replay.ts             replay rencana exit di jalur harga shadow track
+  research.ts           hipotesis: register, judge, paper → live → kept, decay
+  research-cli.ts       pintu CLI riset (dan child process engine)
   trade.ts              beli, jual, cek keamanan, buku paper & live
   view.ts               semua angka dashboard dihitung di sini
   server.ts, auth.ts    HTTP (node:http) dan login
@@ -187,6 +223,7 @@ src/
   agent/llm.ts          loop tool-calling di atas chat completions; gak impor apa pun dari repo
   gmgn/                 transport GMGN: auth, signing, antrian rate limit, tool agent
   jupiter/client.ts     swap, harga, baca saldo RPC
+  jupiter/pools.ts      harga on-chain dari reserve pool: socket + poll
 tests/                  node --test, mirror src/
 ```
 
