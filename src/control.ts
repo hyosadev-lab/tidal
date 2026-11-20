@@ -98,7 +98,8 @@ export type FeedRow = {
   change1h: number | null;
   top10: number | null;
   bundler: number | null;
-  rug: number | null;
+  /** Trending: $ volume over its interval; signals: none (the last snapshot's 1h stands in). */
+  vol: number | null;
   createdAt: number | null;
 };
 

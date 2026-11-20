@@ -54,6 +54,14 @@ a { color: var(--lime); } a:hover { color: #E8FA9E; }
 .seg.light button[aria-pressed=true] { background: var(--ink); }
 .seg.sm button { min-height: 40px; font-size: 13px; }
 .seg .n { font: 12px var(--mono); }
+/* A list that is off: its tab dims and counts "off"; its switch is in its Filters. */
+.seg button.off { opacity: 0.6; }
+.liston { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 8px 14px; border-radius: 16px; background: var(--inner); cursor: pointer; }
+input.swi { appearance: none; flex: none; position: relative; width: 36px; height: 20px; margin: 0; border-radius: 10px; background: var(--line2); cursor: pointer; }
+input.swi::before { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--ink); transition: left 0.15s; }
+input.swi:checked { background: var(--lime); }
+input.swi:checked::before { left: 19px; background: #161618; }
+input.swi:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
 
 /* cards */
 .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
@@ -177,10 +185,10 @@ h3 { margin: 8px 0 0; padding: 0 20px; font-size: 13px; line-height: 18px; font-
 /* trading desk */
 .tall { height: 720px; }
 .fill { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.grid-feed { display: grid; grid-template-columns: minmax(150px, 1.5fr) 120px 70px 70px 96px 70px 58px 60px 46px 56px; column-gap: 10px; align-items: center; }
-.grid-feed.sig { grid-template-columns: minmax(150px, 1.5fr) 120px 70px 70px 56px 120px 58px 60px 46px 56px; }
+.grid-feed { display: grid; grid-template-columns: minmax(150px, 1.5fr) 120px 70px 70px 70px 96px 70px 58px 60px 56px; column-gap: 10px; align-items: center; }
+.grid-feed.sig { grid-template-columns: minmax(150px, 1.5fr) 120px 70px 70px 70px 56px 120px 58px 60px 56px; }
 .grid-feed .cut { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.grid-brief { display: grid; grid-template-columns: minmax(150px, 1.4fr) 110px 76px 80px 80px 72px 76px 64px; column-gap: 10px; align-items: center; }
+.grid-brief { display: grid; grid-template-columns: minmax(150px, 1.4fr) 110px 76px 80px 80px 72px 76px 64px 60px 56px; column-gap: 10px; align-items: center; }
 .ghead { position: sticky; top: 0; z-index: 1; background: var(--card); align-items: end; padding: 6px 18px 8px; border-bottom: 1px solid var(--line); font-size: 12px; line-height: 16px; font-weight: 500; color: var(--dim); white-space: nowrap; }
 .feed { list-style: none; margin: 0; padding: 4px 8px 0; }
 .feed button { width: 100%; padding: 8px 10px; margin: 2px 0; border: 1px solid transparent; border-radius: 14px; background: transparent; text-align: left; cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }

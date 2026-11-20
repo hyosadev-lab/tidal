@@ -40,7 +40,12 @@ export type Config = {
   maxSteps: number | null;
   /** The operator's selection policy, appended to the system prompt. */
   prompt: string;
-  /** Fetch filters on 1h trending, `<field>Min` / `<field>Max` (see FILTERS). Absent = no limit on that side. */
+  /** Whether the entry loop fetches each list; off = no request, no rows, its filters kept. */
+  trendingOn: boolean;
+  signalsOn: boolean;
+  /** GMGN trending's window (INTERVALS): what it ranks by, and what its volume and swaps bounds count. */
+  trendingInterval: Interval;
+  /** Fetch filters on trending, `<field>Min` / `<field>Max` (see FILTERS). Absent = no limit on that side. */
   filters: Record<string, number>;
   /** The same, on the signal list: market cap and fee only. */
   signalFilters: Record<string, number>;
@@ -72,6 +77,9 @@ export const DEFAULTS: Config = {
   toolCalls: 12,
   maxSteps: 24,
   prompt: "",
+  trendingOn: true,
+  signalsOn: true,
+  trendingInterval: "1h",
   filters: {},
   signalFilters: {},
   signalTypes: [12, 18], // smart money buy, pump claim: picked off the bought-token data (4 Nov 2026)
@@ -134,6 +142,9 @@ export function sanitize(input: Record<string, any>): Config {
     toolCalls: limit(input.toolCalls, 0, 100, d.toolCalls),
     maxSteps: limit(input.maxSteps, 1, 100, d.maxSteps),
     prompt: typeof input.prompt === "string" ? input.prompt.slice(0, 8000) : d.prompt,
+    trendingOn: input.trendingOn !== false,
+    signalsOn: input.signalsOn !== false,
+    trendingInterval: INTERVALS.includes(input.trendingInterval) ? input.trendingInterval : d.trendingInterval,
     filters: cleanFilters(input.filters, "trending"),
     signalFilters: cleanFilters(input.signalFilters, "signals"),
     signalTypes: Array.isArray(input.signalTypes)
@@ -156,8 +167,8 @@ export function loadConfig(): Config {
   return DEFAULTS;
 }
 
-/** Fields left out of a version: the Filters modal's, which only narrow what reaches the agent. */
-const FETCH_KEYS = ["filters", "signalFilters", "signalTypes"] as const;
+/** Fields left out of a version: which lists are fetched and how, which only narrow what reaches the agent. */
+const FETCH_KEYS = ["trendingOn", "signalsOn", "trendingInterval", "filters", "signalFilters", "signalTypes"] as const;
 /** The version part of a stored config, sanitised so a key a later release dropped or added is no change. */
 const versionOf = (value: string) => {
   const c: Partial<Config> = sanitize(JSON.parse(value));
@@ -197,6 +208,10 @@ export function applyVersion(now = Date.now()): number {
  * whole request with them. 21 (banker claim) is left out for now: Base only, always empty on Solana.
  */
 export const SIGNAL_TYPES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 18, 19, 20];
+
+/** The windows GMGN's trending route takes, each answered live (20 Nov 2026). */
+export const INTERVALS = ["1m", "5m", "1h", "6h", "24h"] as const;
+export type Interval = (typeof INTERVALS)[number];
 
 /** The two lists the entry loop fetches; each has its own filters. */
 export type Feed = "trending" | "signals";

@@ -192,4 +192,6 @@ test("signal picks: unpicked types only, fresh, pump, in filters, once per token
   assert.deepEqual(got, ["H1", "I1", "J1", "K1", "A6"]);
   assert.equal(SAMPLES_PER_MIN, 5);
   assert.deepEqual(pickSignals(events, { ...cfg, signalTypes: [1, 6, 7, 12] }, now), []);
+  // Signals off: its types are fetched by nothing, so sampling takes them too (B's smart money buy).
+  assert.deepEqual(pickSignals([ev("B", 12, 5)], { ...cfg, signalsOn: false }, now).map((p) => `${p.token}${p.type}`), ["B12"]);
 });

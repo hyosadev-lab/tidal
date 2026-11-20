@@ -2,7 +2,7 @@ import type { Message } from "./agent/llm.ts";
 import { loadConfig, versionAt, type Config } from "./config.ts";
 import { getRun, status, type FeedRow } from "./control.ts";
 import { db } from "./db.ts";
-import { LISTS, tokenStatus, type List } from "./entry.ts";
+import { listName, tokenStatus, type List } from "./entry.ts";
 import { POLL_MS } from "./exit.ts";
 import * as jup from "./jupiter/client.ts";
 import { calibration } from "./replay.ts";
@@ -387,7 +387,7 @@ export function trading(cfg: Config, now: number, tz: string) {
   const row = (address: string, list: List, f: FeedRow | undefined) => {
     const sig = list === "signals";
     const s = one<Record<string, any>>(
-      `select s.market_cap_usd, s.liquidity_usd, s.top_10_holder_rate, s.top_bundler_trader_percentage, s.price_usd, f.buys, f.sells, f.price_usd p
+      `select s.market_cap_usd, s.liquidity_usd, s.top_10_holder_rate, s.top_bundler_trader_percentage, s.price_usd, f.buys, f.sells, f.volume_usd, f.price_usd p
        from token_snapshots s left join snapshot_flow f on f.snapshot_id = s.id and f.span = ?
        where s.token = ? order by s.id desc limit 1`,
       "1h",
@@ -409,7 +409,7 @@ export function trading(cfg: Config, now: number, tz: string) {
       change1h: f?.change1h ?? (s?.p > 0 ? (s!.price_usd / s!.p - 1) * 100 : null),
       top10: f?.top10 ?? s?.top_10_holder_rate ?? null,
       bundler: f?.bundler ?? s?.top_bundler_trader_percentage ?? null,
-      rug: f?.rug ?? null,
+      vol: f?.vol ?? s?.volume_usd ?? null,
       createdAt: f?.createdAt ?? t?.created_at ?? null,
       signal: e ? signalName(e.signal_type) : null,
       signalAt: e?.trigger_at ?? null,
@@ -425,7 +425,8 @@ export function trading(cfg: Config, now: number, tz: string) {
   ).filter((w) => !carried.has(w.token));
   const tab = (list: List) => {
     const fetched = status.fetch.rows.filter((r) => r.list === list);
-    const later = waits.filter((w) => (w.feed?.includes(LISTS.signals) ? w.feed.includes(LISTS[list]) : list === "trending"));
+    // A wait goes back under the list(s) its feed names, any interval's trending; none = trending.
+    const later = waits.filter((w) => (w.feed ?? "trending").includes(list));
     return { fetched: fetched.length, rows: [...fetched.map((f) => row(f.address, list, f)), ...later.map((w) => row(w.token, list, undefined))] };
   };
 
@@ -480,6 +481,8 @@ export function runDetail(id: number) {
       txs: b.flow?.["1h"] ? (b.flow["1h"].buys ?? 0) + (b.flow["1h"].sells ?? 0) : null,
       change1h: b.flow?.["1h"]?.change_pct ?? null,
       top10: b.top_10_holder_rate ?? null,
+      bundler: b.top_bundler_trader_percentage ?? null,
+      ageMin: b.age_minutes ?? null, // at the snapshot, as the model saw it
     })),
     verdicts: all<Record<string, any>>(
       `select d.token address, d.action, d.conviction, d.thesis, d.recheck_at, coalesce(t.symbol, substr(d.token, 1, 6)) symbol
@@ -513,7 +516,7 @@ export function tokenDetail(address: string, cfg: Config, now: number) {
     address,
     mint: shortAddr(address),
     symbol: t?.symbol ?? shortAddr(address),
-    source: status.fetch.rows.filter((r) => r.address === address).map((r) => LISTS[r.list]).join(" + ") || null,
+    source: status.fetch.rows.filter((r) => r.address === address).map((r) => listName(r.list, cfg)).join(" + ") || null,
     ...tokenStatus(address, cfg, now),
     verdict: d ? { run: d.run_id, action: d.action, conviction: d.conviction, thesis: d.thesis, until: d.recheck_at, at: d.started_at } : null,
     lookups: all<Record<string, any>>("select at, name, result from tool_calls where args like ? order by id desc limit 10", like).map((c) => ({

@@ -38,7 +38,10 @@ pause, buying only, lifted at 00:00 UTC (`lossResume` auto) or by Resume. The lo
 the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
 
 - Entry: two GMGN lists, pump.fun launches only (`PUMP` — Pump.fun, pump_mayhem, pump_agent,
-  pump_mayhem_agent): 1h trending (rank, by its `platforms` param; no row check of its own) and
+  pump_mayhem_agent), each fetched only while on (`trendingOn` / `signalsOn`, the switch in its Filters
+  modal, saved on Apply; both off = idle, "both sources are off"): trending at `trendingInterval` (1m · 5m · 1h · 6h ·
+  24h, default 1h, picked in its Filters modal; volume and swaps bounds count that window, and keep
+  their numbers on a switch; `feed` = "5m trending", `listName`) (rank, by its `platforms` param; no row check of its own) and
   signals (`/v1/market/token_signal`, one group per type in `signalTypes` — checked in the Signals
   Filters modal, default smart money buy + pump claim, `SIGNAL_TYPES` = what the route takes (it
   refuses 14–16), none = one untyped group, the latest 50 of any type; `isPump` on the row, a pump curve or PumpSwap, as the route has
@@ -67,7 +70,7 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
 - Shadow tracks (`shadow.ts`, edge research capture): every verdict in `decide` starts a 60-min
   track of its token, `features` = the brief row exactly as sent (never rebuilt later: look-ahead).
   Sampled, never bought ('signal', `sampleSignals`, every 60s while running: a stopped process
-  spends no GMGN budget): one token_signal request for every type the Signals list does not fetch,
+  spends no GMGN budget): one token_signal request for every type the Signals list does not fetch (every type while it is off),
   under its filters; `pickSignals` keeps fresh (≤3 min) pump.fun events, never decided, one track
   per token × type, 20 open, 5 new a minute; `features` = the brief row of a fresh 'sample'
   snapshot + `signal_type` / `signal_mc_usd` / `signal_age_s`. 'rank' and 'migration' were sampled
@@ -77,7 +80,7 @@ the browser's zone (`tz` on `/api/state`, `dayStart` in `view.ts`).
   loop, so new pools resolve in two reads and a failed read rests it 10s. Pump curves and PumpSwap
   in any quote (reserve in SOL at the quote's price at start); a completed curve's pool comes off
   the mint (`pools.migratedPool`, a PDA). Runs started or stopped; a restart ends open tracks as
-  'restart'. Settings versions (`config_history`): a save is never one; only Apply on a passed idea (and Go live) records Settings as they are, unless a row already equals them (`applyVersion`). A version is current while Settings equal it, fetch filters (`filters`, `signalFilters`, `signalTypes`) aside (`versionAt`); a buy stamps it (`positions.config_at`, null = none current: that trade counts for no version or test; it keeps `time_stop_min`, `drain_pct`, `size_sol` either way). `replay.ts` replays an exit plan
+  'restart'. Settings versions (`config_history`): a save is never one; only Apply on a passed idea (and Go live) records Settings as they are, unless a row already equals them (`applyVersion`). A version is current while Settings equal it, fetch filters (`FETCH_KEYS`: the lists' switches, interval, filters and signal types) aside (`versionAt`); a buy stamps it (`positions.config_at`, null = none current: that trade counts for no version or test; it keeps `time_stop_min`, `drain_pct`, `size_sol` either way). `replay.ts` replays an exit plan
   on a track's path the way `evaluate` runs it (impact off the stored reserve); `calibration()`
   replays every trade closed by its rules on its own track, with the plan its buy kept, version or not (it scores the replay, not a Settings: a ledger with no version still gets a friction). The Research page (`view.research`,
   `GET /api/research`, read every 15s while open) is laid out as the canvas's Research board: six

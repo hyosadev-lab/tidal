@@ -23,7 +23,8 @@ until 5 Nov) are history: new ideas take `decision` or `signal`.
   `top_10_holder_rate`, `top_bundler_trader_percentage`, `dev_team_hold_rate`, `smart_wallets`,
   `flow.<1m|5m|1h|6h|24h>.<change_pct|buys|sells|swaps|volume_usd|buy_volume_usd|sell_volume_usd>`,
   `feed` (3–4 Nov 2026: `1h trending`, `graduated`, or both; since 4 Nov: `1h trending`, `signals`, or
-  `1h trending + signals`), `signals.counts.<type>` (before 3 Nov 2026, and again since 4 Nov: only on
+  `1h trending + signals`; since 20 Nov the trending part names the interval in the config, `trendingInterval`:
+  `5m trending`, `24h trending + signals`, … — a condition on `feed` matches one interval only), `signals.counts.<type>` (before 3 Nov 2026, and again since 4 Nov: only on
   tokens an event of a fetched type reached: `signalTypes` in the config, default smart money buy + pump claim), and more: read one row before writing a condition. For `signal`
   it is the same brief row off a snapshot taken when the track starts (no `feed`, `wash` or
   `last`), plus `signal_type` (the event's type name, e.g. `price_spike`), `signal_mc_usd` (the

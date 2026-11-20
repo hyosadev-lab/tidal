@@ -89,7 +89,7 @@ test("the token list: a tab per list, a token on both in both, a wait off both u
   const now = Date.UTC(2026, 10, 3, 12);
   const row = (address: string, list: "trending" | "signals") => ({
     address, symbol: address, list, mcap: 1, liq: 1, buys: list === "trending" ? 1 : null, sells: list === "trending" ? 1 : null,
-    change1h: list === "trending" ? 5 : null, top10: 0.1, bundler: 0.1, rug: 0.1, createdAt: now,
+    change1h: list === "trending" ? 5 : null, top10: 0.1, bundler: 0.1, vol: 1000, createdAt: now,
   });
   status.fetch = { at: now, rows: [row("T", "trending"), row("B", "trending"), row("B", "signals"), row("S", "signals")] };
   db.prepare("insert into agent_runs (id, started_at, model, status) values (1, ?, 'm', 'ok')").run(now - 600_000);

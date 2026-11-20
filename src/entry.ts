@@ -18,9 +18,10 @@ import { buy, cashUsd, lossDay, MIN_BUY_USD, openPositions, positionClosed, secu
 /** Due tokens per agent run, at most; the rest stay due for the next cycle. */
 const MAX_BRIEF = 10;
 const FEED_LIMIT = 40;
-/** The two lists, as the brief's `feed` names them. */
-export const LISTS = { trending: "1h trending", signals: "signals" } as const;
-export type List = keyof typeof LISTS;
+export type List = "trending" | "signals";
+const LISTS: List[] = ["trending", "signals"];
+/** A list as the brief's `feed` names it: trending by its interval ("5m trending"). */
+export const listName = (list: List, cfg: Config): string => (list === "trending" ? `${cfg.trendingInterval} trending` : "signals");
 
 const num = (v: unknown): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 
@@ -39,7 +40,7 @@ function feedRow(r: any, list: List): FeedRow {
     change1h: s ? null : num(r.price_change_percent1h),
     top10: num(r.top_10_holder_rate),
     bundler: num(r.bundler_rate ?? r.bundler_trader_amount_rate), // trending, then signal
-    rug: num(r.rug_ratio),
+    vol: s ? null : num(r.volume),
     createdAt: created ? created * 1000 : null,
   };
 }
@@ -52,22 +53,24 @@ export const interleave = <T>(a: T[], b: T[]): T[] =>
 type Fetched = Record<List, string[]> & { wash: Set<string> };
 
 /** The brief's `feed`: the list or lists that carried the token this cycle; null for a wait off both. */
-export const feedOf = (token: string, f: Record<List, string[]>): string | null =>
-  (Object.keys(LISTS) as List[]).filter((k) => f[k].includes(token)).map((k) => LISTS[k]).join(" + ") || null;
+export const feedOf = (token: string, f: Record<List, string[]>, cfg: Config): string | null =>
+  LISTS.filter((k) => f[k].includes(token)).map((k) => listName(k, cfg)).join(" + ") || null;
 
 /**
- * GMGN 1h trending (Pump.fun launchpads, by the `platforms` param) and the signal list (the
- * types in `signalTypes`; Pump.fun launches on pump pools, checked on the row), each under its own
- * filters. A token on both has a row in each. Every kept signal event goes to token_signals, for
- * the brief.
+ * GMGN trending at `trendingInterval` (Pump.fun launchpads, by the `platforms` param) and the
+ * signal list (the types in `signalTypes`; Pump.fun launches on pump pools, checked on the row),
+ * each under its own filters and only while it is on: an off list sends no request. A token on
+ * both has a row in each. Every kept signal event goes to token_signals, for the brief.
  */
 async function fetchTokens(cfg: Config): Promise<Fetched> {
   const c = gmgnClient();
   const [rank, sig] = await Promise.allSettled([
-    c.getTrendingSwaps("sol", "1h", { order_by: "volume", limit: FEED_LIMIT, platforms: PUMP, ...rankFilters(cfg) }),
+    cfg.trendingOn ? c.getTrendingSwaps("sol", cfg.trendingInterval, { order_by: "volume", limit: FEED_LIMIT, platforms: PUMP, ...rankFilters(cfg) }) : null,
     // One group per checked type (GMGN returns at most 50 rows a group); none checked: one group with
     // no type, GMGN's latest 50 events of any type (checked live, 8 Nov 2026).
-    c.getTokenSignalV2("sol", cfg.signalTypes.length ? cfg.signalTypes.map((t) => ({ signal_type: [t], ...signalFilters(cfg) })) : [{ ...signalFilters(cfg) }]),
+    cfg.signalsOn
+      ? c.getTokenSignalV2("sol", cfg.signalTypes.length ? cfg.signalTypes.map((t) => ({ signal_type: [t], ...signalFilters(cfg) })) : [{ ...signalFilters(cfg) }])
+      : null,
   ]);
   const rows: FeedRow[] = [];
   const out: Fetched = { trending: [], signals: [], wash: new Set() };
@@ -237,6 +240,8 @@ async function entryCycle(): Promise<boolean> {
     const free = cfg.maxOpenPositions - openPositions().length;
     if (free <= 0) return idle(`Buying waits: ${cfg.maxOpenPositions} of ${cfg.maxOpenPositions} slots used.`);
     if (lossPaused(cfg)) return idle("Buying paused: max daily loss reached. Exits keep running.");
+    // Nothing to fetch: idle until a save turns a list back on, not a cycle straight after another.
+    if (!cfg.trendingOn && !cfg.signalsOn) return (status.fetch = { at: Date.now(), rows: [] }), idle("Buying off: both sources are off.");
     status.entry.note = "";
 
     const now = Date.now();
@@ -249,7 +254,7 @@ async function entryCycle(): Promise<boolean> {
     const snaps: Due[] = [];
     for (const token of due) {
       try {
-        snaps.push({ token, snapshotId: await takeSnapshot(token, "decision"), feed: feedOf(token, feed), wash: feed.wash.has(token) });
+        snaps.push({ token, snapshotId: await takeSnapshot(token, "decision"), feed: feedOf(token, feed, cfg), wash: feed.wash.has(token) });
       } catch (e) {
         log("warn", `Snapshot ${token.slice(0, 6)}… failed: ${short(e)} — asked again next cycle.`);
       }

@@ -529,10 +529,10 @@ function trading(d) {
       return `<li><button class="grid-feed${sig ? " sig" : ""}" data-a="pick" data-v="${esc(t.address)}" aria-pressed="${on}" aria-label="${esc(`${t.symbol}, ${STATUS[pillOf(t)]}, ${statusNote(t)}`)}">
         <span class="tok"><span class="av sm" aria-hidden="true">${ini(t.symbol)}</span><span class="stack"><span class="inline" style="gap:6px"><span class="nm">${esc(t.symbol)}</span>${inRun ? `<span class="runbadge">#${inRun}</span>` : ""}</span><span class="mono dim" style="font-size:11px;line-height:14px">${mintCopy(t.address, t.mint, "span")}</span></span></span>
         <span class="stack" style="align-items:flex-start"><span class="pill ${pillOf(t)}">${STATUS[pillOf(t)]}</span><span class="muted nowrap" style="font-size:11px;line-height:14px;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(statusNote(t))}</span></span>
-        <span class="r">${k$(t.mcap)}</span><span class="r">${k$(t.liq)}</span>
+        <span class="r">${k$(t.mcap)}</span><span class="r">${k$(t.liq)}</span><span class="r">${k$(t.vol)}</span>
         <span class="stack" style="align-items:flex-end"><span>${fin(t.buys) && fin(t.sells) ? (t.buys + t.sells).toLocaleString("en-US") : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${kn(t.buys)} / ${kn(t.sells)}</span></span>
         ${sig ? `<span class="stack" style="align-items:flex-end"><span class="soft nowrap cut">${t.signal ? esc(t.signal.replace(/_/g, " ")) : "—"}</span><span class="muted" style="font-size:11px;line-height:14px">${t.signalAt ? `${mins(Math.max(0, Math.floor((d.now - t.signalAt) / 60_000)))} ago` : ""}</span></span>` : `<span class="r ${sign(t.change1h)}">${pct(t.change1h)}</span>`}<span class="r">${rate(t.top10)}</span><span class="r">${rate(t.bundler)}</span>
-        <span class="r" style="color:${fin(t.rug) && t.rug >= 0.7 ? "var(--red)" : "var(--ink)"}">${fin(t.rug) ? t.rug.toFixed(2) : "—"}</span><span class="r soft">${age}</span></button></li>`;
+        <span class="r soft">${age}</span></button></li>`;
     })
     .join("");
   // Three tabs always, as designed; the run two stay off until there is a run to show.
@@ -547,10 +547,10 @@ function trading(d) {
   <div class="row" style="align-items:flex-start">
     <section class="card flush tall" style="flex:999 1 760px;gap:14px;padding-top:16px;padding-bottom:0" aria-labelledby="feed-title">
       <div class="head"><span class="ico">${I.eye}</span><div class="stack"><h2 id="feed-title" class="big">What the agent sees</h2><span class="s13 muted">${tr.fetchedAt ? `${plural(cur.fetched, "Pump.fun token")} from the fetch at ${hms(tr.fetchedAt)}, plus waits now due` : "no fetch yet"}</span></div></div>
-      <div class="head"><div class="seg sm" role="group" aria-label="Token list">${Object.entries(LISTS).map(([k, l]) => `<button data-a="feedList" data-v="${k}" aria-pressed="${S.list === k}">${l.label}<span class="n">${tr.lists[k].rows.length}</span></button>`).join("")}</div>
+      <div class="head"><div class="seg sm" role="group" aria-label="Token list">${Object.entries(LISTS).map(([k, l]) => `<button data-a="feedList" data-v="${k}" aria-pressed="${S.list === k}"${d.config[l.on] ? "" : ' class="off"'}>${l.label}<span class="n">${d.config[l.on] ? tr.lists[k].rows.length : "off"}</span></button>`).join("")}</div>
         <button class="btn sm light" style="margin-left:auto" data-a="openFilters" aria-label="Edit ${L.label} filters, ${active} active">${I.filter}<span>Filters</span>${active ? `<span class="cnt" aria-hidden="true">${active}</span>` : ""}</button></div>
-      <div class="fill fade" data-scroll="feed"><div style="min-width:940px"><div class="grid-feed${sig ? " sig" : ""} ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">${L.tx}</span><span class="r">${L.c1}</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Rug</span><span class="r">Age</span></div>
-        <ul class="feed" aria-label="${L.label} tokens the agent reads">${feedRows || `<li class="empty">Nothing on this list yet.</li>`}</ul></div></div>
+      <div class="fill fade" data-scroll="feed"><div style="min-width:940px"><div class="grid-feed${sig ? " sig" : ""} ghead" aria-hidden="true"><span>Token</span><span>Status</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">${L.vol}</span><span class="r">${L.tx}</span><span class="r">${L.c1}</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Age</span></div>
+        <ul class="feed" aria-label="${L.label} tokens the agent reads">${feedRows || `<li class="empty">${d.config[L.on] ? "Nothing on this list yet." : "This list is off: turn it back on in its Filters."}</li>`}</ul></div></div>
     </section>
     <section class="card flush tall" style="flex:1 1 440px;padding-top:16px;padding-bottom:0;position:relative" aria-labelledby="agent-title">
       <div class="head"><span class="ico vio">${I.chat}</span><div class="stack"><div class="inline" style="gap:2px"><h2 id="agent-title" class="big">Agent activity</h2>${helpTip("agent-help", "About agent activity", AGENT_HELP)}</div><span class="s13 muted inline" style="gap:6px"><span class="dot" style="background:${d.health.run === "running" ? "var(--lime)" : "var(--dim)"}"></span>${d.health.run === "running" ? "cycle running" : d.health.run}${tr.lastRun ? ` · last run #${tr.lastRun}` : ""}</span></div></div>
@@ -574,7 +574,7 @@ const SHADOW_HELP = `<b style="color:var(--ink)">What shadow tracking follows</b
   <span>One RPC read every 3s prices every open track at once. It keeps running while trading is stopped, so a track that started still gets its full hour.</span>`;
 
 const AGENT_HELP = `<b style="color:var(--ink)">What the agent does</b>
-  <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's 1h trending or signal list (smart money buy, pump claim; Pump.fun launches only), or a wait that has ended. Up to 10 tokens per run.</span>
+  <span>Cycle after cycle, the entry loop hands the agent the tokens that are due: new on GMGN's trending list (at the interval you pick) or signal list (the types you check), each while it is on; Pump.fun launches only, or a wait that has ended. Up to 10 tokens per run.</span>
   <span>In a run it may look up holders, top traders, candles or the dev's earlier tokens, then gives each token a verdict:</span>
   <span class="stack" style="gap:2px;padding-left:2px"><span><b class="pos">buy</b> · conviction 0–100; bought only if a slot, the security check and cash allow</span><span><b class="vio">wait</b> · looked at again at the time it sets</span><span><b class="soft">skip</b> · a hard refusal, final</span></span>
   <span>No run starts while every slot is taken or buying is paused.</span>
@@ -662,8 +662,8 @@ function runDock(r, tr) {
       <div class="stats"><div><span class="small muted">Started</span><b>${hms(r.at)}</b></div><div><span class="small muted">Duration</span><b>${r.secs !== null ? r.secs.toFixed(1) + "s" : "—"}</b></div><div><span class="small muted">Steps</span><b>${r.steps}${tr.maxSteps === null ? "" : ` of ${tr.maxSteps}`}</b></div><div><span class="small muted">Tool calls</span><b>${used}${tr.toolBudget === null ? "" : ` of ${tr.toolBudget}`}</b></div><div><span class="small muted">Tokens in / out</span><b>${kn(r.tin ?? 0)} / ${kn(r.tout ?? 0)}</b></div></div>
       ${failed ? `<div class="banner red" role="status" style="border-radius:16px;font-size:13px;line-height:19px"><span><code class="mono small">agent_runs.error</code> ${esc(r.error)}</span></div>` : ""}</section>
     <section class="card flush" aria-labelledby="brief-title"><div class="head" style="padding:0 20px;align-items:baseline"><h2 id="brief-title">Brief</h2><span class="s13 muted">${plural(r.brief.length, "due token")} · the numbers the model saw, from token_snapshots</span></div>
-      <div class="scroll-x" data-scroll="brief"><div style="min-width:820px"><div class="grid-brief ghead" style="padding:6px 20px 8px"><span>Token</span><span>Why due</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">Vol 1h</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span></div>
-      ${r.brief.map((b) => `<div class="grid-brief" style="padding:10px 20px;border-bottom:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums"><span class="stack"><span class="b" style="overflow:hidden;text-overflow:ellipsis">${esc(b.symbol)}</span><span class="mono small muted">${mintCopy(b.address, b.mint)}</span></span><span class="s13 soft">${esc(b.why)}</span><span class="r">${k$(b.mcap)}</span><span class="r">${k$(b.liq)}</span><span class="r">${k$(b.vol)}</span><span class="r">${kn(b.txs)}</span><span class="r ${sign(b.change1h)}">${pct(b.change1h)}</span><span class="r">${rate(b.top10)}</span></div>`).join("") || `<p class="empty">No brief on record.</p>`}</div></div></section>
+      <div class="scroll-x" data-scroll="brief"><div style="min-width:940px"><div class="grid-brief ghead" style="padding:6px 20px 8px"><span>Token</span><span>Why due</span><span class="r">MCap</span><span class="r">Liquidity</span><span class="r">Vol 1h</span><span class="r">TXs 1h</span><span class="r">1h</span><span class="r">Top 10</span><span class="r">Bundler</span><span class="r">Age</span></div>
+      ${r.brief.map((b) => `<div class="grid-brief" style="padding:10px 20px;border-bottom:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums"><span class="stack"><span class="b" style="overflow:hidden;text-overflow:ellipsis">${esc(b.symbol)}</span><span class="mono small muted">${mintCopy(b.address, b.mint)}</span></span><span class="s13 soft">${esc(b.why)}</span><span class="r">${k$(b.mcap)}</span><span class="r">${k$(b.liq)}</span><span class="r">${k$(b.vol)}</span><span class="r">${kn(b.txs)}</span><span class="r ${sign(b.change1h)}">${pct(b.change1h)}</span><span class="r">${rate(b.top10)}</span><span class="r">${rate(b.bundler)}</span><span class="r soft">${fin(b.ageMin) ? mins(Math.max(0, Math.floor(b.ageMin))) : "—"}</span></div>`).join("") || `<p class="empty">No brief on record.</p>`}</div></div></section>
   </div><div style="flex:1 1 460px;min-width:0;display:flex;flex-direction:column;gap:12px">
     <section class="card flush" aria-labelledby="verdicts-title"><div class="head" style="padding:0 20px;align-items:baseline"><h2 id="verdicts-title">Verdicts</h2><span class="s13 muted">saved to decisions · model-written, read as data</span></div>
       ${r.verdicts.length ? `<ul class="lst">${r.verdicts.map((v) => `<li><span class="av ${v.action === "buy" ? "alt" : v.action === "skip" ? "grey" : ""}" aria-hidden="true">${ini(v.symbol)}</span><div class="stack" style="flex:1 1 auto;gap:4px"><div class="inline" style="flex-wrap:wrap;gap:4px 10px"><span class="b" style="font-size:15px">${esc(v.symbol)}</span><span class="small b ${v.action === "buy" ? "pos" : v.action === "wait" ? "vio" : "muted"}">${esc(v.action)}</span><span class="mono small muted">conviction ${v.conviction ?? "—"}</span><span class="small muted nowrap" style="margin-left:auto">${v.action === "wait" && v.recheck_at ? `until ${hm(v.recheck_at)}` : ""}</span></div><p class="s13 soft" style="margin:0;line-height:19px">${esc(v.thesis ?? "")}</p></div></li>`).join("")}</ul>`
@@ -697,14 +697,21 @@ const SIGNAL_TYPES = [
   ["Other", [[9, "Live stream"], [11, "Community takeover"]]],
   ["Claims and warnings", [[10, "Bundler sell"], [17, "Bags claim"], [18, "Pump claim"]]],
 ];
-/** The token list's tabs; each list keeps its own fetch filters under `key` in the config. */
+/** Trending's window as saved: its tab, labels and volume / transactions bounds follow it. */
+const iv = () => S.data?.config?.trendingInterval ?? "1h";
+const INTERVALS = ["1m", "5m", "1h", "6h", "24h"];
+/** The token list's tabs; each list keeps its own fetch filters under `key` in the config, and its switch under `on`. */
 const LISTS = {
   trending: {
-    label: "1h trending", key: "filters", tx: "TXs 1h", c1: "1h", sub: "sent to GMGN with the 1h trending request",
-    note: "Pump.fun launchpads only (Pump.fun, mayhem, agent), by GMGN's platforms param. GMGN applies these to the 1h trending request; initial liquidity is checked on each row.",
+    key: "filters", on: "trendingOn", c1: "1h",
+    get label() { return `${iv()} trending`; },
+    get tx() { return `TXs ${iv()}`; },
+    get vol() { return `Vol ${iv()}`; },
+    get sub() { return `sent to GMGN with the ${iv()} trending request`; },
+    get note() { return `Pump.fun launchpads only (Pump.fun, mayhem, agent), by GMGN's platforms param. GMGN applies these to the ${iv()} trending request; initial liquidity is checked on each row.`; },
   },
   signals: {
-    label: "Signals", key: "signalFilters", tx: "TXs 1h", c1: "Last signal", sub: "sent to GMGN with the token signal request",
+    label: "Signals", key: "signalFilters", on: "signalsOn", tx: "TXs 1h", vol: "Vol 1h", c1: "Last signal", sub: "sent to GMGN with the token signal request",
     note: "Tokens GMGN fires one of the checked signal types on, Pump.fun launches on a pump curve or PumpSwap only (checked on each row). The signal route takes age, market cap and total fees only, so those are the bounds offered. Its rows carry no transactions; the column shows the last snapshot's 1h count.",
   },
 };
@@ -712,15 +719,22 @@ const LISTS = {
 function filtersDialog(d) {
   const L = LISTS[S.list];
   const f = d.config[L.key];
-  const list = FILTERS.filter(([k]) => S.list !== "signals" || SIGNAL_KEYS.has(k));
+  const list = FILTERS.filter(([k]) => S.list !== "signals" || SIGNAL_KEYS.has(k)).map(([k, l]) => [k, l.replace(/^1h /, `${iv()} `)]);
   return `<div class="overlay"><div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="ff-title">
     <div class="head"><span class="ico">${I.filter}</span><div class="stack"><h2 id="ff-title" style="font-size:18px;line-height:24px">Fetch filters · ${L.label}</h2><span class="s13 muted">${L.sub}</span></div>
       <button class="btn line" style="margin-left:auto;width:44px;min-height:44px;padding:0;border-radius:50%" aria-label="Close" data-a="closeFilters">${I.x}</button></div>
     <p class="s13 muted" style="color:var(--muted)">Tokens outside these ranges are never snapshotted, so they cost no rate limit and never reach the agent. ${L.note} They only narrow the pool; the risk check still runs on every buy. Leave a side empty for no limit.</p>
-    ${S.list === "signals" ? sigTypes(d.config.signalTypes) : ""}
+    <label class="liston"><input id="liston" class="swi" type="checkbox" role="switch" ${d.config[L.on] ? "checked" : ""}><span class="stack"><span class="b">Fetch this list</span><span class="s13 muted">Off: no ${esc(L.label)} request, no rows, no GMGN budget. Its bounds are kept for when it is back on. Both lists off: buying stops.</span></span></label>
+    ${S.list === "signals" ? sigTypes(d.config.signalTypes) : intervals(iv())}
     <form id="filters" class="filters">${list.map(([k, l]) => `<div><span class="s13 b">${l}</span><div class="inline" style="gap:8px"><input class="inp" type="number" min="0" step="any" name="${k}Min" aria-label="${l} minimum" placeholder="Min" value="${esc(f[k + "Min"] ?? "")}"><span class="s13 muted" aria-hidden="true">to</span><input class="inp" type="number" min="0" step="any" name="${k}Max" aria-label="${l} maximum" placeholder="Max" value="${esc(f[k + "Max"] ?? "")}"></div></div>`).join("")}</form>
     <div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-a="clearFilters">Clear this list</button><button class="btn inner" style="margin-left:auto" data-a="closeFilters">Cancel</button><button class="btn lime" data-a="applyFilters">Apply filters</button></div>
   </div></div>`;
+}
+
+function intervals(cur) {
+  return `<form id="interval" class="sigtypes"><fieldset><legend class="s13 b">Interval</legend>
+    <p class="s13 muted">GMGN's trending window: the top tokens by volume over the last ${cur}. Volume and transactions below count that window, and keep their numbers when you switch.</p>
+    <div class="chips" role="radiogroup" aria-label="Trending interval">${INTERVALS.map((v) => `<label><input type="radio" name="interval" value="${v}" ${v === cur ? "checked" : ""}>${v}</label>`).join("")}</div></fieldset></form>`;
 }
 
 function sigTypes(on) {
@@ -1100,7 +1114,7 @@ function settings(d) {
     mode: `<fieldset class="choices"><legend class="sr">Trading mode</legend>${radio("mode", "paper", c.mode === "paper", "Paper", "Real prices, simulated fills. The wallet is never touched.")}${radio("mode", "live", c.mode === "live", "Live", "Jupiter swaps, signed inside this process with the wallet key.", !d.liveAvailable)}</fieldset>
       ${d.liveAvailable ? `<div class="banner amber" style="border-radius:16px;font-size:13px;line-height:18px">Live trades real funds from the wallet SOLANA_PRIVATE_KEY signs for. Every buy and sell is irreversible.</div>` : `<div class="banner amber" style="border-radius:16px;font-size:13px;line-height:18px">Live stays off while <code class="mono small">SOLANA_PRIVATE_KEY</code> is unset. It is read from the environment only, never from this page.</div>`}
       ${fieldNum("Paper starting equity", "paperStartUsd", c.paperStartUsd, "", { cls: "mid", help: "Paper cash = this + every sell − every buy." })}`,
-    cycle: `<div class="note"><span class="small muted">Source</span><span class="big">GMGN 1h trending + signals (smart money buy, pump claim), Pump.fun launches only, plus waits that are due</span></div>
+    cycle: `<div class="note"><span class="small muted">Source</span><span class="big">${[c.trendingOn ? `GMGN ${esc(c.trendingInterval)} trending` : "", c.signalsOn ? "signals" : ""].filter(Boolean).join(" + ") || "Both lists off: buying off"}, Pump.fun launches only, plus waits that are due. Turn each list on or off in its Filters on Trading.</span></div>
       <div class="fgrid three">${fieldNum("Longest wait", "maxWaitMinutes", c.maxWaitMinutes, "minutes", { step: 1, help: "A wait's recheck time is clamped to this." })}${fieldNum("Cooldown after close", "cooldownMinutes", c.cooldownMinutes, "minutes", { step: 1, help: "A sold token can come back after this." })}</div>`,
     risk: `<div class="note"><span class="small muted">Checked before every buy</span><span class="big">Token security, a free slot, a size above the floor and cash on hand. Any fail = no buy.</span></div>
       <div class="fgrid">${fieldNum("Position size", "sizeSol", c.sizeSol, `<span data-sol>${sol}</span>`, { step: 0.01 })}${fieldNum("Max open positions", "maxOpenPositions", c.maxOpenPositions, "", { step: 1 })}${fieldNum("Max daily loss", "maxDailyLossPct", c.maxDailyLossPct, "% of day start", { help: "Past this, buying pauses. Exits keep running." })}${fieldNum("Slippage", "slippagePct", Number(c.slippagePct) > 0 ? c.slippagePct : "", "%", { step: 0.1, placeholder: "Auto", help: "Empty = auto: Jupiter picks the tolerance per route." })}</div>
@@ -1360,10 +1374,11 @@ const A = {
     const L = LISTS[S.list];
     const filters = {};
     for (const i of document.querySelectorAll("#filters input")) if (i.value !== "") filters[i.name] = Number(i.value);
-    const config = { [L.key]: filters };
+    const config = { [L.key]: filters, [L.on]: document.querySelector("#liston")?.checked ?? true };
     if (S.list === "signals") config.signalTypes = [...document.querySelectorAll("#sigtypes input:checked")].map((i) => Number(i.value));
+    else config.trendingInterval = document.querySelector("#interval input:checked")?.value ?? iv();
     S.filtersOpen = false;
-    const r = await act("/api/settings", { config }, `${L.label} filters saved for the next fetch. The run in progress is not affected.`);
+    const r = await act("/api/settings", { config }, `${S.list === "signals" ? L.label : `${config.trendingInterval} trending`} filters saved for the next fetch${config[L.on] ? "" : ", the list off"}. The run in progress is not affected.`);
     if (r?.config && S.draft) for (const k of Object.keys(config)) S.draft[k] = r.config[k];
   },
   section: (v) => ((S.section = v), render(true)),

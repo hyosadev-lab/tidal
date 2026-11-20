@@ -42,6 +42,14 @@ test("signal types: known ones the route takes, in order, once; none = the list 
   assert.deepEqual(sanitize({}).signalTypes, [12, 18]);
 });
 
+test("each list is on unless switched off; trending's interval is one GMGN takes, else 1h", () => {
+  const d = sanitize({});
+  assert.deepEqual([d.trendingOn, d.signalsOn, d.trendingInterval], [true, true, "1h"]);
+  const c = sanitize({ trendingOn: false, signalsOn: "no", trendingInterval: "5m" });
+  assert.deepEqual([c.trendingOn, c.signalsOn, c.trendingInterval], [false, true, "5m"]); // only false turns a list off
+  assert.equal(sanitize({ trendingInterval: "2h" }).trendingInterval, "1h");
+});
+
 test("a save is never a version; Apply records Settings once, and a version is current while Settings equal it", () => {
   openDb(":memory:");
   const n = () => (db.prepare("select count(*) n from config_history").get() as { n: number }).n;
@@ -50,8 +58,8 @@ test("a save is never a version; Apply records Settings once, and a version is c
   assert.deepEqual([n(), versionAt()], [0, null]);
   const v1 = applyVersion(1_000);
   assert.deepEqual([v1, applyVersion(2_000), n(), versionAt()], [1_000, 1_000, 1, 1_000]); // equal Settings: no second row
-  saveConfig({ ...loadConfig(), filters: { marketCapMin: 30 }, signalFilters: { feeMin: 2 }, signalTypes: [6, 12] });
-  assert.equal(versionAt(), v1); // the Filters modal's fields are no part of a version
+  saveConfig({ ...loadConfig(), filters: { marketCapMin: 30 }, signalFilters: { feeMin: 2 }, signalTypes: [6, 12], trendingInterval: "5m", signalsOn: false });
+  assert.equal(versionAt(), v1); // which lists are fetched, and how, are no part of a version
   saveConfig({ ...loadConfig(), prompt: "v2" });
   assert.equal(versionAt(), null); // a hand edit: no version current
   saveConfig({ ...loadConfig(), prompt: "v1" });

@@ -81,6 +81,9 @@ export function track(decisionId: number, token: string, features: Record<string
 /** A signal event to start a track for. */
 export type Pick = { token: string; type: number; at: number; mc: number | null };
 
+/** The types the Signals list fetches now: none while it is off, so sampling takes every type. */
+const fetched = (cfg: Config): number[] => (cfg.signalsOn ? cfg.signalTypes : []);
+
 /**
  * The signal events to track, oldest first: of a type the Signals list does not fetch, fresh, a
  * pump.fun launch on a pump pool, inside the Signals filters, its token never decided, its token ×
@@ -96,7 +99,7 @@ export function pickSignals(events: any[], cfg: Config, now: number): Pick[] {
     const type = Number(ev?.signal_type);
     const at = Number(ev?.trigger_at) * 1000;
     const key = `${token} ${type}`;
-    if (!token || seen.has(key) || cfg.signalTypes.includes(type) || !(now - at <= FRESH_MS)) continue;
+    if (!token || seen.has(key) || fetched(cfg).includes(type) || !(now - at <= FRESH_MS)) continue;
     if (!isPump(row) || !inFilters(row, cfg.signalFilters, now)) continue;
     seen.add(key);
     fresh.push({ token, type, at, mc: Number.isFinite(Number(ev?.trigger_mc)) ? Number(ev.trigger_mc) : null });
@@ -124,7 +127,7 @@ let signalError = "";
  * (the market cap it fired at) and `signal_age_s` (how long before the snapshot it fired).
  */
 export async function sampleSignals(cfg: Config, now = Date.now()): Promise<void> {
-  const types = SIGNAL_TYPES.filter((t) => !cfg.signalTypes.includes(t));
+  const types = SIGNAL_TYPES.filter((t) => !fetched(cfg).includes(t));
   if (sampling || !process.env.GMGN_API_KEY || !types.length) return;
   sampling = true;
   try {

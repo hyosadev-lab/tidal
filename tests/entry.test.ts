@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start, status, stop } from "../src/control.ts";
 import { openDb } from "../src/db.ts";
-import { isPump } from "../src/config.ts";
+import { isPump, loadConfig, sanitize, saveConfig } from "../src/config.ts";
 import { entryLoop, feedOf, interleave, wake } from "../src/entry.ts";
 import { positionClosed } from "../src/trade.ts";
 
@@ -38,5 +38,23 @@ test("signal rows keep Pump.fun launches on pump pools; feed names the list or l
   assert.equal(isPump({ launchpad_platform: "ray_launchpad", exchange: "ray_launchpad" }), false);
   assert.equal(isPump({ launchpad_platform: "Pump.fun", exchange: "meteora_damm_v2" }), false); // a pool not read on-chain
   const f = { trending: ["a", "b"], signals: ["b", "c"] };
-  assert.deepEqual(["a", "b", "c", "w"].map((t) => feedOf(t, f)), ["1h trending", "1h trending + signals", "signals", null]);
+  const cfg = sanitize({ trendingInterval: "5m" });
+  assert.deepEqual(["a", "b", "c", "w"].map((t) => feedOf(t, f, cfg)), ["5m trending", "5m trending + signals", "signals", null]);
+});
+
+test("entry loop: both lists off idles with no fetch until a save wakes it", async () => {
+  openDb(":memory:");
+  process.env.OPENROUTER_API_KEY ??= "test"; // past the key check, to the lists
+  saveConfig({ ...loadConfig(), trendingOn: false, signalsOn: false });
+  start();
+  const loop = entryLoop();
+  await new Promise((r) => setImmediate(r));
+  assert.match(status.entry.note, /both sources are off/);
+  assert.deepEqual(status.fetch.rows, []);
+  const first = status.entry.lastAt;
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(status.entry.lastAt, first); // idle, not a cycle straight after another
+  await stop(false);
+  wake();
+  await loop;
 });
