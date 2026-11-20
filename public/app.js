@@ -726,14 +726,14 @@ function filtersDialog(d) {
     <p class="s13 muted" style="color:var(--muted)">Tokens outside these ranges are never snapshotted, so they cost no rate limit and never reach the agent. ${L.note} They only narrow the pool; the risk check still runs on every buy. Leave a side empty for no limit.</p>
     <label class="liston"><input id="liston" class="swi" type="checkbox" role="switch" ${d.config[L.on] ? "checked" : ""}><span class="stack"><span class="b">Fetch this list</span><span class="s13 muted">Off: no ${esc(L.label)} request, no rows, no GMGN budget. Its bounds are kept for when it is back on. Both lists off: buying stops.</span></span></label>
     ${S.list === "signals" ? sigTypes(d.config.signalTypes) : intervals(iv())}
-    <form id="filters" class="filters">${list.map(([k, l]) => `<div><span class="s13 b">${l}</span><div class="inline" style="gap:8px"><input class="inp" type="number" min="0" step="any" name="${k}Min" aria-label="${l} minimum" placeholder="Min" value="${esc(f[k + "Min"] ?? "")}"><span class="s13 muted" aria-hidden="true">to</span><input class="inp" type="number" min="0" step="any" name="${k}Max" aria-label="${l} maximum" placeholder="Max" value="${esc(f[k + "Max"] ?? "")}"></div></div>`).join("")}</form>
+    <form id="filters" class="filters">${list.map(([k, l]) => `<div><span class="s13 b">${l.replace(/^(1m|5m|1h|6h|24h) /, '<span data-iv>$1</span> ')}</span><div class="inline" style="gap:8px"><input class="inp" type="number" min="0" step="any" name="${k}Min" aria-label="${l} minimum" placeholder="Min" value="${esc(f[k + "Min"] ?? "")}"><span class="s13 muted" aria-hidden="true">to</span><input class="inp" type="number" min="0" step="any" name="${k}Max" aria-label="${l} maximum" placeholder="Max" value="${esc(f[k + "Max"] ?? "")}"></div></div>`).join("")}</form>
     <div class="actions" style="justify-content:flex-start"><button class="btn ghost" data-a="clearFilters">Clear this list</button><button class="btn inner" style="margin-left:auto" data-a="closeFilters">Cancel</button><button class="btn lime" data-a="applyFilters">Apply filters</button></div>
   </div></div>`;
 }
 
 function intervals(cur) {
   return `<form id="interval" class="sigtypes"><fieldset><legend class="s13 b">Interval</legend>
-    <p class="s13 muted">GMGN's trending window: the top tokens by volume over the last ${cur}. Volume and transactions below count that window, and keep their numbers when you switch.</p>
+    <p class="s13 muted">GMGN's trending window: the top tokens by volume over the last <span data-iv>${cur}</span>. Volume and transactions below count that window, and keep their numbers when you switch.</p>
     <div class="chips" role="radiogroup" aria-label="Trending interval">${INTERVALS.map((v) => `<label><input type="radio" name="interval" value="${v}" ${v === cur ? "checked" : ""}>${v}</label>`).join("")}</div></fieldset></form>`;
 }
 
@@ -1409,6 +1409,12 @@ document.addEventListener("click", (e) => {
 document.addEventListener("input", (e) => {
   const el = e.target;
   if (el.id === "f-rmodel") return researchTyped(el.value);
+  // A picked interval relabels its window's bounds before Apply; nothing is saved until then.
+  if (el.name === "interval") {
+    document.querySelectorAll("[data-iv]").forEach((e) => (e.textContent = el.value));
+    document.querySelectorAll('#filters input[name^="volume"], #filters input[name^="swaps"]').forEach((i) => i.setAttribute("aria-label", i.getAttribute("aria-label").replace(/^\S+/, el.value)));
+    return;
+  }
   if ((el.dataset.f !== undefined || el.dataset.rule !== undefined) && el.type !== "radio" && el.tagName !== "SELECT") setField(el);
 });
 document.addEventListener("change", (e) => {
